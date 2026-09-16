@@ -2,6 +2,10 @@ name: Deploy Market Forensics to Namecheap
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-namecheap.yml'
 
 concurrency:
   group: market-forensics-production
