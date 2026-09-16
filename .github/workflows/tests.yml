@@ -23,5 +23,5 @@ jobs:
       - name: Tests
         env:
           MF_SECRET_KEY: test-secret-key
-          MF_ENCRYPTION_KEY: YU44UlgwMEFLSGlDQUtXSTlGQ3RINnJaMUJQTFp5TnhuNVRGaEM3RT0=
+          MF_ENCRYPTION_KEY: Nc-3z8Rff1DFXHGAcCxIB8lWMecKVI9-JnQez8re9AA=
         run: pytest -q
