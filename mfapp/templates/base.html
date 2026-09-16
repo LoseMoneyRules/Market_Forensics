@@ -17,7 +17,7 @@
 <header class="topbar">
   <a class="brand" href="{{ url_for('full312.workspace') if real_role == 'CONTROL' and effective_role == 'CONTROL' else url_for('web.dashboard') }}">
     <img src="{{ url_for('static', filename='img/mark.svg') }}" alt="" class="brand-mark">
-    <span><strong>Market Forensics</strong><small>v{{ mf_version }} · Engine {{ engine_version }}</small></span>
+    <span><strong>Market Forensics</strong><small>v{{ mf_version }} · Engine {{ engine_version }}{% if trace_build %} · TRACE{% endif %}</small></span>
   </a>
   <div class="top-actions">
     {% if real_role == 'CONTROL' %}
@@ -51,6 +51,7 @@
     <div class="nav-section nav-gap">SYSTEM</div>
     <a href="{{ url_for('web.settings') }}" class="navitem {% if request.endpoint == 'web.settings' %}active{% endif %}"><span class="nav-icon">⚙</span><span>Settings & Data</span></a>
     <a href="{{ url_for('web.control') }}" class="navitem {% if request.endpoint == 'web.control' %}active{% endif %}"><span class="nav-icon">◆</span><span>Control</span></a>
+    <a href="{{ url_for('trace.console') }}" class="navitem {% if request.endpoint == 'trace.console' %}active{% endif %}"><span class="nav-icon">≡</span><span>Trace</span></a>
   {% else %}
     <a href="{{ url_for('web.dashboard') }}" class="navitem {% if request.endpoint == 'web.dashboard' %}active{% endif %}"><span class="nav-icon">⌂</span><span>Published Research</span></a>
   {% endif %}
@@ -65,7 +66,7 @@
 <nav class="mobile-nav">
   {% if real_role == 'CONTROL' and effective_role != 'CONTROL' %}<a class="mobile-control-exit" href="{{ url_for('preview.control_mode') }}">CONTROL</a>{% endif %}
   {% if effective_role == 'CONTROL' and real_role == 'CONTROL' %}
-    <a href="{{ url_for('full312.workspace') }}">Coverage</a><a href="{{ url_for('full312.discovery') }}">Discover</a><a href="{{ url_for('web.settings') }}">Settings</a>
+    <a href="{{ url_for('full312.workspace') }}">Coverage</a><a href="{{ url_for('full312.discovery') }}">Discover</a><a href="{{ url_for('web.settings') }}">Settings</a><a href="{{ url_for('trace.console') }}">Trace</a>
   {% else %}
     <a href="{{ url_for('web.dashboard') }}">Research</a>
   {% endif %}
