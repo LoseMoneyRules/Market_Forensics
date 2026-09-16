@@ -70,7 +70,6 @@ jobs:
           put -O . README.md
           put -O . VERSION
 
-          mkdir -p tmp
           put /tmp/restart.txt -o tmp/restart.txt
           bye
           LFTP
