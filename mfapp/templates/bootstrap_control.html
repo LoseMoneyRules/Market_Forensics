@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <div class="eyebrow">INITIAL CONTROL SETUP</div>
+  <h1>Create the CONTROL account</h1>
+  <p class="lead">This one-time setup is available only before the first active CONTROL account exists.</p>
+  <form method="post" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Bootstrap token<input type="password" name="token" autocomplete="off" required></label>
+    <label>Email<input type="email" name="email" autocomplete="email" required></label>
+    <label>Your name<input name="name" autocomplete="name" required></label>
+    <label>Create password<input type="password" name="password" minlength="12" autocomplete="new-password" required></label>
+    <button class="primary" type="submit">Continue to 2FA</button>
+  </form>
+  <p class="micro">After CONTROL is activated, this endpoint disables itself. Remove MF_BOOTSTRAP_TOKEN from cPanel after setup.</p>
+</section>
+{% endblock %}
