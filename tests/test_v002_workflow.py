@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
 
@@ -48,7 +48,7 @@ def build_client():
             "model_confidence": "MODERATE",
         })
         db.session.add(ResearchWorkspace(company_id=company.id, payload=payload, updated_by=user.id))
-        db.session.add(MarketSnapshot(company_id=company.id, provider="test", price=40, as_of=datetime.utcnow(), quality="OBSERVED", payload={}))
+        db.session.add(MarketSnapshot(company_id=company.id, provider="test", price=40, as_of=datetime.now(timezone.utc).replace(tzinfo=None), quality="OBSERVED", payload={}))
         db.session.add(FundamentalPeriod(
             company_id=company.id, period_key="FY2025", period_type="FY", fiscal_year=2025,
             period_end="2025-05-31", revenue=50000, gross_profit=22000, operating_income=6000,
@@ -68,8 +68,14 @@ def build_client():
 
 def test_control_workflow_pages_render():
     _app, client, _company_id = build_client()
+
+    # In 0.0.4 the authenticated CONTROL root intentionally hands off to the FULL workstation.
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302
+    assert "/workstation" in root.location
+
+    # Retained 0.0.2 compatibility endpoints must still render for old bookmarks/regression coverage.
     urls = [
-        "/",
         "/discover",
         "/decision-queue",
         "/decide/NKE",
