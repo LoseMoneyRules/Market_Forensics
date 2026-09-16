@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Decision Queue · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><div class="eyebrow">DECISION QUEUE</div><h1>Everything that needs a decision</h1><p>Research names and real positions live in one worklist. Readiness is process completeness, not a BUY score.</p></div>
+  <div class="version-chip">{{ rows|length }} NAMES</div>
+</section>
+{% if rows %}
+<section class="panel table-panel">
+  <div class="table-wrap decision-table"><table><thead><tr><th>Name</th><th>Price</th><th>Base FV</th><th>Gap</th><th>Business</th><th>Value</th><th>Path</th><th>Decision</th><th>Readiness</th><th>Position</th><th></th></tr></thead><tbody>
+  {% for row in rows %}
+  <tr>
+    <td><strong>{{ row.company.ticker }}</strong><small>{{ row.company.name }}</small></td>
+    <td>{% if row.snapshot %}${{ '%.2f'|format(row.snapshot.price) }}<small>{{ row.snapshot.provider }}</small>{% else %}—<small>refresh needed</small>{% endif %}</td>
+    <td>{% if row.decision.base_value is not none %}${{ '%.2f'|format(row.decision.base_value) }}{% else %}—{% endif %}</td>
+    <td class="num">{% if row.decision.base_gap_pct is not none %}{{ '%+.1f'|format(row.decision.base_gap_pct) }}%{% else %}—{% endif %}</td>
+    <td><span class="mini-state">{{ row.decision.business }}</span></td>
+    <td><span class="mini-state">{{ row.decision.value }}</span></td>
+    <td><span class="mini-state">{{ row.decision.path }}</span></td>
+    <td><span class="decision-chip">{{ row.decision.decision }}</span></td>
+    <td><strong>{{ row.decision.readiness_count }}/{{ row.decision.readiness_total }}</strong></td>
+    <td>{% if row.position %}{{ row.position.shares }} sh<small>@ {{ '%.2f'|format(row.position.avg_cost) }}</small>{% else %}—{% endif %}</td>
+    <td><a class="row-link" href="{{ url_for('web.decide', ticker=row.company.ticker) }}">Decide →</a></td>
+  </tr>
+  {% endfor %}
+  </tbody></table></div>
+</section>
+{% else %}<div class="empty"><h3>Decision Queue is empty.</h3><p>Add a validated ticker from Discover or add a real holding from Portfolio.</p></div>{% endif %}
+{% endblock %}
