@@ -72,6 +72,78 @@ class MarketSnapshot(db.Model):
     company = db.relationship("Company", backref=db.backref("market_snapshot", uselist=False))
 
 
+class FundamentalPeriod(db.Model):
+    """Auditable annual/TTM financial rows used by the preserved V3.1.12 engines."""
+
+    __table_args__ = (UniqueConstraint("company_id", "period_key", name="uq_company_fundamental_period"),)
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False, index=True)
+    period_key = db.Column(db.String(24), nullable=False)
+    period_type = db.Column(db.String(12), nullable=False, default="FY")
+    fiscal_year = db.Column(db.Integer, index=True)
+    period_end = db.Column(db.String(16))
+    period_filed = db.Column(db.String(16))
+    revenue = db.Column(db.Float)
+    gross_profit = db.Column(db.Float)
+    operating_income = db.Column(db.Float)
+    flow_operating_income = db.Column(db.Float)
+    flow_operating_income_method = db.Column(db.String(96))
+    pretax = db.Column(db.Float)
+    tax = db.Column(db.Float)
+    net_income = db.Column(db.Float)
+    cfo = db.Column(db.Float)
+    capex = db.Column(db.Float)
+    fcf = db.Column(db.Float)
+    buybacks = db.Column(db.Float)
+    dividends = db.Column(db.Float)
+    diluted_shares = db.Column(db.Float)
+    shares_outstanding = db.Column(db.Float)
+    cash = db.Column(db.Float)
+    debt = db.Column(db.Float)
+    receivables = db.Column(db.Float)
+    inventory = db.Column(db.Float)
+    payables = db.Column(db.Float)
+    assets = db.Column(db.Float)
+    liabilities = db.Column(db.Float)
+    equity = db.Column(db.Float)
+    provenance = db.Column(db.JSON, nullable=False, default=dict)
+    source = db.Column(db.String(80), nullable=False, default="MANUAL")
+    updated_at = db.Column(db.DateTime(timezone=False), nullable=False, default=utcnow, onupdate=utcnow)
+    company = db.relationship("Company", backref="fundamental_periods")
+
+    def as_engine_row(self) -> dict:
+        return {
+            "period_key": self.period_key,
+            "period_type": self.period_type,
+            "fiscal_year": self.fiscal_year,
+            "period_end": self.period_end,
+            "period_filed": self.period_filed,
+            "revenue": self.revenue,
+            "gross_profit": self.gross_profit,
+            "operating_income": self.operating_income,
+            "flow_operating_income": self.flow_operating_income,
+            "flow_operating_income_method": self.flow_operating_income_method,
+            "pretax": self.pretax,
+            "tax": self.tax,
+            "net_income": self.net_income,
+            "cfo": self.cfo,
+            "capex": self.capex,
+            "fcf": self.fcf,
+            "buybacks": self.buybacks,
+            "dividends": self.dividends,
+            "diluted_shares": self.diluted_shares,
+            "shares_outstanding": self.shares_outstanding,
+            "cash": self.cash,
+            "debt": self.debt,
+            "receivables": self.receivables,
+            "inventory": self.inventory,
+            "payables": self.payables,
+            "assets": self.assets,
+            "liabilities": self.liabilities,
+            "equity": self.equity,
+        }
+
+
 class MonitoringItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey("company.id"), nullable=False, index=True)
