@@ -23,7 +23,8 @@ def test_health():
     c = app.test_client()
     r = c.get("/health")
     assert r.status_code == 200
-    assert r.json["version"] == "0.0.2"
+    assert r.json["version"] == "0.0.4"
+    assert r.json["engine"] == "3.1.12 FULL"
 
 
 def test_login_requires_2fa():
@@ -43,6 +44,10 @@ def test_login_requires_2fa():
     assert r.location.endswith("/")
     with c.session_transaction() as session:
         assert session["view_as"] == "CONTROL"
+    # The root route is a stable hand-off: real CONTROL lands in the FULL 3.1.12 workstation.
+    r = c.get("/", follow_redirects=False)
+    assert r.status_code == 302
+    assert "/workstation" in r.location
 
 
 def test_control_is_protected():
