@@ -40,6 +40,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     limiter.init_app(app)
 
     from .models import User
+    from . import v312_models  # noqa: F401 — register hosted V3.1.12 evidence tables before create_all
 
     @app.before_request
     def load_user():
