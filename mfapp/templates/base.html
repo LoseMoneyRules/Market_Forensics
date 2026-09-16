@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1724">
+  <title>{% block title %}Market Forensics{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/mark.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% if g.user %}
+<header class="topbar">
+  <a class="brand" href="{{ url_for('web.dashboard') }}"><img src="{{ url_for('static', filename='img/mark.svg') }}" alt="" class="brand-mark"><span>Market Forensics</span></a>
+  <div class="top-actions"><span class="role-pill role-{{ g.user.role|lower }}">{{ g.user.role }}</span><form method="post" action="{{ url_for('web.logout') }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button" type="submit">Sign out</button></form></div>
+</header>
+<nav class="navrail"><a href="{{ url_for('web.dashboard') }}" class="navitem"><span>Overview</span></a>{% if g.user.role == 'CONTROL' %}<a href="{{ url_for('web.control') }}" class="navitem"><span>Control</span></a>{% endif %}</nav>
+{% endif %}
+<main class="{% if g.user %}app-shell{% else %}auth-shell{% endif %}">
+  {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+  {% block content %}{% endblock %}
+</main>
+{% if g.user %}<nav class="mobile-nav"><a href="{{ url_for('web.dashboard') }}">Overview</a>{% if g.user.role == 'CONTROL' %}<a href="{{ url_for('web.control') }}">Control</a>{% endif %}</nav>{% endif %}
+<script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</body>
+</html>
