@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ company.ticker }} Decide · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head company-head">
+  <div><div class="eyebrow">DECIDE · {{ ws.research_state }}</div><h1>{{ company.ticker }} <span>{{ company.name }}</span></h1><p>{{ company.summary }}</p></div>
+  <div class="decision-hero"><span>PROCESS STATE</span><strong>{{ decision.position_action }}</strong><small>{{ decision.readiness_count }}/{{ decision.readiness_total }} gates ready</small></div>
+</section>
+{% include "_company_nav.html" %}
+<section class="market-bar">
+  <div><small>PRICE</small><strong>{% if decision.current_price is not none %}${{ '%.2f'|format(decision.current_price) }}{% else %}DATA REVIEW{% endif %}</strong>{% if snapshot %}<span>{{ snapshot.provider }} · {{ snapshot.as_of.strftime('%b %d %H:%M') if snapshot.as_of else 'time n/a' }}</span>{% endif %}</div>
+  <div><small>BEAR</small><strong>{% if decision.bear_value is not none %}${{ '%.2f'|format(decision.bear_value) }}{% else %}DATA REVIEW{% endif %}</strong><span>{{ (p.bear_prob*100)|round|int }}% weight</span></div>
+  <div><small>BASE</small><strong>{% if decision.base_value is not none %}${{ '%.2f'|format(decision.base_value) }}{% else %}DATA REVIEW{% endif %}</strong><span>{% if decision.base_gap_pct is not none %}{{ '%+.1f'|format(decision.base_gap_pct) }}% vs price{% else %}gap n/a{% endif %}</span></div>
+  <div><small>BULL</small><strong>{% if decision.bull_value is not none %}${{ '%.2f'|format(decision.bull_value) }}{% else %}DATA REVIEW{% endif %}</strong><span>{{ (p.bull_prob*100)|round|int }}% weight</span></div>
+  <div><small>EXPECTED VALUE</small><strong>{% if decision.expected_value is not none %}${{ '%.2f'|format(decision.expected_value) }}{% else %}—{% endif %}</strong><span>{% if decision.downside_pct is not none and decision.upside_pct is not none %}{{ '%+.0f'|format(decision.downside_pct) }}% / {{ '%+.0f'|format(decision.upside_pct) }}%{% else %}bear / bull range{% endif %}</span></div>
+</section>
+<div class="toolbar-row">
+  <form method="post" action="{{ url_for('web.refresh_price', ticker=company.ticker) }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">Refresh market price</button></form>
+  <a class="secondary button-link" href="{{ url_for('web.research', ticker=company.ticker) }}">Edit research</a>
+  {% if position %}<span class="position-pill">POSITION · {{ position.shares }} sh @ ${{ '%.2f'|format(position.avg_cost) }}</span>{% else %}<span class="position-pill neutral">NO POSITION</span>{% endif %}
+</div>
+<section class="lens-grid">
+  {% for label,value in [('BUSINESS',decision.business),('VALUE',decision.value),('EXPECTATIONS',decision.expectations),('VARIANT',decision.variant),('PATH',decision.path),('MODEL CONFIDENCE',decision.model_confidence),('RISK',decision.risk)] %}
+  <article class="lens-card"><span>{{ label }}</span><strong>{{ value }}</strong></article>
+  {% endfor %}
+</section>
+<section class="decision-grid">
+  <article class="panel span-2"><div class="panel-label">THESIS</div><h2>{{ p.thesis or 'Thesis not defined yet.' }}</h2><p class="muted-copy">{{ p.business_summary or 'Complete Business & Numbers in Research before treating this decision as ready.' }}</p></article>
+  <article class="panel"><div class="panel-label">WHY NOW</div><h3>{{ p.why_now or 'Not defined.' }}</h3></article>
+  <article class="panel"><div class="panel-label">WHY NOT YET</div><h3>{{ p.why_not_yet or 'Not defined.' }}</h3></article>
+  <article class="panel"><div class="panel-label">WHAT CHANGES THE DECISION</div><h3>{{ p.changes_decision or 'Not defined.' }}</h3></article>
+  <article class="panel danger-panel"><div class="panel-label">WHAT KILLS THE THESIS</div><h3>{{ p.kills_thesis or p.invalidation or 'Numerical invalidation not locked.' }}</h3><p>{% if p.invalidation_locked %}<span class="status-dot ok"></span> Invalidation LOCKED before outcome{% else %}<span class="status-dot warn"></span> Invalidation not locked{% endif %}</p></article>
+</section>
+<section class="panel scenario-panel">
+  <div class="section-title"><div><div class="panel-label">VALUATION</div><h2>Bear / Base / Bull · assumptions & outputs</h2></div><a class="text-link" href="{{ url_for('web.research', ticker=company.ticker) }}#valuation">Edit valuation →</a></div>
+  <div class="scenario-table"><div class="scenario-head"><span></span><strong>BEAR</strong><strong>BASE</strong><strong>BULL</strong></div>
+    <div><span>Fair value</span><strong>{% if decision.bear_value is not none %}${{ '%.2f'|format(decision.bear_value) }}{% else %}DATA REVIEW{% endif %}</strong><strong>{% if decision.base_value is not none %}${{ '%.2f'|format(decision.base_value) }}{% else %}DATA REVIEW{% endif %}</strong><strong>{% if decision.bull_value is not none %}${{ '%.2f'|format(decision.bull_value) }}{% else %}DATA REVIEW{% endif %}</strong></div>
+    <div><span>Probability</span><strong>{{ (p.bear_prob*100)|round(1) }}%</strong><strong>{{ (p.base_prob*100)|round(1) }}%</strong><strong>{{ (p.bull_prob*100)|round(1) }}%</strong></div>
+    <div><span>Vs current price</span><strong>{% if decision.downside_pct is not none %}{{ '%+.1f'|format(decision.downside_pct) }}%{% else %}—{% endif %}</strong><strong>{% if decision.base_gap_pct is not none %}{{ '%+.1f'|format(decision.base_gap_pct) }}%{% else %}—{% endif %}</strong><strong>{% if decision.upside_pct is not none %}{{ '%+.1f'|format(decision.upside_pct) }}%{% else %}—{% endif %}</strong></div>
+  </div>
+  <p class="micro left">{{ p.valuation_method or 'Valuation method / assumptions not documented yet.' }}</p>
+</section>
+<section class="panel">
+  <details class="checklist" open><summary><span>Decision checklist · what is missing & where to edit</span><strong>{{ decision.readiness_count }}/{{ decision.readiness_total }}</strong></summary>
+    <div class="gate-grid">{% for gate in decision.gates %}<div class="gate {% if gate.ok %}gate-ok{% else %}gate-missing{% endif %}"><span>{{ '✓' if gate.ok else '○' }}</span><strong>{{ gate.label }}</strong>{% if not gate.ok %}<a href="{% if gate.target == 'monitor' %}{{ url_for('web.monitor', ticker=company.ticker) }}{% elif gate.target == 'validate' %}{{ url_for('web.validate', ticker=company.ticker) }}{% elif gate.target == 'decide' %}{{ url_for('web.decide', ticker=company.ticker) }}{% else %}{{ url_for('web.research', ticker=company.ticker) }}{% endif %}">Edit →</a>{% endif %}</div>{% endfor %}</div>
+  </details>
+</section>
+<section class="two-column-lower">
+  <article class="panel"><div class="panel-label">DECISION JOURNAL</div><h2>Freeze the reasoning</h2><form method="post" action="{{ url_for('web.add_journal', ticker=company.ticker) }}" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Decision<input name="decision" value="{{ decision.position_action }}" required></label><label>Conviction<select name="conviction"><option>LOW</option><option selected>MEDIUM</option><option>HIGH</option></select></label><label>Note<textarea name="notes" rows="3" placeholder="What changed? Why now? What evidence would reverse this?"></textarea></label><button class="primary" type="submit">Save journal entry</button></form>{% if journal %}<div class="mini-list journal-list">{% for j in journal %}<div><strong>{{ j.decision }}</strong><span>{{ j.created_at.strftime('%b %d %Y') }} · {{ j.conviction or '—' }}</span></div>{% endfor %}</div>{% endif %}</article>
+  <article class="panel"><div class="panel-label">PUBLISH</div><h2>Versioned snapshot</h2><p>Publishing copies research into an immutable snapshot. Personal holdings and exact sizing are never included.</p><form method="post" action="{{ url_for('web.publish', ticker=company.ticker) }}" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Minimum access<select name="visibility"><option>FRIEND</option><option>INSIDER</option></select></label><button class="primary" type="submit">Publish new version</button></form><div class="info-box"><strong>Preview before publishing.</strong><span>Use the top-right FRIEND / INSIDER switch to see the published experience after a snapshot exists.</span></div></article>
+</section>
+{% endblock %}
