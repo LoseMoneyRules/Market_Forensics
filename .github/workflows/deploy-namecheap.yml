@@ -19,95 +19,61 @@ jobs:
         with:
           ref: main
 
-      - name: Verify required deployment secrets
+      - name: Verify deployment secrets
         env:
-          NC_HOST: ${{ secrets.NAMECHEAP_HOST }}
-          NC_USER: ${{ secrets.NAMECHEAP_USER }}
-          NC_SSH_KEY: ${{ secrets.NAMECHEAP_SSH_KEY }}
-          NC_KNOWN_HOSTS: ${{ secrets.NAMECHEAP_KNOWN_HOSTS }}
-          NC_VENV_BIN: ${{ secrets.NAMECHEAP_VENV_BIN }}
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in NC_HOST NC_USER NC_SSH_KEY NC_KNOWN_HOSTS NC_VENV_BIN; do
+          for name in FTP_HOST FTP_USER FTP_PASS; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required GitHub secret: $name"
               exit 1
             fi
           done
 
-      - name: Prepare SSH
+      - name: Install FTPES client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lftp
+
+      - name: Deploy application files over FTPES
         env:
-          NC_SSH_KEY: ${{ secrets.NAMECHEAP_SSH_KEY }}
-          NC_KNOWN_HOSTS: ${{ secrets.NAMECHEAP_KNOWN_HOSTS }}
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$NC_SSH_KEY" > ~/.ssh/id_namecheap
-          chmod 600 ~/.ssh/id_namecheap
-          printf '%s\n' "$NC_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          printf 'restart %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
 
-      - name: Build release archive
-        run: |
-          set -euo pipefail
-          tar \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.env' \
-            --exclude='instance' \
-            --exclude='tmp' \
-            --exclude='*.db' \
-            --exclude='*.sqlite' \
-            --exclude='*.sqlite3' \
-            -czf /tmp/market-forensics-release.tgz .
+          lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u "$FTP_USER","$FTP_PASS" "ftpes://$FTP_HOST"
 
-      - name: Upload release
-        env:
-          NC_HOST: ${{ secrets.NAMECHEAP_HOST }}
-          NC_USER: ${{ secrets.NAMECHEAP_USER }}
-        run: |
-          set -euo pipefail
-          scp -i ~/.ssh/id_namecheap -P 21098 \
-            /tmp/market-forensics-release.tgz \
-            "$NC_USER@$NC_HOST:~/market-forensics-release.tgz"
+          mirror --reverse --delete --verbose \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
+            ./mfapp ./mfapp
 
-      - name: Install release and restart Passenger
-        env:
-          NC_HOST: ${{ secrets.NAMECHEAP_HOST }}
-          NC_USER: ${{ secrets.NAMECHEAP_USER }}
-          NC_VENV_BIN: ${{ secrets.NAMECHEAP_VENV_BIN }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/id_namecheap -p 21098 "$NC_USER@$NC_HOST" \
-            "NC_VENV_BIN='$NC_VENV_BIN' bash -s" <<'REMOTE'
-          set -euo pipefail
-          APP="$HOME/market_forensics"
-          RELEASE="$HOME/market-forensics-release.tgz"
-          STAGE="$HOME/.mf-deploy-stage"
+          mirror --reverse --delete --verbose ./docs ./docs
 
-          test -d "$APP"
-          test -x "$NC_VENV_BIN/python"
-          test -x "$NC_VENV_BIN/pip"
+          put -O . app.py
+          put -O . manage.py
+          put -O . requirements.txt
+          put -O . requirements-dev.txt
+          put -O . README.md
+          put -O . VERSION
 
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE"
-          tar -xzf "$RELEASE" -C "$STAGE"
-
-          # Preserve server-only state and cPanel/Passenger files.
-          rm -rf "$APP/mfapp" "$APP/docs" "$APP/tests"
-          rm -f "$APP/app.py" "$APP/manage.py" "$APP/requirements.txt" \
-                "$APP/requirements-dev.txt" "$APP/README.md" "$APP/VERSION"
-
-          cp -a "$STAGE"/. "$APP"/
-
-          "$NC_VENV_BIN/pip" install -r "$APP/requirements.txt"
-          "$NC_VENV_BIN/python" -m compileall -q "$APP/app.py" "$APP/manage.py" "$APP/mfapp"
-
-          mkdir -p "$APP/tmp"
-          touch "$APP/tmp/restart.txt"
-
-          rm -rf "$STAGE" "$RELEASE"
-          REMOTE
+          mkdir -p tmp
+          put /tmp/restart.txt -o tmp/restart.txt
+          bye
+          LFTP
 
       - name: Production health check
         run: |
