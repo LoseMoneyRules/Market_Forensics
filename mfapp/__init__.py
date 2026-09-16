@@ -93,6 +93,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     # 0.0.4 canonical workstation: exact V3.1.12 FULL calculation engine + Flask presentation.
     from .full312_routes import bp as full312_bp
     app.register_blueprint(full312_bp)
+    from .full312_controls import bp as full312_controls_bp
+    app.register_blueprint(full312_controls_bp)
 
     from .full312_downloads import bp as full312_downloads_bp, download as full312_download
     app.register_blueprint(full312_downloads_bp)
