@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: 'pip'
@@ -21,7 +21,7 @@ jobs:
       - name: Syntax check
         run: python -m compileall -q app.py manage.py mfapp tests
       - name: Tests
-        env:
-          MF_SECRET_KEY: test-secret-key
-          MF_ENCRYPTION_KEY: Nc-3z8Rff1DFXHGAcCxIB8lWMecKVI9-JnQez8re9AA=
-        run: pytest -q
+        run: |
+          export MF_SECRET_KEY="test-secret-key"
+          export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+          pytest -q
