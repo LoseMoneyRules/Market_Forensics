@@ -65,9 +65,9 @@ def test_deep_controls_page_renders_and_is_hidden_in_preview(tmp_path, monkeypat
     r = client.get("/workstation/NKE/controls")
     assert r.status_code == 200
     assert b"Deep Controls" in r.data
-    assert b"Share Basis Recovery" in r.data
+    assert b"SHARE BASIS RECOVERY" in r.data
     assert b"Bear Case ledger" in r.data
-    assert b"Official Short Interest" in r.data
+    assert b"OFFICIAL SHORT INTEREST" in r.data
 
     client.get("/preview/FRIEND")
     assert client.get("/workstation/NKE/controls").status_code == 404
