@@ -36,6 +36,20 @@ jobs:
           export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
           pytest -q
 
+      - name: Build hosted dependency bundle
+        run: |
+          set -euo pipefail
+          rm -rf _vendor
+          python -m pip install --disable-pip-version-check --no-compile --target _vendor -r requirements-vendor.txt
+          python -S - <<'PY'
+          import sys
+          sys.path.insert(0, '_vendor')
+          import numpy, pandas, docx, reportlab, PIL
+          print('Hosted dependency bundle PASS', numpy.__version__, pandas.__version__)
+          PY
+          find _vendor -type d -name __pycache__ -prune -exec rm -rf {} +
+          find _vendor -type f -name '*.pyc' -delete
+
       - name: Verify deployment secrets
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
@@ -86,6 +100,11 @@ jobs:
           mirror --reverse --delete --verbose \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
+            ./_vendor ./_vendor
+
+          mirror --reverse --delete --verbose \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
             ./mfengine ./mfengine
 
           mirror --reverse --delete --verbose ./docs ./docs
@@ -94,6 +113,7 @@ jobs:
           put -O . manage.py
           put -O . requirements.txt
           put -O . requirements-dev.txt
+          put -O . requirements-vendor.txt
           put -O . README.md
           put -O . VERSION
 
@@ -106,11 +126,13 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health || true)"
-            if printf '%s' "$body" | grep -q '"status":"ok"' && printf '%s' "$body" | grep -q '"version":"0.0.4"'; then
+            if printf '%s' "$body" | grep -q '"status":"ok"' \
+              && printf '%s' "$body" | grep -q '"version":"0.0.4"' \
+              && printf '%s' "$body" | grep -q '"engine":"3.1.12 FULL"'; then
               echo "$body"
               exit 0
             fi
             sleep 6
           done
-          echo "Production health check failed or wrong release version."
+          echo "Production health check failed, wrong release version, or wrong engine."
           exit 1
