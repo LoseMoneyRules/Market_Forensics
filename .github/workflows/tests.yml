@@ -9,18 +9,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: 'pip'
-      - name: Install
+      - name: Install full runtime
         run: pip install -r requirements-dev.txt
+      - name: Materialize verified V3.1.12 FULL
+        run: python tools/materialize_v312.py
+      - name: Verify exact engine
+        run: python tools/verify_v312.py
+      - name: Original V3.1.12 self test
+        run: python .v312_reference/SELF_TEST.py
       - name: Syntax check
-        run: python -m compileall -q app.py manage.py mfapp tests
-      - name: Tests
+        run: python -m compileall -q app.py manage.py mfapp market_forensics tests tools
+      - name: Web beta tests
         run: |
           export MF_SECRET_KEY="test-secret-key"
           export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
