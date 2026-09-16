@@ -87,8 +87,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     from .preview import bp as preview_bp
     app.register_blueprint(preview_bp)
 
-    from .bootstrap import bp as bootstrap_bp
-    app.register_blueprint(bootstrap_bp)
+    # CONTROL bootstrap was a one-time installation path and is intentionally absent from 0.0.4.
+    # Existing authenticated users and invite flows are the only account-entry surfaces now.
 
     # 0.0.4 canonical workstation: exact V3.1.12 FULL calculation engine + Flask presentation.
     from .full312_routes import bp as full312_bp
