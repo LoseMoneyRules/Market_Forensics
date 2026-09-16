@@ -50,6 +50,11 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     from .models import User
     from . import v312_models  # noqa: F401 - keep existing hosted evidence/publication tables registered
+    from .trace import bp as trace_bp, install_trace
+
+    # 0.0.4 TRACE is diagnostic-only: request timing + unhandled exceptions, with no
+    # cookies, headers, form bodies or query strings recorded.
+    install_trace(app)
 
     @app.before_request
     def load_user():
@@ -76,6 +81,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         return {
             "mf_version": app.config["VERSION"],
             "engine_version": app.config["ENGINE_VERSION"],
+            "trace_build": app.config.get("TRACE_BUILD"),
             "effective_role": getattr(g, "view_role", None),
             "real_role": real_role,
         }
@@ -86,6 +92,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     from .preview import bp as preview_bp
     app.register_blueprint(preview_bp)
+    app.register_blueprint(trace_bp)
 
     # CONTROL bootstrap was a one-time installation path and is intentionally absent from 0.0.4.
     # Existing authenticated users and invite flows are the only account-entry surfaces now.
@@ -117,6 +124,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             "status": "ok",
             "version": app.config["VERSION"],
             "engine": app.config["ENGINE_VERSION"],
+            "trace_build": app.config.get("TRACE_BUILD"),
         }
 
     app.view_functions["web.health"] = release_health
