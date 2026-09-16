@@ -10,7 +10,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: production
 
     steps:
@@ -18,6 +18,23 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: main
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install and verify release
+        run: |
+          set -euo pipefail
+          pip install -r requirements-dev.txt
+          python tools/materialize_v312.py
+          python tools/verify_v312.py
+          python .v312_reference/SELF_TEST.py
+          python -m compileall -q app.py manage.py mfapp market_forensics tests tools
+          export MF_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+          pytest -q
 
       - name: Verify deployment secrets
         env:
@@ -64,6 +81,11 @@ jobs:
           mirror --reverse --delete --verbose \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
+            ./market_forensics ./market_forensics
+
+          mirror --reverse --delete --verbose \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
             ./mfengine ./mfengine
 
           mirror --reverse --delete --verbose ./docs ./docs
@@ -82,13 +104,13 @@ jobs:
       - name: Production health check
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5 6; do
-            body="$(curl -fsS --max-time 10 https://mf.losemoneyrules.com/health || true)"
-            if printf '%s' "$body" | grep -q '"status":"ok"'; then
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health || true)"
+            if printf '%s' "$body" | grep -q '"status":"ok"' && printf '%s' "$body" | grep -q '"version":"0.0.4"'; then
               echo "$body"
               exit 0
             fi
-            sleep 5
+            sleep 6
           done
-          echo "Production health check failed."
+          echo "Production health check failed or wrong release version."
           exit 1
