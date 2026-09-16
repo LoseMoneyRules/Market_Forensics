@@ -61,6 +61,11 @@ jobs:
             --exclude-glob '*.pyc' \
             ./mfapp ./mfapp
 
+          mirror --reverse --delete --verbose \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
+            ./mfengine ./mfengine
+
           mirror --reverse --delete --verbose ./docs ./docs
 
           put -O . app.py
