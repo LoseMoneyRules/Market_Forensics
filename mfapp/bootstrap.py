@@ -25,6 +25,20 @@ def _active_control_exists() -> bool:
     return User.query.filter_by(role="CONTROL", is_active=True).first() is not None
 
 
+@bp.get("/bootstrap-status")
+def bootstrap_status():
+    """Temporary, secret-free production diagnostics for initial CONTROL setup."""
+    return {
+        "active_control_exists": _active_control_exists(),
+        "bootstrap_token_configured": bool(_bootstrap_token()),
+        "database_driver": db.engine.url.drivername,
+        "database_url_configured": bool(os.environ.get("MF_DATABASE_URL", "").strip()),
+        "encryption_key_configured": bool(os.environ.get("MF_ENCRYPTION_KEY", "").strip()),
+        "production_env": os.environ.get("MF_ENV", "").strip().lower() == "production",
+        "user_count": User.query.count(),
+    }
+
+
 @bp.route("/bootstrap-control", methods=["GET", "POST"])
 @limiter.limit("5 per minute")
 def bootstrap_control():
