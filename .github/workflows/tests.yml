@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.13'
           cache: 'pip'
-      - name: Install full runtime
+      - name: Install full test runtime
         run: pip install -r requirements-dev.txt
       - name: Materialize verified V3.1.12 FULL
         run: python tools/materialize_v312.py
@@ -31,3 +31,14 @@ jobs:
           export MF_SECRET_KEY="test-secret-key"
           export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
           pytest -q
+      - name: Hosted dependency bundle smoke test
+        run: |
+          set -euo pipefail
+          rm -rf _vendor
+          python -m pip install --disable-pip-version-check --no-compile --target _vendor -r requirements-vendor.txt
+          python -S - <<'PY'
+          import sys
+          sys.path.insert(0, '_vendor')
+          import numpy, pandas, docx, reportlab, PIL
+          print('Hosted dependency bundle PASS', numpy.__version__, pandas.__version__)
+          PY
