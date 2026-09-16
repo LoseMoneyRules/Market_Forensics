@@ -46,7 +46,7 @@
           <td>{{ '%.0f'|format(s.get('Net Tape')) if s.get('Net Tape') is not none else '—' }}</td>
           <td>{{ '%.0f'|format(s.get('Confidence')) if s.get('Confidence') is not none else '—' }}</td>
           <td><span class="status-tag">{{ s.get('Refresh Status','NEVER') }}</span><small>{{ s.get('Last Refresh') or '' }}</small></td>
-          <td><a class="primary-link" href="{{ url_for('full312.company', ticker=s.get('Ticker'), section='decide') }}">Open →</a></td>
+          <td><div class="row-actions"><a class="primary-link" href="{{ url_for('full312.company', ticker=s.get('Ticker'), section='decide') }}">Open →</a><a class="secondary-link" href="{{ url_for('full312_controls.controls', ticker=s.get('Ticker')) }}">Deep Controls</a></div></td>
         </tr>
       {% endfor %}
       </tbody>
