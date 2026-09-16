@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ company.ticker }} Valuation · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head company-head"><div><div class="eyebrow">RESEARCH · VALUATION · V3.1.12</div><h1>{{ company.ticker }} <span>Current valuation</span></h1><p>Bear/Base/Bull use the V3.1.12 P/E, EV/Sales and FCF-yield robust blend. DCF is the FCFE-style cross-check and does not subtract net debt twice.</p></div><div class="version-chip">ENGINE 3.1.12</div></section>
+{% include "_company_nav.html" %}
+
+<section class="valuation-topline">
+  <article class="panel valuation-price"><div class="panel-label">CURRENT PRICE</div><strong>{{ '$%.2f'|format(snapshot.price) if snapshot else '—' }}</strong><span>{{ snapshot.provider if snapshot else 'No last-good quote' }}</span></article>
+  {% for name in ['bear','base','bull'] %}{% set row=scenarios[name] %}<article class="panel valuation-case case-{{ name }}"><div class="panel-label">{{ name|upper }}</div><strong>{{ '$%.2f'|format(row.fair_value) if row.fair_value is not none else 'DATA REVIEW' }}</strong><span>{% if row.gap_pct is not none %}{{ '%+.1f%%'|format(row.gap_pct) }} vs current{% else %}Per-share basis not verified{% endif %}</span></article>{% endfor %}
+  <article class="panel valuation-price"><div class="panel-label">EXPECTED VALUE</div><strong>{{ '$%.2f'|format(expected) if expected is not none else '—' }}</strong><span>Probability weighted</span></article>
+</section>
+
+{% if not metrics.valuation_share_basis_usable %}<div class="data-review"><strong>DATA REVIEW · SHARE BASIS</strong><p>{{ metrics.valuation_basis_issue }}</p></div>{% endif %}
+
+<section class="research-grid valuation-grid">
+  <article class="panel span-2"><div class="section-title"><div><div class="panel-label">MODEL INPUT BASIS</div><h2>Fundamentals & current denominator</h2></div><span>{{ latest.source if latest else 'No fundamentals' }}</span></div>
+    <div class="valuation-metrics">
+      <div><span>Revenue</span><strong data-money="{{ metrics.revenue if metrics.revenue is not none else '' }}">—</strong></div>
+      <div><span>Net margin</span><strong>{{ '%.1f%%'|format(metrics.net_margin*100) if metrics.net_margin is not none else '—' }}</strong></div>
+      <div><span>FCF margin</span><strong>{{ '%.1f%%'|format(metrics.fcf_margin*100) if metrics.fcf_margin is not none else '—' }}</strong></div>
+      <div><span>3Y revenue CAGR</span><strong>{{ '%.1f%%'|format(metrics.cagr3*100) if metrics.cagr3 is not none else '—' }}</strong></div>
+      <div><span>Net debt</span><strong data-money="{{ metrics.net_debt if metrics.net_debt is not none else '' }}">—</strong></div>
+      <div><span>Valuation shares</span><strong>{{ '{:,.0f}'.format(metrics.valuation_shares) if metrics.valuation_shares is not none else '—' }}</strong></div>
+    </div>
+  </article>
+
+  <article class="panel span-2"><div class="panel-label">MODEL CONTROL</div><h2>Review current share basis and scenarios</h2><form method="post" class="form-stack"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid three">
+      <label>Company type<select name="company_type">{% for item in company_types %}<option {% if (config.company_type or 'Generic')==item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select></label>
+      <label>Share source<select name="share_source"><option value="USER_VERIFIED_CURRENT" {% if (config.share_source or 'USER_VERIFIED_CURRENT')=='USER_VERIFIED_CURRENT' %}selected{% endif %}>User verified current</option><option value="SEC_FY_OUTSTANDING" {% if config.share_source=='SEC_FY_OUTSTANDING' %}selected{% endif %}>Latest stored SEC FY outstanding</option><option value="DILUTED_WA_FALLBACK" {% if config.share_source=='DILUTED_WA_FALLBACK' %}selected{% endif %}>Diluted-WA fallback</option></select></label>
+      <label>Current shares<input name="current_shares" inputmode="decimal" value="{{ config.current_shares or '' }}" placeholder="e.g. 1,480,000,000"></label>
+    </div>
+    <label>Share-basis verification note<textarea name="share_basis_note" rows="2" placeholder="Source, date, split/reverse-split check...">{{ config.share_basis_note or '' }}</textarea></label>
+    <label class="check-line"><input type="checkbox" name="share_basis_verified" value="1" {% if config.share_basis_verified %}checked{% endif %}> I verified that this denominator is usable on the current corporate-action basis.</label>
+
+    <div class="valuation-case-editor">
+      <div class="case-editor-head"><span>Input</span><strong>Bear</strong><strong>Base</strong><strong>Bull</strong></div>
+      {% set fields=[('growth','Revenue growth',100,'%'),('net_margin','Net margin',100,'%'),('fcf_margin','FCF margin',100,'%'),('pe','P/E',1,'x'),('ev_sales','EV/Sales',1,'x'),('target_fcf_yield','Target FCF yield',100,'%'),('equity_discount_rate','Equity discount rate',100,'%'),('terminal_growth','Terminal growth',100,'%'),('prob','Probability',100,'%'),('manual_override','Manual FV override',1,'$')] %}
+      {% for key,label,mult,suffix in fields %}<div class="case-editor-row"><span>{{ label }}</span>{% for name in ['bear','base','bull'] %}{% set value=cases[name].get(key) %}<label><input name="{{ name }}_{{ key }}" inputmode="decimal" value="{% if value is not none %}{{ '%.4f'|format(value*mult) if mult==100 else value }}{% endif %}"><small>{{ suffix }}</small></label>{% endfor %}</div>{% endfor %}
+    </div>
+    <div class="form-grid three"><label>P/E blend weight<input name="weight_pe" value="{{ weights.pe }}"></label><label>EV/Sales weight<input name="weight_ev_sales" value="{{ weights.ev_sales }}"></label><label>FCF-yield weight<input name="weight_fcf_yield" value="{{ weights.fcf_yield }}"></label></div>
+    <label>DCF horizon years<input name="horizon_years" inputmode="numeric" value="{{ years }}"></label>
+    <button class="primary" type="submit">Save & recalculate V3.1.12 valuation</button>
+  </form></article>
+
+  {% for name in ['bear','base','bull'] %}{% set row=scenarios[name] %}<article class="panel valuation-output case-{{ name }}"><div class="panel-label">{{ name|upper }} CASE</div><h2>{{ '$%.2f'|format(row.fair_value) if row.fair_value is not none else 'DATA REVIEW' }}</h2><div class="method-grid"><div><span>P/E</span><strong>{{ '$%.2f'|format(row.pe) if row.pe is not none else '—' }}</strong></div><div><span>EV/Sales</span><strong>{{ '$%.2f'|format(row.ev_sales) if row.ev_sales is not none else '—' }}</strong></div><div><span>FCF Yield</span><strong>{{ '$%.2f'|format(row.fcf_yield) if row.fcf_yield is not none else '—' }}</strong></div><div><span>DCF cross-check</span><strong>{{ '$%.2f'|format(row.dcf) if row.dcf is not none else '—' }}</strong></div></div>{% if row.flags %}<ul class="micro-flag-list">{% for flag in row.flags %}<li>{{ flag }}</li>{% endfor %}</ul>{% endif %}</article>{% endfor %}
+  <article class="panel"><div class="panel-label">METHOD NOTE</div><h2>Why DCF is not in the blend</h2><p>The V3.1.12 robust blend uses P/E, EV/Sales and FCF Yield. DCF stays visible as an independent FCFE-style cross-check. This prevents one long-duration model from dominating the current-case blend.</p></article>
+</section>
+{% endblock %}
+{% block scripts %}<script>(()=>{const money=v=>{const n=Number(v);if(!Number.isFinite(n))return'—';const a=Math.abs(n),s=n<0?'-':'';if(a>=1e12)return s+'$'+(a/1e12).toFixed(2)+'T';if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(1)+'M';return s+'$'+a.toLocaleString(undefined,{maximumFractionDigits:0});};document.querySelectorAll('[data-money]').forEach(x=>x.textContent=x.dataset.money?money(x.dataset.money):'—');document.querySelectorAll('.valuation-case-editor input').forEach(input=>{const small=input.nextElementSibling;if(!small||small.textContent.trim()!=='%')return;input.addEventListener('change',()=>{const n=parseFloat(input.value);if(Number.isFinite(n))input.value=(n/100).toFixed(6);});});})();</script>{% endblock %}
