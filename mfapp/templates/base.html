@@ -11,16 +11,55 @@
 <body class="{% block body_class %}{% endblock %}">
 {% if g.user %}
 <header class="topbar">
-  <a class="brand" href="{{ url_for('web.dashboard') }}"><img src="{{ url_for('static', filename='img/mark.svg') }}" alt="" class="brand-mark"><span>Market Forensics</span></a>
-  <div class="top-actions"><span class="role-pill role-{{ g.user.role|lower }}">{{ g.user.role }}</span><form method="post" action="{{ url_for('web.logout') }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button" type="submit">Sign out</button></form></div>
+  <a class="brand" href="{{ url_for('web.dashboard') }}">
+    <img src="{{ url_for('static', filename='img/mark.svg') }}" alt="" class="brand-mark">
+    <span><strong>Market Forensics</strong><small>v{{ mf_version }}</small></span>
+  </a>
+  <div class="top-actions">
+    {% if g.user.role == 'CONTROL' %}
+    <form method="post" action="{{ url_for('web.view_as') }}" class="view-switch" aria-label="Preview access level">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <span>View as</span>
+      <select name="role" onchange="this.form.submit()">
+        {% for role in ['FRIEND','INSIDER','CONTROL'] %}<option value="{{ role }}" {% if effective_role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}
+      </select>
+    </form>
+    {% endif %}
+    <span class="role-pill role-{{ effective_role|lower }}">{{ effective_role }}</span>
+    <form method="post" action="{{ url_for('web.logout') }}" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="text-button" type="submit">Sign out</button>
+    </form>
+  </div>
 </header>
-<nav class="navrail"><a href="{{ url_for('web.dashboard') }}" class="navitem"><span>Overview</span></a>{% if g.user.role == 'CONTROL' %}<a href="{{ url_for('web.control') }}" class="navitem"><span>Control</span></a>{% endif %}</nav>
+{% if g.user.role == 'CONTROL' and effective_role != 'CONTROL' %}
+<div class="preview-banner"><strong>Preview mode · {{ effective_role }}</strong><span>You are still authenticated as CONTROL. Private CONTROL surfaces are intentionally hidden.</span></div>
 {% endif %}
-<main class="{% if g.user %}app-shell{% else %}auth-shell{% endif %}">
+<nav class="navrail">
+  <div class="nav-section">WORKSPACE</div>
+  <a href="{{ url_for('web.dashboard') }}" class="navitem {% if request.endpoint == 'web.dashboard' %}active{% endif %}"><span class="nav-icon">⌂</span><span>Overview</span></a>
+  {% if effective_role == 'CONTROL' %}
+  <a href="{{ url_for('web.discover') }}" class="navitem {% if request.endpoint == 'web.discover' %}active{% endif %}"><span class="nav-icon">⌕</span><span>Discover</span></a>
+  <a href="{{ url_for('web.decision_queue') }}" class="navitem {% if request.endpoint == 'web.decision_queue' %}active{% endif %}"><span class="nav-icon">≣</span><span>Decision Queue</span></a>
+  <a href="{{ url_for('web.portfolio') }}" class="navitem {% if request.endpoint == 'web.portfolio' %}active{% endif %}"><span class="nav-icon">▦</span><span>Portfolio</span></a>
+  <div class="nav-section nav-gap">SYSTEM</div>
+  <a href="{{ url_for('web.settings') }}" class="navitem {% if request.endpoint == 'web.settings' %}active{% endif %}"><span class="nav-icon">⚙</span><span>Settings & Data</span></a>
+  <a href="{{ url_for('web.control') }}" class="navitem {% if request.endpoint == 'web.control' %}active{% endif %}"><span class="nav-icon">◆</span><span>Control</span></a>
+  {% endif %}
+  <div class="nav-footer"><span>Lose Money Rules</span></div>
+</nav>
+{% endif %}
+<main class="{% if g.user %}app-shell {% if g.user.role == 'CONTROL' and effective_role != 'CONTROL' %}preview-offset{% endif %}{% else %}auth-shell{% endif %}">
   {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
   {% block content %}{% endblock %}
 </main>
-{% if g.user %}<nav class="mobile-nav"><a href="{{ url_for('web.dashboard') }}">Overview</a>{% if g.user.role == 'CONTROL' %}<a href="{{ url_for('web.control') }}">Control</a>{% endif %}</nav>{% endif %}
+{% if g.user %}
+<nav class="mobile-nav">
+  <a href="{{ url_for('web.dashboard') }}">Overview</a>
+  {% if effective_role == 'CONTROL' %}<a href="{{ url_for('web.decision_queue') }}">Queue</a><a href="{{ url_for('web.portfolio') }}">Portfolio</a><a href="{{ url_for('web.settings') }}">Settings</a>{% endif %}
+</nav>
+{% endif %}
 <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>
