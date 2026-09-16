@@ -8,7 +8,7 @@ from secrets import compare_digest
 
 import pyotp
 import qrcode
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 
 from .extensions import db, limiter
 from .models import AuditEvent, User
@@ -26,16 +26,23 @@ def _active_control_exists() -> bool:
 
 
 @bp.get("/bootstrap-status")
+@limiter.limit("20 per minute")
 def bootstrap_status():
-    """Temporary, secret-free production diagnostics for initial CONTROL setup."""
+    users = User.query.count()
+    active_controls = User.query.filter_by(role="CONTROL", is_active=True).count()
+    inactive_controls = User.query.filter_by(role="CONTROL", is_active=False).count()
+    db_uri = current_app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    driver = db_uri.split("://", 1)[0] if "://" in db_uri else "unknown"
     return {
-        "active_control_exists": _active_control_exists(),
         "bootstrap_token_configured": bool(_bootstrap_token()),
-        "database_driver": db.engine.url.drivername,
+        "production_env": os.environ.get("MF_ENV", "") == "production",
         "database_url_configured": bool(os.environ.get("MF_DATABASE_URL", "").strip()),
+        "database_driver": driver,
         "encryption_key_configured": bool(os.environ.get("MF_ENCRYPTION_KEY", "").strip()),
-        "production_env": os.environ.get("MF_ENV", "").strip().lower() == "production",
-        "user_count": User.query.count(),
+        "user_count": users,
+        "active_control_count": active_controls,
+        "inactive_control_count": inactive_controls,
+        "bootstrap_available": bool(_bootstrap_token()) and active_controls == 0,
     }
 
 
@@ -112,20 +119,30 @@ def bootstrap_2fa():
         if not pyotp.TOTP(secret).verify(code, valid_window=1):
             flash("Authenticator code not valid.", "error")
         else:
-            user.is_active = True
-            db.session.add(
-                AuditEvent(
-                    actor_user_id=user.id,
-                    action="account.bootstrap_control",
-                    object_type="user",
-                    object_id=str(user.id),
-                    meta={"role": "CONTROL"},
+            try:
+                user.is_active = True
+                db.session.flush()
+                db.session.add(
+                    AuditEvent(
+                        actor_user_id=user.id,
+                        action="account.bootstrap_control",
+                        object_type="user",
+                        object_id=str(user.id),
+                        meta={"role": "CONTROL"},
+                    )
                 )
-            )
-            db.session.commit()
-            session.clear()
-            flash("CONTROL account activated. Sign in to continue.", "success")
-            return redirect(url_for("web.login"))
+                db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.exception("CONTROL bootstrap activation failed")
+                flash(
+                    f"CONTROL activation could not be completed ({type(exc).__name__}). Your account setup was preserved; try again after the server fix.",
+                    "error",
+                )
+            else:
+                session.clear()
+                flash("CONTROL account activated. Sign in to continue.", "success")
+                return redirect(url_for("web.login"))
 
     buf = io.BytesIO()
     qrcode.make(uri).save(buf, format="PNG")
