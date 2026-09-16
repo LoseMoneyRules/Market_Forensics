@@ -1,6 +1,7 @@
 <nav class="company-subnav" aria-label="Company workflow">
   <a href="{{ url_for('web.decide', ticker=company.ticker) }}" class="{% if request.endpoint == 'web.decide' %}active{% endif %}">Decide</a>
   <a href="{{ url_for('web.research', ticker=company.ticker) }}" class="{% if request.endpoint == 'web.research' %}active{% endif %}">Research</a>
+  <a href="{{ url_for('v312.valuation', ticker=company.ticker) }}" class="{% if request.endpoint == 'v312.valuation' %}active{% endif %}">Valuation</a>
   <a href="{{ url_for('v312.financial_flows', ticker=company.ticker) }}" class="{% if request.endpoint == 'v312.financial_flows' %}active{% endif %}">Financial Flows</a>
   <a href="{{ url_for('v312_flow.flows', ticker=company.ticker) }}" class="{% if request.endpoint == 'v312_flow.flows' %}active{% endif %}">Flows</a>
   <a href="{{ url_for('web.monitor', ticker=company.ticker) }}" class="{% if request.endpoint == 'web.monitor' %}active{% endif %}">Monitor</a>
