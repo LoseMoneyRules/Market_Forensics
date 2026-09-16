@@ -1,0 +1,7 @@
+<nav class="company-subnav" aria-label="Company workflow">
+  <a href="{{ url_for('web.decide', ticker=company.ticker) }}" class="{% if request.endpoint == 'web.decide' %}active{% endif %}">Decide</a>
+  <a href="{{ url_for('web.research', ticker=company.ticker) }}" class="{% if request.endpoint == 'web.research' %}active{% endif %}">Research</a>
+  <a href="{{ url_for('web.monitor', ticker=company.ticker) }}" class="{% if request.endpoint == 'web.monitor' %}active{% endif %}">Monitor</a>
+  <a href="{{ url_for('web.validate', ticker=company.ticker) }}" class="{% if request.endpoint == 'web.validate' %}active{% endif %}">Validate</a>
+  <a href="{{ url_for('web.portfolio') }}">Portfolio</a>
+</nav>
