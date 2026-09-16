@@ -10,6 +10,9 @@ from flask import Flask, g, session
 from .extensions import csrf, db, limiter
 
 
+VIEW_ROLES = {"FRIEND", "INSIDER", "CONTROL"}
+
+
 def create_app(test_config: dict | None = None) -> Flask:
     load_dotenv()
     app = Flask(__name__, instance_relative_config=True)
@@ -26,7 +29,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         SESSION_COOKIE_SECURE=os.environ.get("MF_ENV", "development") == "production",
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
-        VERSION="0.0.1",
+        VERSION="0.0.2",
     )
     if test_config:
         app.config.update(test_config)
@@ -41,13 +44,27 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.before_request
     def load_user():
         g.user = None
+        g.view_role = None
         uid = session.get("user_id")
         if uid:
             user = db.session.get(User, uid)
             if user and user.is_active:
                 g.user = user
+                if user.role == "CONTROL":
+                    requested = str(session.get("view_as", "CONTROL")).upper()
+                    g.view_role = requested if requested in VIEW_ROLES else "CONTROL"
+                else:
+                    session.pop("view_as", None)
+                    g.view_role = user.role
             else:
                 session.clear()
+
+    @app.context_processor
+    def inject_product_context():
+        return {
+            "mf_version": app.config["VERSION"],
+            "effective_role": getattr(g, "view_role", None),
+        }
 
     from .routes import bp
     app.register_blueprint(bp)
