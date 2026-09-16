@@ -40,7 +40,7 @@ def sync_engine_credentials(user_id: int) -> None:
 
 def load_state(ticker: str) -> dict[str, Any]:
     """Load the canonical V3.1.12 workstation state without reimplementing its calculations."""
-    from market_forensics import db, financial_flows, opportunity, service, workstation
+    from market_forensics import db, decision, financial_flows, opportunity, service, workstation
 
     initialize_engine()
     t = str(ticker or "").upper().strip()
@@ -57,7 +57,20 @@ def load_state(ticker: str) -> dict[str, Any]:
     state["validation"] = db.latest_validation_result(t) or {}
     state["share_basis_evidence"] = db.current_share_basis_evidence(t) or {}
     state["share_basis_override"] = db.share_basis_override(t) or {}
+    state["gate_overrides"] = db.gate_overrides(t)
     state["opportunity"] = opportunity.evaluate(state, service.last_successful_refresh(t))
+
+    # Preserve the local workstation's secondary evidence/control surfaces too.
+    decision.seed_bear_case(t)
+    state["bear_case_items"] = [dict(x) for x in db.query(
+        "SELECT * FROM bear_case_items WHERE ticker=? ORDER BY item_key", (t,)
+    )]
+    state["peer_links"] = [dict(x) for x in db.peer_links(t)]
+    state["events"] = [dict(x) for x in db.query(
+        "SELECT * FROM events WHERE ticker=? ORDER BY event_date", (t,)
+    )]
+    state["snapshot_changes"] = decision.what_changed(service.snapshot_history(t, 10))
+    state["next_event"] = dict(decision.next_event(t) or {})
 
     annual = financial_flows.annual_rows(state.get("fund_rows") or [])
     by_year: dict[str, dict[str, Any]] = {}
