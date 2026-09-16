@@ -5,7 +5,7 @@ on:
 
 concurrency:
   group: market-forensics-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -49,10 +49,6 @@ jobs:
           PY
           find _vendor -type d -name __pycache__ -prune -exec rm -rf {} +
           find _vendor -type f -name '*.pyc' -delete
-          VENDOR_ID="$(python -m pip freeze --path _vendor | LC_ALL=C sort | sha256sum | awk '{print $1}')"
-          printf '%s\n' "$VENDOR_ID" > _vendor/.mf_vendor_bundle_id
-          echo "VENDOR_ID=$VENDOR_ID" >> "$GITHUB_ENV"
-          echo "Hosted dependency bundle id: $VENDOR_ID"
 
       - name: Verify deployment secrets
         env:
@@ -82,72 +78,35 @@ jobs:
           set -euo pipefail
           printf 'restart %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
 
-          # Read the dependency marker already on Namecheap. If it matches this
-          # exact resolved bundle, _vendor is skipped completely on future deploys.
-          REMOTE_VENDOR_ID="$(
-            lftp 2>/dev/null <<LFTP || true
-          set cmd:fail-exit yes
-          set ssl:verify-certificate yes
-          set ftp:ssl-force yes
-          set ftp:ssl-protect-data yes
-          set net:max-retries 2
-          set net:timeout 20
-          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
-          cat _vendor/.mf_vendor_bundle_id
-          bye
-          LFTP
-          )"
-          REMOTE_VENDOR_ID="$(printf '%s' "$REMOTE_VENDOR_ID" | tr -d '[:space:]')"
-
-          if [ "$REMOTE_VENDOR_ID" = "$VENDOR_ID" ]; then
-            echo "Hosted dependencies already present and exact; skipping _vendor upload."
-          elif [ -z "$REMOTE_VENDOR_ID" ]; then
-            echo "No completed dependency marker found; resuming the interrupted _vendor upload."
-            lftp <<LFTP
+          echo "Starting resilient _vendor sync. Existing complete files are skipped by size; partial files are resumed."
+          timeout --signal=TERM 75m lftp <<LFTP
           set cmd:fail-exit yes
           set ssl:verify-certificate yes
           set ftp:ssl-force yes
           set ftp:ssl-protect-data yes
           set net:max-retries 3
           set net:timeout 30
+          set net:reconnect-interval-base 5
+          set net:reconnect-interval-max 20
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --continue --ignore-time --parallel=4 --verbose \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
-            --exclude-glob '.mf_vendor_bundle_id' \
             ./_vendor ./_vendor
-          put _vendor/.mf_vendor_bundle_id -o _vendor/.mf_vendor_bundle_id
           bye
           LFTP
-          else
-            echo "Hosted dependency bundle changed; replacing _vendor safely."
-            lftp <<LFTP
-          set cmd:fail-exit yes
-          set ssl:verify-certificate yes
-          set ftp:ssl-force yes
-          set ftp:ssl-protect-data yes
-          set net:max-retries 3
-          set net:timeout 30
-          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
-          mirror --reverse --delete --parallel=4 --verbose \
-            --exclude-glob __pycache__/ \
-            --exclude-glob '*.pyc' \
-            --exclude-glob '.mf_vendor_bundle_id' \
-            ./_vendor ./_vendor
-          put _vendor/.mf_vendor_bundle_id -o _vendor/.mf_vendor_bundle_id
-          bye
-          LFTP
-          fi
+          echo "_vendor sync complete."
 
-          # Application payload is small. Upload it only after dependencies are complete,
-          # then restart Passenger so production never activates against a partial _vendor.
-          lftp <<LFTP
+          echo "Starting application payload sync."
+          timeout --signal=TERM 10m lftp <<LFTP
           set cmd:fail-exit yes
           set ssl:verify-certificate yes
           set ftp:ssl-force yes
           set ftp:ssl-protect-data yes
           set net:max-retries 3
           set net:timeout 30
+          set net:reconnect-interval-base 5
+          set net:reconnect-interval-max 20
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
 
           mirror --reverse --delete --verbose \
@@ -178,6 +137,7 @@ jobs:
           put /tmp/restart.txt -o tmp/restart.txt
           bye
           LFTP
+          echo "Application payload sync complete; Passenger restart requested."
 
       - name: Production health check
         run: |
