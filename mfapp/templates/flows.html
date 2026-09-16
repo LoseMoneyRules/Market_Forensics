@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ company.ticker }} Flows · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head company-head"><div><div class="eyebrow">FLOWS · V3.1.12</div><h1>{{ company.ticker }} <span>Positioning & short activity</span></h1><p>FINRA short-volume evidence is descriptive, not directional by itself. It belongs beside thesis, valuation and market context — never above them.</p></div><div class="version-chip">CONTROL</div></section>
+{% include "_company_nav.html" %}
+
+<section class="metric-row flow-kpis">
+  <div class="metric"><span>Latest short-volume %</span><strong>{{ '%.1f%%'|format(latest.short_pct*100) if latest and latest.short_pct is not none else '—' }}</strong></div>
+  <div class="metric"><span>20-session average</span><strong>{{ '%.1f%%'|format(avg20*100) if avg20 is not none else '—' }}</strong></div>
+  <div class="metric"><span>Latest session</span><strong class="metric-small">{{ latest.trade_date if latest else '—' }}</strong></div>
+</section>
+
+<section class="panel">
+  <div class="section-title"><div><div class="panel-label">FINRA REG SHO</div><h2>Daily short volume</h2></div><form method="post" action="{{ url_for('v312_flow.refresh_finra', ticker=company.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="primary" type="submit">Refresh FINRA</button></form></div>
+  <div class="info-box"><strong>Interpretation rule</strong><span>Short-volume percentage is transaction-flow evidence, not short-interest outstanding. High daily short volume can arise from market making, hedging and execution mechanics; use it with persistence, price behavior and published short interest.</span></div>
+  {% if daily %}<div class="short-bars" aria-label="Recent FINRA short-volume percentages">{% for row in daily[:30]|reverse %}<div class="short-bar-row"><span>{{ row.trade_date[5:] }}</span><div><i style="width:{{ ([row.short_pct*100 if row.short_pct is not none else 0,100]|min) }}%"></i></div><strong>{{ '%.1f%%'|format(row.short_pct*100) if row.short_pct is not none else '—' }}</strong></div>{% endfor %}</div>{% else %}<div class="empty substantial"><h3>No FINRA flow data yet</h3><p>Refresh to load the original V3.1.12 daily short-volume source. Existing last-good rows are preserved if FINRA is unavailable.</p></div>{% endif %}
+</section>
+
+<section class="panel"><div class="section-title"><div><div class="panel-label">SHORT INTEREST</div><h2>Outstanding short-interest ledger</h2></div><span>Separate from daily short volume</span></div>{% if interest %}<div class="table-wrap"><table><thead><tr><th>Settlement</th><th>Publication</th><th>Shares short</th><th>Days to cover</th><th>Source</th></tr></thead><tbody>{% for row in interest %}<tr><td>{{ row.settlement_date }}</td><td>{{ row.publication_date or '—' }}</td><td class="num-cell">{{ '{:,.0f}'.format(row.shares_short) if row.shares_short is not none else '—' }}</td><td class="num-cell">{{ '%.2f'|format(row.days_to_cover) if row.days_to_cover is not none else '—' }}</td><td>{{ row.source }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p class="muted-copy">No published short-interest observations stored yet. This remains a separate evidence stream; daily FINRA short volume is never relabeled as short interest.</p>{% endif %}</section>
+{% endblock %}
