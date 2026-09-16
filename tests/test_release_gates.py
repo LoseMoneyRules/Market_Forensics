@@ -21,42 +21,15 @@ def make_app():
     })
 
 
-def test_one_time_control_bootstrap_creates_inactive_control_and_moves_to_2fa(monkeypatch):
-    monkeypatch.setenv("MF_BOOTSTRAP_TOKEN", "release-test-bootstrap-token")
+def test_retired_control_bootstrap_is_not_registered(monkeypatch):
+    # Even if an obsolete environment variable is accidentally left behind, 0.0.4 must not expose
+    # the one-time CONTROL creation surface again after the production owner account exists.
+    monkeypatch.setenv("MF_BOOTSTRAP_TOKEN", "obsolete-bootstrap-token")
     app = make_app()
     client = app.test_client()
-    response = client.post("/bootstrap-control", data={
-        "token": "release-test-bootstrap-token",
-        "email": "owner@example.com",
-        "name": "Owner",
-        "password": "A-strong-release-password-123",
-    }, follow_redirects=False)
-    assert response.status_code == 302
-    assert response.location.endswith("/bootstrap-control/2fa")
-    with app.app_context():
-        user = User.query.filter_by(email="owner@example.com").first()
-        assert user is not None
-        assert user.role == "CONTROL"
-        assert user.is_active is False
-    with client.session_transaction() as session:
-        assert session.get("bootstrap_user_id") is not None
-
-
-def test_bootstrap_hides_itself_after_active_control_exists(monkeypatch):
-    monkeypatch.setenv("MF_BOOTSTRAP_TOKEN", "release-test-bootstrap-token")
-    app = make_app()
-    with app.app_context():
-        db.create_all()
-        db.session.add(User(
-            email="owner@example.com",
-            display_name="Owner",
-            role="CONTROL",
-            password_hash=hash_password("A-strong-release-password-123"),
-            totp_secret_enc=encrypt_secret("JBSWY3DPEHPK3PXP"),
-            is_active=True,
-        ))
-        db.session.commit()
-    assert app.test_client().get("/bootstrap-control").status_code == 404
+    assert client.get("/bootstrap-control").status_code == 404
+    assert client.post("/bootstrap-control", data={"token": "obsolete-bootstrap-token"}).status_code == 404
+    assert client.get("/bootstrap-control/2fa").status_code == 404
 
 
 def test_real_publish_route_creates_immutable_snapshot_and_friend_preview_reads_it():
