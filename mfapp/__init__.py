@@ -70,6 +70,9 @@ def create_app(test_config: dict | None = None) -> Flask:
     from .routes import bp
     app.register_blueprint(bp)
 
+    from .bootstrap import bp as bootstrap_bp
+    app.register_blueprint(bootstrap_bp)
+
     from .v312_routes import bp as v312_bp
     app.register_blueprint(v312_bp)
 
