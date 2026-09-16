@@ -10,23 +10,23 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/v002.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/flows.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/valuation.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/full312.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 {% if g.user %}
 <header class="topbar">
-  <a class="brand" href="{{ url_for('web.dashboard') }}">
+  <a class="brand" href="{{ url_for('full312.workspace') if real_role == 'CONTROL' and effective_role == 'CONTROL' else url_for('web.dashboard') }}">
     <img src="{{ url_for('static', filename='img/mark.svg') }}" alt="" class="brand-mark">
-    <span><strong>Market Forensics</strong><small>v{{ mf_version }}</small></span>
+    <span><strong>Market Forensics</strong><small>v{{ mf_version }} · Engine {{ engine_version }}</small></span>
   </a>
   <div class="top-actions">
-    {% if g.user.role == 'CONTROL' %}
-    <form method="post" action="{{ url_for('web.view_as') }}" class="view-switch" aria-label="Preview access level">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if real_role == 'CONTROL' %}
+    <nav class="view-switch" aria-label="Preview access level">
       <span>View as</span>
-      <select name="role" onchange="this.form.submit()">
-        {% for role in ['FRIEND','INSIDER','CONTROL'] %}<option value="{{ role }}" {% if effective_role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}
-      </select>
-    </form>
+      <a href="{{ url_for('preview.set_preview', role='FRIEND') }}" class="{% if effective_role == 'FRIEND' %}active{% endif %}">FRIEND</a>
+      <a href="{{ url_for('preview.set_preview', role='INSIDER') }}" class="{% if effective_role == 'INSIDER' %}active{% endif %}">INSIDER</a>
+      <a href="{{ url_for('preview.control_mode') }}" class="{% if effective_role == 'CONTROL' %}active{% endif %}">CONTROL</a>
+    </nav>
     {% endif %}
     <span class="role-pill role-{{ effective_role|lower }}">{{ effective_role }}</span>
     <form method="post" action="{{ url_for('web.logout') }}" class="inline-form">
@@ -35,31 +35,40 @@
     </form>
   </div>
 </header>
-{% if g.user.role == 'CONTROL' and effective_role != 'CONTROL' %}
-<div class="preview-banner"><strong>Preview mode · {{ effective_role }}</strong><span>You are still authenticated as CONTROL. Private CONTROL surfaces are intentionally hidden.</span></div>
+{% if real_role == 'CONTROL' and effective_role != 'CONTROL' %}
+<div class="preview-banner">
+  <strong>Preview mode · {{ effective_role }}</strong>
+  <span>Your real account is still CONTROL; only the published presentation is being simulated.</span>
+  <a class="preview-exit" href="{{ url_for('preview.control_mode') }}">Exit preview → CONTROL</a>
+</div>
 {% endif %}
 <nav class="navrail">
   <div class="nav-section">WORKSPACE</div>
-  <a href="{{ url_for('web.dashboard') }}" class="navitem {% if request.endpoint == 'web.dashboard' %}active{% endif %}"><span class="nav-icon">⌂</span><span>Overview</span></a>
-  {% if effective_role == 'CONTROL' %}
-  <a href="{{ url_for('web.discover') }}" class="navitem {% if request.endpoint == 'web.discover' %}active{% endif %}"><span class="nav-icon">⌕</span><span>Discover</span></a>
-  <a href="{{ url_for('web.decision_queue') }}" class="navitem {% if request.endpoint == 'web.decision_queue' %}active{% endif %}"><span class="nav-icon">≣</span><span>Decision Queue</span></a>
-  <a href="{{ url_for('web.portfolio') }}" class="navitem {% if request.endpoint == 'web.portfolio' %}active{% endif %}"><span class="nav-icon">▦</span><span>Portfolio</span></a>
-  <div class="nav-section nav-gap">SYSTEM</div>
-  <a href="{{ url_for('web.settings') }}" class="navitem {% if request.endpoint == 'web.settings' %}active{% endif %}"><span class="nav-icon">⚙</span><span>Settings & Data</span></a>
-  <a href="{{ url_for('web.control') }}" class="navitem {% if request.endpoint == 'web.control' %}active{% endif %}"><span class="nav-icon">◆</span><span>Control</span></a>
+  {% if effective_role == 'CONTROL' and real_role == 'CONTROL' %}
+    <a href="{{ url_for('full312.workspace') }}" class="navitem {% if request.endpoint == 'full312.workspace' %}active{% endif %}"><span class="nav-icon">⌂</span><span>Coverage</span></a>
+    <a href="{{ url_for('full312.discovery') }}" class="navitem {% if request.endpoint == 'full312.discovery' %}active{% endif %}"><span class="nav-icon">⌕</span><span>Discovery</span></a>
+    <a href="{{ url_for('web.portfolio') }}" class="navitem"><span class="nav-icon">▦</span><span>Portfolio Index</span></a>
+    <div class="nav-section nav-gap">SYSTEM</div>
+    <a href="{{ url_for('web.settings') }}" class="navitem {% if request.endpoint == 'web.settings' %}active{% endif %}"><span class="nav-icon">⚙</span><span>Settings & Data</span></a>
+    <a href="{{ url_for('web.control') }}" class="navitem {% if request.endpoint == 'web.control' %}active{% endif %}"><span class="nav-icon">◆</span><span>Control</span></a>
+  {% else %}
+    <a href="{{ url_for('web.dashboard') }}" class="navitem {% if request.endpoint == 'web.dashboard' %}active{% endif %}"><span class="nav-icon">⌂</span><span>Published Research</span></a>
   {% endif %}
   <div class="nav-footer"><span>Lose Money Rules</span></div>
 </nav>
 {% endif %}
-<main class="{% if g.user %}app-shell {% if g.user.role == 'CONTROL' and effective_role != 'CONTROL' %}preview-offset{% endif %}{% else %}auth-shell{% endif %}">
+<main class="{% if g.user %}app-shell {% if real_role == 'CONTROL' and effective_role != 'CONTROL' %}preview-offset{% endif %}{% else %}auth-shell{% endif %}">
   {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
   {% block content %}{% endblock %}
 </main>
 {% if g.user %}
 <nav class="mobile-nav">
-  <a href="{{ url_for('web.dashboard') }}">Overview</a>
-  {% if effective_role == 'CONTROL' %}<a href="{{ url_for('web.decision_queue') }}">Queue</a><a href="{{ url_for('web.portfolio') }}">Portfolio</a><a href="{{ url_for('web.settings') }}">Settings</a>{% endif %}
+  {% if real_role == 'CONTROL' and effective_role != 'CONTROL' %}<a class="mobile-control-exit" href="{{ url_for('preview.control_mode') }}">CONTROL</a>{% endif %}
+  {% if effective_role == 'CONTROL' and real_role == 'CONTROL' %}
+    <a href="{{ url_for('full312.workspace') }}">Coverage</a><a href="{{ url_for('full312.discovery') }}">Discover</a><a href="{{ url_for('web.settings') }}">Settings</a>
+  {% else %}
+    <a href="{{ url_for('web.dashboard') }}">Research</a>
+  {% endif %}
 </nav>
 {% endif %}
 <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
