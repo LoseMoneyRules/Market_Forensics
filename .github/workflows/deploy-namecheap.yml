@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
 
@@ -54,7 +54,7 @@ jobs:
           set ftp:ssl-protect-data yes
           set net:max-retries 2
           set net:timeout 20
-          open -u "$FTP_USER","$FTP_PASS" "ftpes://$FTP_HOST"
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
 
           mirror --reverse --delete --verbose \
             --exclude-glob __pycache__/ \
