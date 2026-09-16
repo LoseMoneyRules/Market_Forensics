@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% block title %}{{ company.ticker }} · Market Forensics{% endblock %}{% block content %}
+<section class="page-head company-head"><div><div class="eyebrow">RESEARCH FILE · VERSION {{ pub.version }}</div><h1>{{ company.ticker }} <span>{{ company.name }}</span></h1><p>{{ company.summary }}</p></div><div class="score-big"><span>MF SCORE</span><strong>{{ company.score if company.score is not none else '—' }}</strong><small>{{ company.status }}</small></div></section>
+<div class="company-actions"><button type="button" class="secondary" onclick="window.print()">Print / Save PDF</button></div><div class="disclosure">{{ pub.payload.get('disclosure','Published research snapshot.') }}</div>
+<section class="research-grid">
+  <article class="panel"><div class="panel-label">BUSINESS</div><h2>Business</h2><p>{{ pub.payload.get('business','No published business notes.') }}</p></article>
+  <article class="panel"><div class="panel-label">NUMBERS</div><h2>Numbers</h2><p>{{ pub.payload.get('numbers','No published numbers.') }}</p></article>
+  <article class="panel"><div class="panel-label">VALUATION</div><h2>Valuation</h2><p>{{ pub.payload.get('valuation','No published valuation.') }}</p></article>
+  <article class="panel"><div class="panel-label">CATALYSTS</div><h2>Catalysts</h2><p>{{ pub.payload.get('catalysts','No published catalysts.') }}</p></article>
+  <article class="panel"><div class="panel-label">RISK</div><h2>Risk</h2><p>{{ pub.payload.get('risk','No published risk notes.') }}</p></article>
+  {% if insider %}
+  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Expectations</h2><p>{{ pub.payload.get('expectations','No published expectations.') }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Bear case</h2><p>{{ pub.payload.get('bear_case','No published bear case.') }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Flows</h2><p>{{ pub.payload.get('flows','No published flows.') }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Monitoring</h2><p>{{ pub.payload.get('monitoring','No monitoring notes.') }}</p></article>
+  {% else %}
+  <article class="panel locked"><div class="panel-label">INSIDER</div><h2>Deeper evidence</h2><p>Expectations, bear case, flows and extended monitoring are available with INSIDER access.</p></article>
+  {% endif %}
+  <article class="panel span-2"><div class="panel-label">SOURCES</div><h2>Evidence ledger</h2><p>{{ pub.payload.get('sources','No source ledger published.') }}</p><div class="timestamp">Published {{ pub.published_at.strftime('%b %d, %Y') if pub.published_at else '' }} · Model {{ pub.model_version }}</div></article>
+</section>
+{% endblock %}
