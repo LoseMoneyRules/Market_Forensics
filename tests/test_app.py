@@ -23,7 +23,7 @@ def test_health():
     c = app.test_client()
     r = c.get("/health")
     assert r.status_code == 200
-    assert r.json["version"] == "0.0.1"
+    assert r.json["version"] == "0.0.2"
 
 
 def test_login_requires_2fa():
@@ -41,6 +41,8 @@ def test_login_requires_2fa():
     r = c.post("/verify", data={"code": code}, follow_redirects=False)
     assert r.status_code == 302
     assert r.location.endswith("/")
+    with c.session_transaction() as session:
+        assert session["view_as"] == "CONTROL"
 
 
 def test_control_is_protected():
