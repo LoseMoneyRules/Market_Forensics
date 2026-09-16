@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Workspace · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <div class="eyebrow">CONTROL · V3.1.12 FULL ENGINE</div>
+    <h1>Research Workspace</h1>
+    <p>Coverage, decisions, valuation, validation, flows and monitoring are driven by the preserved V3.1.12 engine.</p>
+  </div>
+  <div class="release-badge"><strong>0.0.4</strong><span>FULL beta</span></div>
+</section>
+
+<section class="panel compact-panel">
+  <div class="panel-label">ADD TO COVERAGE</div>
+  <form method="post" action="{{ url_for('full312.add_ticker') }}" class="inline-entry">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input name="ticker" placeholder="Ticker" autocomplete="off" required maxlength="16">
+    <button class="primary" type="submit">Validate & add</button>
+  </form>
+  <p class="micro left">Invalid/unresolvable symbols are rejected before save. Validation comes from the original V3.1.12 provider chain.</p>
+</section>
+
+<section class="summary-strip">
+  <div><span>Coverage</span><strong>{{ rows|length }}</strong></div>
+  <div><span>Positions</span><strong>{{ positions|length }}</strong></div>
+  <div><span>Engine</span><strong>3.1.12</strong></div>
+  <div><span>Release</span><strong>0.0.4</strong></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><div class="panel-label">COVERAGE</div><h2>Decision queue</h2></div><a class="secondary-link" href="{{ url_for('full312.discovery') }}">Open Discovery</a></div>
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="data-table full-table">
+      <thead><tr><th>Ticker</th><th>Status</th><th>Price</th><th>Base FV</th><th>Gap</th><th>Fundamental</th><th>Net Tape</th><th>Confidence</th><th>Refresh</th><th></th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        {% set s=row.summary %}
+        <tr>
+          <td><strong>{{ s.get('Ticker') }}</strong><small>{{ row.company.name if row.company else '' }}</small></td>
+          <td>{{ s.get('Status','RESEARCH') }}</td>
+          <td>{% if s.get('Price') is not none %}${{ '%.2f'|format(s.get('Price')) }}{% else %}—{% endif %}</td>
+          <td>{% if s.get('Base FV') is not none %}${{ '%.2f'|format(s.get('Base FV')) }}{% else %}DATA REVIEW{% endif %}</td>
+          <td>{% if s.get('Upside') is not none %}{{ '%+.1f%%'|format(s.get('Upside')*100) }}{% else %}—{% endif %}</td>
+          <td>{% if s.get('Fundamental') is not none %}{{ '%.2f'|format(s.get('Fundamental')) }}/5{% else %}—{% endif %}</td>
+          <td>{{ '%.0f'|format(s.get('Net Tape')) if s.get('Net Tape') is not none else '—' }}</td>
+          <td>{{ '%.0f'|format(s.get('Confidence')) if s.get('Confidence') is not none else '—' }}</td>
+          <td><span class="status-tag">{{ s.get('Refresh Status','NEVER') }}</span><small>{{ s.get('Last Refresh') or '' }}</small></td>
+          <td><a class="primary-link" href="{{ url_for('full312.company', ticker=s.get('Ticker'), section='decide') }}">Open →</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="empty-state"><h3>No coverage yet</h3><p>Add a ticker above. The engine will not create placeholder records for invalid symbols.</p></div>
+  {% endif %}
+</section>
+
+{% if positions %}
+<section class="panel">
+  <div class="panel-label">PORTFOLIO</div><h2>Engine positions</h2>
+  <div class="table-wrap"><table class="data-table"><thead><tr><th>Ticker</th><th>Side</th><th>Shares</th><th>Avg cost</th><th>Tags</th></tr></thead><tbody>
+  {% for p in positions %}<tr><td><a href="{{ url_for('full312.company', ticker=p.get('ticker'), section='portfolio') }}"><strong>{{ p.get('ticker') }}</strong></a></td><td>{{ p.get('side') }}</td><td>{{ p.get('shares') }}</td><td>${{ '%.2f'|format(p.get('avg_cost') or 0) }}</td><td>{{ p.get('tags') or '' }}</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endif %}
+{% endblock %}
