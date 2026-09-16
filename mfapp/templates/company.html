@@ -1,20 +1,39 @@
-{% extends "base.html" %}{% block title %}{{ company.ticker }} · Market Forensics{% endblock %}{% block content %}
-<section class="page-head company-head"><div><div class="eyebrow">RESEARCH FILE · VERSION {{ pub.version }}</div><h1>{{ company.ticker }} <span>{{ company.name }}</span></h1><p>{{ company.summary }}</p></div><div class="score-big"><span>MF SCORE</span><strong>{{ company.score if company.score is not none else '—' }}</strong><small>{{ company.status }}</small></div></section>
-<div class="company-actions"><button type="button" class="secondary" onclick="window.print()">Print / Save PDF</button></div><div class="disclosure">{{ pub.payload.get('disclosure','Published research snapshot.') }}</div>
+{% extends "base.html" %}
+{% block title %}{{ company.ticker }} · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head company-head published-head">
+  <div><div class="eyebrow">PUBLISHED RESEARCH · v{{ pub.version }}</div><h1>{{ company.ticker }} <span>{{ company.name }}</span></h1><p>{{ company.summary }}</p></div>
+  <div class="decision-hero"><span>RESEARCH STATE</span><strong>{{ pub.payload.get('decision','RESEARCH') }}</strong><small>{{ effective_role }} view · Model {{ pub.model_version }}</small></div>
+</section>
+<div class="company-actions"><button type="button" class="secondary" onclick="window.print()">Print / Save PDF</button></div>
+<div class="disclosure">{{ pub.payload.get('disclosure','Independent research snapshot. General information only; not personalized investment advice.') }}</div>
+<section class="market-bar published-cases">
+  <div><small>BEAR</small><strong>{% if pub.payload.get('bear_value') is not none %}${{ '%.2f'|format(pub.payload.get('bear_value')) }}{% else %}DATA REVIEW{% endif %}</strong></div>
+  <div><small>BASE</small><strong>{% if pub.payload.get('base_value') is not none %}${{ '%.2f'|format(pub.payload.get('base_value')) }}{% else %}DATA REVIEW{% endif %}</strong></div>
+  <div><small>BULL</small><strong>{% if pub.payload.get('bull_value') is not none %}${{ '%.2f'|format(pub.payload.get('bull_value')) }}{% else %}DATA REVIEW{% endif %}</strong></div>
+  <div><small>MODEL CONFIDENCE</small><strong>{{ pub.payload.get('model_confidence','UNVALIDATED') }}</strong></div>
+</section>
+<section class="lens-grid published-lenses">
+  {% for label,key in [('BUSINESS','business_label'),('VALUE','value_label'),('EXPECTATIONS','expectations_label'),('VARIANT','variant_label'),('PATH','path_label'),('RISK','risk_label')] %}<article class="lens-card"><span>{{ label }}</span><strong>{{ pub.payload.get(key,'—') }}</strong></article>{% endfor %}
+</section>
 <section class="research-grid">
-  <article class="panel"><div class="panel-label">BUSINESS</div><h2>Business</h2><p>{{ pub.payload.get('business','No published business notes.') }}</p></article>
-  <article class="panel"><div class="panel-label">NUMBERS</div><h2>Numbers</h2><p>{{ pub.payload.get('numbers','No published numbers.') }}</p></article>
-  <article class="panel"><div class="panel-label">VALUATION</div><h2>Valuation</h2><p>{{ pub.payload.get('valuation','No published valuation.') }}</p></article>
-  <article class="panel"><div class="panel-label">CATALYSTS</div><h2>Catalysts</h2><p>{{ pub.payload.get('catalysts','No published catalysts.') }}</p></article>
-  <article class="panel"><div class="panel-label">RISK</div><h2>Risk</h2><p>{{ pub.payload.get('risk','No published risk notes.') }}</p></article>
+  <article class="panel span-2"><div class="panel-label">THESIS</div><h2>{{ pub.payload.get('thesis') or 'Thesis not published.' }}</h2></article>
+  <article class="panel"><div class="panel-label">BUSINESS</div><h2>Business</h2><p>{{ pub.payload.get('business') or 'No published business notes.' }}</p></article>
+  <article class="panel"><div class="panel-label">NUMBERS</div><h2>Numbers</h2><p>{{ pub.payload.get('numbers') or 'No published numbers.' }}</p></article>
+  <article class="panel"><div class="panel-label">VALUATION</div><h2>Valuation</h2><p>{{ pub.payload.get('valuation') or 'No published valuation.' }}</p></article>
+  <article class="panel"><div class="panel-label">CATALYSTS</div><h2>Catalysts / path</h2><p>{{ pub.payload.get('catalysts') or 'No published catalysts.' }}</p></article>
+  <article class="panel"><div class="panel-label">RISK</div><h2>Risk</h2><p>{{ pub.payload.get('risk') or 'No published risk notes.' }}</p></article>
+  <article class="panel"><div class="panel-label">WHAT CHANGES THE VIEW</div><h2>Decision conditions</h2><p>{{ pub.payload.get('changes_decision') or 'Not published.' }}</p></article>
   {% if insider %}
-  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Expectations</h2><p>{{ pub.payload.get('expectations','No published expectations.') }}</p></article>
-  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Bear case</h2><p>{{ pub.payload.get('bear_case','No published bear case.') }}</p></article>
-  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Flows</h2><p>{{ pub.payload.get('flows','No published flows.') }}</p></article>
-  <article class="panel insider-panel"><div class="panel-label">INSIDER</div><h2>Monitoring</h2><p>{{ pub.payload.get('monitoring','No monitoring notes.') }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER · EXPECTATIONS</div><h2>What is priced in</h2><p>{{ pub.payload.get('expectations') or 'No published expectations.' }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER · VARIANT</div><h2>Market vs our view</h2><p><strong>Market believes:</strong> {{ pub.payload.get('variant_market') or '—' }}</p><p><strong>We believe:</strong> {{ pub.payload.get('variant_we') or '—' }}</p><p><strong>Evidence:</strong> {{ pub.payload.get('variant_evidence') or '—' }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER · BEAR CASE</div><h2>Strongest counter-case</h2><p>{{ pub.payload.get('bear_case') or 'No published bear case.' }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER · FLOWS</div><h2>Tape & positioning</h2><p>{{ pub.payload.get('flows') or 'No published flows.' }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER · MONITORING</div><h2>What matters next</h2><p>{{ pub.payload.get('monitoring') or 'No monitoring notes.' }}</p></article>
+  <article class="panel insider-panel"><div class="panel-label">INSIDER · RESOLUTION</div><h2>What closes the gap?</h2><p>{{ pub.payload.get('variant_resolution') or 'Not published.' }}</p><p class="micro left">Horizon: {{ pub.payload.get('horizon') or '—' }}</p></article>
   {% else %}
-  <article class="panel locked"><div class="panel-label">INSIDER</div><h2>Deeper evidence</h2><p>Expectations, bear case, flows and extended monitoring are available with INSIDER access.</p></article>
+  <article class="panel locked span-2"><div class="panel-label">INSIDER</div><h2>Deeper evidence is intentionally hidden</h2><p>Expectations, variant evidence, strongest bear case, flows and extended monitoring are available with INSIDER access.</p></article>
   {% endif %}
-  <article class="panel span-2"><div class="panel-label">SOURCES</div><h2>Evidence ledger</h2><p>{{ pub.payload.get('sources','No source ledger published.') }}</p><div class="timestamp">Published {{ pub.published_at.strftime('%b %d, %Y') if pub.published_at else '' }} · Model {{ pub.model_version }}</div></article>
+  <article class="panel span-2"><div class="panel-label">SOURCES</div><h2>Evidence ledger</h2><p class="preline">{{ pub.payload.get('sources') or 'No source ledger published.' }}</p><div class="timestamp">Published {{ pub.published_at.strftime('%b %d, %Y %H:%M') if pub.published_at else '' }} · Snapshot v{{ pub.version }} · Model {{ pub.model_version }}</div></article>
 </section>
 {% endblock %}
