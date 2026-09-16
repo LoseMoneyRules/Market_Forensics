@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ company.ticker }} Financial Flows · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head company-head">
+  <div><div class="eyebrow">RESEARCH · FINANCIAL FLOWS · V3.1.12</div><h1>{{ company.ticker }} <span>Financial Flows</span></h1><p>Adaptive annual statement flows. Missing optional subtotals are bypassed; reconciliation buckets are explicit and never invented.</p></div>
+  <div class="version-chip">ENGINE 3.1.12</div>
+</section>
+{% include "_company_nav.html" %}
+
+<section class="flows-toolbar panel">
+  <div>
+    <div class="panel-label">FISCAL YEAR</div>
+    {% if years %}
+    <div class="year-pills">{% for year in years %}<a href="{{ url_for('v312.financial_flows', ticker=company.ticker, year=year) }}" class="year-pill {% if year == selected_year %}active{% endif %}">{{ year }}</a>{% endfor %}</div>
+    {% else %}<p class="muted-copy">No annual fundamentals stored yet.</p>{% endif %}
+  </div>
+  <div class="flow-actions">
+    <form method="post" action="{{ url_for('v312.refresh_fundamentals', ticker=company.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="primary" type="submit">Refresh SEC fundamentals</button></form>
+  </div>
+</section>
+
+{% if selected_year %}
+<section class="flow-meta-row">
+  <div class="metric"><span>Year</span><strong>FY{{ selected_year }}</strong></div>
+  <div class="metric"><span>Source</span><strong class="metric-small">{{ latest.source if latest else '—' }}</strong></div>
+  <div class="metric"><span>Filed</span><strong class="metric-small">{{ selected.period_filed or '—' }}</strong></div>
+  <div class="metric"><span>Revenue</span><strong data-money="{{ selected.revenue if selected.revenue is not none else '' }}">—</strong></div>
+</section>
+
+<div class="flow-tabs" role="tablist"><button type="button" class="flow-tab active" data-flow-tab="income">Income Statement</button><button type="button" class="flow-tab" data-flow-tab="cash">Cash Flow</button></div>
+
+<section id="flow-income" class="flow-pane active">
+  <article class="panel sankey-panel">
+    <div class="section-title"><div><div class="panel-label">INCOME STATEMENT</div><h2>Revenue → Net result</h2></div><span>{{ income.resolved.presentation_path if income.ok and income.resolved else 'DATA REVIEW' }}</span></div>
+    {% if income.ok %}<div id="income-sankey" class="sankey-host" aria-label="Income statement Sankey"></div><p class="basis-note">{{ income.basis }}</p>{% else %}<div class="data-review"><strong>DATA REVIEW</strong><p>{{ income.reason }}</p></div>{% endif %}
+  </article>
+  <article class="panel"><div class="panel-label">RECONCILIATION</div><h2>Income statement lines</h2>{% if income.rows %}<div class="table-wrap"><table><thead><tr><th>Line</th><th>Amount</th><th>% Revenue</th></tr></thead><tbody>{% for row in income.rows %}<tr><td>{{ row.Line }}</td><td class="num-cell" data-money="{{ row.Amount if row.Amount is not none else '' }}">—</td><td class="num-cell">{{ '%.1f%%'|format(row['% Revenue']*100) if row['% Revenue'] is not none else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p>No reconciled lines.</p>{% endif %}</article>
+</section>
+
+<section id="flow-cash" class="flow-pane">
+  <article class="panel sankey-panel">
+    <div class="section-title"><div><div class="panel-label">CASH FLOW</div><h2>Earnings → CFO → FCF → capital allocation</h2></div><span>Exact arithmetic bridges only</span></div>
+    {% if cash.ok %}<div id="cash-sankey" class="sankey-host" aria-label="Cash flow Sankey"></div><p class="basis-note">{{ cash.basis }}</p>{% else %}<div class="data-review"><strong>DATA REVIEW</strong><p>{{ cash.reason }}</p></div>{% endif %}
+  </article>
+  <article class="panel"><div class="panel-label">RECONCILIATION</div><h2>Cash-flow lines</h2>{% if cash.rows %}<div class="table-wrap"><table><thead><tr><th>Line</th><th>Amount</th><th>% |CFO|</th></tr></thead><tbody>{% for row in cash.rows %}<tr><td>{{ row.Line }}</td><td class="num-cell" data-money="{{ row.Amount if row.Amount is not none else '' }}">—</td><td class="num-cell">{{ '%.1f%%'|format(row['% CFO']*100) if row['% CFO'] is not none else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p>No reconciled lines.</p>{% endif %}</article>
+</section>
+{% else %}
+<section class="empty substantial"><h2>Load annual fundamentals</h2><p>Configure a truthful SEC User-Agent in Settings & Data, then refresh. Market Forensics stores last-good annual rows and feeds the preserved V3.1.12 flow engine.</p></section>
+{% endif %}
+
+<details class="panel manual-flow-input"><summary><strong>Manual annual row</strong> · explicit fallback only</summary><p class="muted-copy">Use only when you deliberately want to enter an audited/reconciled row yourself. It is stored with source = MANUAL and never represented as SEC data.</p><form method="post" action="{{ url_for('v312.save_manual_fundamental', ticker=company.ticker) }}" class="form-stack"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="form-grid three"><label>Fiscal year<input name="fiscal_year" inputmode="numeric" required value="{{ selected_year or '' }}"></label><label>Period end<input name="period_end" placeholder="2026-05-31"></label><label>Revenue<input name="revenue" inputmode="decimal"></label><label>Gross profit<input name="gross_profit" inputmode="decimal"></label><label>Operating income<input name="operating_income" inputmode="decimal"></label><label>Pretax income<input name="pretax" inputmode="decimal"></label><label>Tax<input name="tax" inputmode="decimal"></label><label>Net income / loss<input name="net_income" inputmode="decimal"></label><label>CFO<input name="cfo" inputmode="decimal"></label><label>Capex<input name="capex" inputmode="decimal"></label><label>Buybacks<input name="buybacks" inputmode="decimal"></label><label>Dividends<input name="dividends" inputmode="decimal"></label></div><label>Source / reconciliation note<textarea name="source_note" rows="2" placeholder="10-K page, filing URL, reconciliation note..."></textarea></label><button class="secondary" type="submit">Save manual FY row</button></form></details>
+{% endblock %}
+
+{% block scripts %}
+{% if selected_year %}<script>
+(() => {
+  const income = {{ income|tojson }};
+  const cash = {{ cash|tojson }};
+  const money = value => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '—';
+    const a = Math.abs(n), sign = n < 0 ? '-' : '';
+    if (a >= 1e12) return sign + '$' + (a/1e12).toFixed(2) + 'T';
+    if (a >= 1e9) return sign + '$' + (a/1e9).toFixed(2) + 'B';
+    if (a >= 1e6) return sign + '$' + (a/1e6).toFixed(1) + 'M';
+    if (a >= 1e3) return sign + '$' + (a/1e3).toFixed(1) + 'K';
+    return sign + '$' + a.toFixed(0);
+  };
+  document.querySelectorAll('[data-money]').forEach(el => el.textContent = el.dataset.money ? money(el.dataset.money) : '—');
+
+  function renderSankey(hostId, pack) {
+    const host = document.getElementById(hostId);
+    if (!host || !pack || !pack.ok) return;
+    const labels = pack.labels || [], links = pack.links || [];
+    if (!labels.length || !links.length) return;
+    const W = Math.max(820, host.clientWidth || 820), H = Math.max(420, Math.min(620, labels.length * 58));
+    const inEdges = labels.map(() => []), outEdges = labels.map(() => []);
+    links.forEach((l,i) => { outEdges[l[0]].push(i); inEdges[l[1]].push(i); });
+    const depth = labels.map(() => 0);
+    for (let pass=0; pass<labels.length; pass++) links.forEach(l => { depth[l[1]] = Math.max(depth[l[1]], depth[l[0]] + 1); });
+    const maxDepth = Math.max(...depth, 1);
+    const columns = Array.from({length:maxDepth+1},()=>[]);
+    labels.forEach((_,i)=>columns[depth[i]].push(i));
+    const pos = {};
+    columns.forEach((nodes,d) => nodes.forEach((idx,j) => {
+      const x = 24 + d * ((W-188)/Math.max(maxDepth,1));
+      const y = 24 + (j+0.5) * ((H-48)/Math.max(nodes.length,1));
+      pos[idx] = {x,y};
+    }));
+    const total = Math.max(...links.map(l=>Number(l[2])||0),1);
+    const esc = s => String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Financial flow diagram">`;
+    links.forEach((l) => {
+      const a=pos[l[0]], b=pos[l[1]], val=Number(l[2])||0;
+      const x1=a.x+128, x2=b.x, mid=(x1+x2)/2, width=Math.max(2,Math.min(34,3+28*Math.sqrt(val/total)));
+      svg += `<path class="sankey-link" d="M ${x1} ${a.y} C ${mid} ${a.y}, ${mid} ${b.y}, ${x2} ${b.y}" stroke-width="${width}"><title>${esc(labels[l[0]])} → ${esc(labels[l[1]])}: ${money(val)}</title></path>`;
+    });
+    labels.forEach((label,i) => {
+      const p=pos[i];
+      svg += `<g class="sankey-node"><rect x="${p.x}" y="${p.y-18}" width="128" height="36" rx="8"></rect><text x="${p.x+9}" y="${p.y+4}">${esc(label.length>21 ? label.slice(0,20)+'…' : label)}</text><title>${esc(label)}</title></g>`;
+    });
+    svg += '</svg>';
+    host.innerHTML = svg;
+  }
+  renderSankey('income-sankey', income);
+  renderSankey('cash-sankey', cash);
+  document.querySelectorAll('.flow-tab').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.flow-tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.flow-pane').forEach(x=>x.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('flow-'+btn.dataset.flowTab).classList.add('active');
+  }));
+})();
+</script>{% endif %}
+{% endblock %}
