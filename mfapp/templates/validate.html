@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ company.ticker }} Validate · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head company-head">
+  <div><div class="eyebrow">VALIDATE · MODEL RELIABILITY</div><h1>{{ company.ticker }} <span>{{ company.name }}</span></h1><p>Validation measures whether the model/company pair has historically fit the evidence. It never creates a LONG/SHORT direction by itself.</p></div>
+  {% if runs %}<div class="score-big"><span>RELIABILITY</span><strong>{{ '%.0f'|format(runs[0].reliability_score) if runs[0].reliability_score is not none else '—' }}</strong><small>{{ 'LOW SAMPLE' if runs[0].sample_size < 3 else runs[0].status }}</small></div>{% else %}<div class="score-big muted-score"><span>RELIABILITY</span><strong>—</strong><small>UNVALIDATED</small></div>{% endif %}
+</section>
+{% include "_company_nav.html" %}
+<div class="warning-box"><strong>0.0.2 migration note</strong><span>The V3.1.4 point-in-time SEC walk-forward engine is not being imitated with fake numbers. This page stores real validation outputs and audit notes while the historical replay engine is migrated server-side. Existing local results can be recorded here without changing the current thesis.</span></div>
+<section class="two-column-lower">
+  <article class="panel">
+    <div class="panel-label">RECORD VERIFIED RESULT</div><h2>Validation run</h2>
+    <form method="post" action="{{ url_for('web.record_validation', ticker=company.ticker) }}" class="form-stack compact">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-grid two">
+        <label>Reliability score 0–100<input type="number" min="0" max="100" step="0.1" name="reliability_score"></label>
+        <label>Completed samples<input type="number" min="0" step="1" name="sample_size" value="0"></label>
+        <label>Valuation reliability<input type="number" min="0" max="100" step="0.1" name="valuation_reliability"></label>
+        <label>Thesis reliability<input type="number" min="0" max="100" step="0.1" name="thesis_reliability"></label>
+        <label>Direction reliability<input type="number" min="0" max="100" step="0.1" name="direction_reliability"></label>
+        <label>Bias control<input type="number" min="0" max="100" step="0.1" name="bias_control"></label>
+        <label>Status<select name="status"><option>REVIEW</option><option>LOW SAMPLE</option><option>VALIDATED</option><option>FAILED</option></select></label>
+        <label class="span-2">Audit note<textarea name="notes" rows="4" placeholder="Source run, anchor years, corporate-action basis, limitations..."></textarea></label>
+      </div>
+      <button class="primary" type="submit">Record result</button>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-label">ANTI-LEAKAGE RULES</div><h2>Non-negotiable</h2>
+    <ul class="rule-list"><li>Future filings cannot enter an earlier replay.</li><li>Current saved assumptions are never backcast.</li><li>Manual thesis text is not rewritten with hindsight.</li><li>Historical raw prices must match the contemporaneous share basis.</li><li>Reliability caps confidence; it does not manufacture direction.</li></ul>
+  </article>
+</section>
+<section class="panel">
+  <div class="section-title"><div><div class="panel-label">HISTORY</div><h2>Validation ledger</h2></div><span>{{ runs|length }} recorded runs</span></div>
+  {% if runs %}<div class="table-wrap"><table><thead><tr><th>Date</th><th>Score</th><th>Sample</th><th>Valuation</th><th>Thesis</th><th>Direction</th><th>Bias</th><th>Status</th><th>Notes</th></tr></thead><tbody>{% for r in runs %}<tr><td>{{ r.created_at.strftime('%b %d %Y') }}</td><td><strong>{{ '%.1f'|format(r.reliability_score) if r.reliability_score is not none else '—' }}</strong></td><td>{{ r.sample_size }}</td><td>{{ '%.1f'|format(r.valuation_reliability) if r.valuation_reliability is not none else '—' }}</td><td>{{ '%.1f'|format(r.thesis_reliability) if r.thesis_reliability is not none else '—' }}</td><td>{{ '%.1f'|format(r.direction_reliability) if r.direction_reliability is not none else '—' }}</td><td>{{ '%.1f'|format(r.bias_control) if r.bias_control is not none else '—' }}</td><td>{{ r.status }}</td><td>{{ r.notes or '—' }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty inset"><h3>No validation run recorded.</h3><p>Model confidence remains UNVALIDATED until evidence exists.</p></div>{% endif %}
+</section>
+{% endblock %}
