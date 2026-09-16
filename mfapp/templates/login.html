@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}Sign in · Market Forensics{% endblock %}{% block body_class %}auth-page{% endblock %}{% block content %}
+<section class="auth-card">
+  <div class="auth-brand"><img src="{{ url_for('static', filename='img/mark.svg') }}" alt=""><div><div class="eyebrow">PRIVATE RESEARCH</div><h1>Market Forensics</h1></div></div>
+  <p class="lead">Evidence first. Decisions second.</p>
+  <form method="post" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Email<input type="email" name="email" autocomplete="username" required></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">Continue</button>
+  </form>
+  <p class="micro">Invite-only beta · v0.0.1</p>
+</section>
+{% endblock %}
