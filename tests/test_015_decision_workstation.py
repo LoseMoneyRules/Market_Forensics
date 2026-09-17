@@ -45,7 +45,11 @@ def test_current_row_builds_real_ttm_from_four_quarters(tmp_path, monkeypatch):
         for idx, (ptype, rev) in enumerate((("Q4", 100),("Q1", 110),("Q2", 120),("Q3", 130))):
             add_period(company_id, ptype, 2026 if ptype != "Q4" else 2025, date(2025,12,31)+timedelta(days=90*idx), rev, rev*.08, rev*.12, rev*.03, rev*.11)
         db.session.commit(); row = current_row(company_id)
-        assert row["period_type"] == "TTM"; assert round(row["revenue"],2) == 460.0; assert round(row["fcf"],2) == round(460*.09,2); assert row["quarter_count"] == 4
+        assert row["period_type"] == "TTM"
+        assert round(row["revenue"],2) == 460.0
+        assert round(row["fcf"],2) == round(460*.09,2)
+        assert row["quality"]["quarter_count"] == 4
+        assert len(row["source_map"]["quarter_period_ids"]) == 4
 
 
 def test_forecast_uses_base_case_without_calling_it_consensus(tmp_path, monkeypatch):
@@ -54,7 +58,10 @@ def test_forecast_uses_base_case_without_calling_it_consensus(tmp_path, monkeypa
         add_period(company_id,"FY",2025,date(2025,12,31),1000,80,120,30,100); db.session.commit()
         coverage = db.session.get(Coverage,coverage_id); model=coverage.valuation_models[0]
         model.assumptions={"latest_engine_result":{"scenarios":{"BASE":{"inputs":{"growth":.05,"net_margin":.09,"fcf_margin":.10}}}}}; db.session.commit()
-        rows=forecast_rows(company_id,model,3); assert len(rows)==3; assert round(rows[0]["revenue"],1)==1050.0; assert rows[0]["source"]=="INTERNAL_BASE_CASE"
+        rows=forecast_rows(company_id,model,3)
+        assert len(rows)==3
+        assert round(rows[0]["revenue"],1)==1050.0
+        assert rows[0]["source"]=="BASE_CASE_MODEL"
 
 
 def test_readiness_never_auto_approves_and_becomes_stale_when_evidence_changes(tmp_path, monkeypatch):
@@ -76,9 +83,19 @@ def test_historical_provider_requires_requested_span_not_just_many_rows():
     assert _coverage_stats(full,start,end)["complete"] is True
 
 
-def test_015_assets_expose_mobile_blue_ttm_and_no_visible_auto_marker():
-    css=Path("mfapp/static/css/v015.css").read_text(); js=Path("mfapp/static/js/v015.js").read_text(); template=Path("mfapp/templates/company_section.html").read_text(); base=Path("mfapp/templates/base.html").read_text()
-    assert "--primary:#3a6f99" in css; assert "nav-open" in css; assert "company-tabs-toggle" in css
-    assert "5 * 60 * 1000" in js; assert "mf-mobile-menu" in base
-    assert "TTM" in template; assert "Decision Brief" in template; assert "management_engine" in template; assert "journal_prefill" in template
+def test_015_assets_expose_mobile_blue_ttm_kpis_and_no_visible_auto_marker():
+    css=Path("mfapp/static/css/v015.css").read_text()
+    js=Path("mfapp/static/js/v015.js").read_text()
+    template=Path("mfapp/templates/company_section.html").read_text()
+    base=Path("mfapp/templates/base.html").read_text()
+    kpis=Path("mfapp/templates/_section_kpis_015.html").read_text()
+    pytest_ini=Path("pytest.ini").read_text()
+    assert "--primary:#3a6f99" in css
+    assert "nav-open" in css and "company-tabs-toggle" in css
+    assert "5 * 60 * 1000" in js and "mf-mobile-menu" in base
+    assert "TTM" in template and "Decision Brief" in template
+    assert "management_engine" in template and "journal_prefill" in template
     assert "[AUTO 0.1.4]" not in template
+    assert "Revenue growth" in kpis and "Bear fair value" in kpis and "Positive inflections" in kpis
+    assert "Run started" in kpis and "Run completed" in kpis and "Distinct replay dates" in kpis
+    assert "test_015_*.py" in pytest_ini
