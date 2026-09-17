@@ -82,6 +82,24 @@
         <div><h3>INVALIDATION / NEXT</h3><p>{{ synthesis.invalidation or 'No locked thesis invalidation stored.' }}</p>{% for item in synthesis.next %}<p>{{ item }}</p>{% endfor %}</div>
       </div>
     </div>
+    <div class="two-col triangulation-grid">
+      <div class="panel">
+        <div class="panel-head"><div><p class="eyebrow">EXTERNAL TRIANGULATION</p><h2>Evidence outside the company narrative</h2></div><span class="status-chip">{{ triangulation_rows|length }}</span></div>
+        {% for row in triangulation_rows %}
+          <div class="list-row"><div><strong>{{ row.payload.get('relation','EVIDENCE') }} · {{ row.title }}</strong><p>{{ row.payload.get('evidence','') }}</p></div>{% if row.payload.get('url') %}<a class="button micro" href="{{ row.payload.get('url') }}" target="_blank" rel="noopener">Open</a>{% endif %}</div>
+        {% else %}<p class="muted">No peer/customer/supplier/industry evidence stored yet. Add evidence that can confirm or contradict the company view.</p>{% endfor %}
+        {% if peer_candidates %}<div class="peer-hints"><strong>Known same-industry candidates</strong><p>{% for p in peer_candidates %}{{ p.display_name }}{% if not loop.last %} · {% endif %}{% endfor %}</p></div>{% endif %}
+      </div>
+      <form class="panel stack" method="post" action="{{ url_for('web.add_triangulation', ticker=security.ticker) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="panel-head"><div><p class="eyebrow">ADD EVIDENCE</p><h2>Triangulate</h2></div><button class="button primary" type="submit">Add</button></div>
+        <label>Relationship<select name="relation"><option>PEER</option><option>COMPETITOR</option><option>CUSTOMER</option><option>SUPPLIER</option><option>DISTRIBUTOR</option><option selected>INDUSTRY</option></select></label>
+        <label>Subject<input name="subject" placeholder="Company, channel, industry datapoint…" required></label>
+        <label>Evidence<textarea name="evidence" rows="5" required></textarea></label>
+        <label>Source URL<input name="url" type="url" placeholder="https://"></label>
+      </form>
+    </div>
+
     <div class="two-col"><form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='business') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><div><p class="eyebrow">BUSINESS</p><h2>Business quality & model</h2></div><button class="button primary">Save</button></div><label>Evidence-backed business read<textarea name="text" rows="15">{{ research.business|clean_auto }}</textarea></label><p class="muted">Automatic classification is only the starting point. Add moat, customer concentration, pricing power, cyclicality and competitive evidence when known.</p></form><div class="panel"><div class="panel-head"><h2>Automatic numeric clues</h2></div>{% for s in intelligence.signals if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No numeric clue stored yet.</p>{% endfor %}</div></div>
 
   {% elif section == 'numbers' %}
