@@ -63,19 +63,22 @@
     const pad={l:58,r:18,t:22,b:35}; const values=[];
     defs.forEach(d=>rows.forEach(r=>{const v=Number(r[d.key]);if(Number.isFinite(v))values.push(v)})); if(!values.length)return;
     let min=Math.min(...values), max=Math.max(...values); if(min===max){min-=1;max+=1} const span=max-min; min-=span*.08; max+=span*.08;
-    const x=i=>pad.l+(w-pad.l-pad.r)*(rows.length===1?.5:i/(rows.length-1)); const y=v=>pad.t+(h-pad.t-pad.b)*(1-(v-min)/(max-min));
+    const x=i=>pad.l+(w-pad.l-pad.r)*(rows.length===1 ? 0.5 : i/(rows.length-1)); const y=v=>pad.t+(h-pad.t-pad.b)*(1-(v-min)/(max-min));
     ctx.font='11px system-ui'; ctx.fillStyle=css('--muted','#6d7a86'); ctx.strokeStyle=css('--line','#d9e0e6'); ctx.lineWidth=1;
     for(let i=0;i<4;i++){const yy=pad.t+(h-pad.t-pad.b)*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();const val=max-(max-min)*i/3;ctx.fillText(percent?`${val.toFixed(1)}%`:compact(val),5,yy+4)}
     rows.forEach((r,i)=>{if(i%Math.max(1,Math.ceil(rows.length/6))===0||i===rows.length-1){ctx.fillText(String(r.label||''),Math.max(pad.l,x(i)-18),h-10)}});
-    defs.forEach((d,di)=>{ctx.strokeStyle=d.color;ctx.lineWidth=2.2;ctx.setLineDash(d.dash?[6,5]:[]);ctx.beginPath();let started=false;rows.forEach((r,i)=>{const v=Number(r[d.key]);if(!Number.isFinite(v))return;const xx=x(i),yy=y(v);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)});ctx.stroke();ctx.setLineDash([]);});
+    defs.forEach(d=>{ctx.strokeStyle=d.color;ctx.lineWidth=2.2;ctx.setLineDash(d.dash?[6,5]:[]);ctx.beginPath();let started=false;rows.forEach((r,i)=>{const v=Number(r[d.key]);if(!Number.isFinite(v))return;const xx=x(i),yy=y(v);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)});ctx.stroke();ctx.setLineDash([]);});
     let lx=pad.l; defs.forEach(d=>{ctx.fillStyle=d.color;ctx.fillRect(lx,pad.t-14,16,3);ctx.fillStyle=css('--muted','#6d7a86');ctx.fillText(d.label,lx+21,pad.t-9);lx+=ctx.measureText(d.label).width+48});
   }
-  const primary=css('--primary','#3a6f99'), secondary='#7b96ad', accent='#5f8a86', muted='#9a7d62';
-  document.querySelectorAll('canvas[data-mf-chart="numbers-scale"]').forEach(c=>lineChart(c,parse(c),[{key:'revenue',label:'Revenue',color:primary},{key:'fcf',label:'FCF',color:accent},{key:'forecast_revenue',label:'Revenue forecast',color:primary,dash:true}],false));
-  document.querySelectorAll('canvas[data-mf-chart="numbers-margin"]').forEach(c=>lineChart(c,parse(c),[{key:'op_margin',label:'Operating margin',color:primary},{key:'fcf_margin',label:'FCF margin',color:accent},{key:'forecast_op_margin',label:'Op margin forecast',color:primary,dash:true}],true));
-  document.querySelectorAll('canvas[data-mf-chart="working-capital"]').forEach(c=>lineChart(c,parse(c),[{key:'inventory',label:'Inventory',color:primary},{key:'receivables',label:'Receivables',color:secondary}],false));
-  document.querySelectorAll('canvas[data-mf-chart="tape-price"]').forEach(c=>lineChart(c,parse(c),[{key:'price',label:'Price',color:primary}],false));
-  document.querySelectorAll('canvas[data-mf-chart="tape-short"]').forEach(c=>lineChart(c,parse(c),[{key:'short_pct',label:'Daily short volume %',color:secondary}],true));
-
-  window.addEventListener('resize', (()=>{let t;return()=>{clearTimeout(t);t=setTimeout(()=>location.reload(),300)}})());
+  const primary=css('--primary','#3a6f99'), secondary='#7b96ad', accent='#5f8a86';
+  const renderCharts=()=>{
+    document.querySelectorAll('canvas[data-mf-chart="numbers-scale"]').forEach(c=>lineChart(c,parse(c),[{key:'revenue',label:'Revenue',color:primary},{key:'fcf',label:'FCF',color:accent},{key:'forecast_revenue',label:'Revenue forecast',color:primary,dash:true}],false));
+    document.querySelectorAll('canvas[data-mf-chart="numbers-margin"]').forEach(c=>lineChart(c,parse(c),[{key:'op_margin',label:'Operating margin',color:primary},{key:'fcf_margin',label:'FCF margin',color:accent},{key:'forecast_op_margin',label:'Op margin forecast',color:primary,dash:true}],true));
+    document.querySelectorAll('canvas[data-mf-chart="working-capital"]').forEach(c=>lineChart(c,parse(c),[{key:'inventory',label:'Inventory',color:primary},{key:'receivables',label:'Receivables',color:secondary}],false));
+    document.querySelectorAll('canvas[data-mf-chart="tape-price"]').forEach(c=>lineChart(c,parse(c),[{key:'price',label:'Price',color:primary}],false));
+    document.querySelectorAll('canvas[data-mf-chart="tape-short"]').forEach(c=>lineChart(c,parse(c),[{key:'short_pct',label:'Daily short volume %',color:secondary}],true));
+  };
+  renderCharts();
+  let resizeTimer=null;
+  window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(renderCharts,180)});
 })();
