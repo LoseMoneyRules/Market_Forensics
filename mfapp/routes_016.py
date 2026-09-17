@@ -198,7 +198,7 @@ def surface_016(ticker: str, section: str):
         base["notification_preferences"] = notification_preferences(g.user.id)
         base["smtp_ready"] = bool(os.environ.get("MF_SMTP_HOST", "").strip() and os.environ.get("MF_SMTP_FROM", "").strip())
     elif section == "audit":
-        base["audit"] = audit_2_summary(company.id, security.id)
+        base["audit"] = audit_2_summary(company.id, security.id, coverage.id)
     else:
         base["message"] = "No 0.1.6 surface augmentation required for this section."
     return jsonify(base)
