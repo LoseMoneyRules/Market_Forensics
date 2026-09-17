@@ -51,6 +51,19 @@
       </div>
     </div>
 
+    <div class="panel decision-map">
+      <div class="panel-head"><div><p class="eyebrow">DECISION MAP</p><h2>From evidence to validation</h2></div><span class="status-chip">{{ synthesis.research_action }} · {{ synthesis.confidence }}</span></div>
+      <div class="lens-grid">
+        {% for lens in synthesis.lenses %}<div class="lens-card {{ lens.state|lower }}"><span>{{ lens.label }}</span><strong>{{ lens.state }}</strong></div>{% endfor %}
+      </div>
+      <div class="decision-questions-grid">
+        <div><h3>WHY NOW</h3>{% for item in synthesis.why_now %}<p>{{ item }}</p>{% endfor %}</div>
+        <div><h3>WHY NOT YET</h3>{% for item in synthesis.why_not_yet %}<p>{{ item }}</p>{% endfor %}</div>
+        <div><h3>WHAT CHANGES THE DECISION</h3>{% for item in synthesis.what_changes %}<p>{{ item }}</p>{% endfor %}</div>
+        <div><h3>WHAT KILLS THE THESIS</h3>{% for item in synthesis.what_kills %}<p>{{ item }}</p>{% endfor %}</div>
+      </div>
+    </div>
+
     <div class="two-col">
       <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='overview') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
