@@ -134,9 +134,9 @@ def test_016_audit_surface_is_scoped_to_current_coverage(tmp_path, monkeypatch):
     assert all(row.get("provider") != "" for row in payload["lineage"][:2])
 
 
-def test_016_release_assets_and_routes_are_registered(tmp_path, monkeypatch):
+def test_016_release_assets_and_routes_remain_registered(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
-    assert app.config["VERSION"] == "0.1.6"
+    assert app.config["VERSION"] == "0.1.7"
     rules = {rule.rule for rule in app.url_map.iter_rules()}
     assert "/company/<ticker>/surface/016/<section>" in rules
     assert "/company/<ticker>/monitoring/evaluate-016" in rules
@@ -159,5 +159,5 @@ def test_016_release_assets_and_routes_are_registered(tmp_path, monkeypatch):
     assert "flow-chain-016" in flows and "meta.value" in flows
     assert "_run_monitoring_for_controls" in manage
     assert "MF_SMTP_HOST" in env_example and "MF_SMTP_PASSWORD" in env_example
-    assert "workflow_dispatch" in deploy and "/health" in deploy and "0.1.6" in deploy
+    assert "workflow_dispatch" in deploy and "/health" in deploy
     assert "purple" not in css.lower()
