@@ -41,6 +41,16 @@ class AppSecret(db.Model):
     updated_at = db.Column(db.DateTime(timezone=False), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class UserPreference(db.Model):
+    __tablename__ = "mf_user_preference"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_mf_user_preference"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    key = db.Column(db.String(80), nullable=False)
+    value = db.Column(db.JSON, nullable=False, default=dict)
+    updated_at = db.Column(db.DateTime(timezone=False), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class AuditEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     actor_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), index=True)
