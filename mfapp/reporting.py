@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from typing import Any
+from xml.sax.saxutils import escape
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -204,14 +205,15 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     story += [t,Spacer(1,8)]
 
     def section(title: str, body: str):
-        story.append(Paragraph(title,styles["MFH2"])); story.append(Paragraph((body or "—").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;"),styles["MFBody"]))
+        story.append(Paragraph(escape(title),styles["MFH2"]))
+        story.append(Paragraph(escape(body or "—"),styles["MFBody"]))
 
     section("Thesis",data["thesis"]); section("Counter-evidence",data["counter_evidence"])
     section("Market view",data["variant_market"]); section("Our variant",data["variant_us"])
     story.append(Paragraph("Evidence for / against",styles["MFH2"]))
     for label,key in [("FOR","supporting"),("AGAINST","opposing")]:
         rows=data[key][:6]
-        text="<b>"+label+"</b><br/>"+("<br/>".join(f"• {r.get('label','Evidence')} — {r.get('detail','')}" for r in rows) if rows else "—")
+        text="<b>"+escape(label)+"</b><br/>"+("<br/>".join("• "+escape(str(r.get("label","Evidence")))+" — "+escape(str(r.get("detail",""))) for r in rows) if rows else "—")
         story.append(Paragraph(text,styles["MFBody"]))
 
     if data["mode"] == "full":
@@ -224,7 +226,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
         if data["sources"]:
             story.append(PageBreak()); story.append(Paragraph("Sources",styles["MFH2"]))
             for row in data["sources"][:30]:
-                story.append(Paragraph(f"• {row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}",styles["MFBody"]))
+                story.append(Paragraph("• "+escape(f"{row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}"),styles["MFBody"]))
 
     doc.build(story)
     out.seek(0); return out
