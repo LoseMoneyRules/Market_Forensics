@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}Settings / Data · Market Forensics{% endblock %}{% block content %}
 <section class="page">
-  <div class="page-head"><p class="eyebrow">SYSTEM</p><h1>Settings / Data</h1><p>One clean data layer: credentials stay encrypted server-side, provider capabilities are explicit, and CONTROL can see exactly what is available.</p></div>
+  <div class="page-head split"><div><p class="eyebrow">SETTINGS</p><h1>Settings / Data</h1><p>Credentials stay encrypted server-side, provider capabilities are explicit, and CONTROL can see exactly what is available.</p></div><div class="settings-version"><span>Market Forensics</span><strong>v{{ mf_version }}</strong></div></div>
 
   <div class="panel">
     <div class="panel-head"><div><p class="eyebrow">DATA COVERAGE</p><h2>Provider capabilities</h2></div><span class="status-chip ready">AUDITABLE</span></div>
@@ -40,6 +40,7 @@
         <div class="panel-head"><div><p class="eyebrow">DISPLAY</p><h2>Financial numbers</h2></div><button class="button" type="submit">Apply</button></div>
         <label>Display format<select name="number_format">{% for mode in number_formats %}<option value="{{ mode }}" {% if number_format == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
         <p class="muted"><strong>AUTO</strong> chooses K/M/B/T by magnitude. <strong>FULL</strong> keeps the complete number. K, M, B and T force a consistent unit across financial tables. Per-share prices always remain full precision.</p>
+        <p class="muted">Light / Dark is available from the top bar and is saved locally in this browser.</p>
       </form>
 
       <div class="panel"><div class="panel-head"><h2>Job execution</h2></div><p>CONTROL runs a browser worker while the app is open. Recommended unattended cPanel cron:</p><code class="code-block">python manage.py run-jobs --limit 5</code><p class="muted">{{ queue_status.running }} running · {{ queue_status.queued }} queued · {{ queue_status.failed }} failed. Duplicate logical jobs are not added.</p><div class="button-row"><form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Run discovery scan</button></form><form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Queue full refresh</button></form></div></div>
