@@ -20,6 +20,7 @@ from .core_models import (
     Publication, RefreshRun, ResearchState, ResearchVersion, RiskPlan, Security,
     Snapshot, Source, ValuationModel,
 )
+from .research_intelligence import build_research_intelligence
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_workspace, financial_rows, readiness, valuation_result
 from .symbols import validate_ticker
@@ -31,7 +32,7 @@ SECTIONS = [
     ("expectations", "Expectations"), ("valuation", "Valuation"), ("bear-case", "Bear Case"),
     ("catalysts", "Catalysts"), ("financial-flows", "Financial Flows"),
     ("management", "Management"), ("tape", "Tape / Flows"), ("monitoring", "Monitoring"),
-    ("risk", "Risk"), ("position", "Position"), ("journal", "Decision Journal"), ("audit", "Sources / Audit"),
+    ("journal", "Decision Journal"), ("audit", "Sources / Audit"),
 ]
 SECTION_KEYS = {key for key, _ in SECTIONS}
 RESEARCH_FIELDS = {
@@ -79,6 +80,30 @@ def _coverage(ticker: str) -> Coverage:
     return row
 
 
+def _research_readiness(coverage: Coverage) -> dict:
+    result = readiness(coverage)
+    excluded = {"Risk invalidation", "Position sizing"}
+    gates = [gate for gate in result.get("gates", []) if gate.get("label") not in excluded]
+    result["gates"] = gates
+    result["total"] = len(gates)
+    result["done"] = sum(1 for gate in gates if gate.get("ok"))
+    return result
+
+
+def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, market, valuation: dict) -> dict:
+    rows = financial_rows(company.id, 6)
+    issues = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").count()
+    latest_engine = dict((model.assumptions or {}).get("latest_engine_result") or {})
+    return build_research_intelligence(
+        rows,
+        valuation,
+        market_price=(market.price if market else None),
+        valuation_quality=str(latest_engine.get("quality") or ""),
+        data_quality_issues=issues,
+        finra_summary=finra_stored_summary(company.id),
+    )
+
+
 def _ctx(ticker: str) -> dict:
     coverage = _coverage(ticker)
     security = db.session.get(Security, coverage.security_id)
@@ -91,9 +116,11 @@ def _ctx(ticker: str) -> dict:
         raise RuntimeError(f"Coverage workspace incomplete for coverage_id={coverage.id}; run migration/repair before serving it")
     market = latest_snapshot(security.id)
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    valuation = valuation_result(coverage)
     return {"coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
             "investment": investment, "model": model, "market": market, "position": position,
-            "valuation": valuation_result(coverage), "readiness": readiness(coverage), "company_sections": SECTIONS}
+            "valuation": valuation, "readiness": _research_readiness(coverage), "company_sections": SECTIONS,
+            "intelligence": _intelligence(coverage, company, model, market, valuation)}
 
 
 def _research_version(coverage: Coverage, research: ResearchState, reason: str) -> None:
@@ -124,12 +151,16 @@ def dashboard():
     rows = []
     for coverage in Coverage.query.filter_by(user_id=g.user.id).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
         security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
-        rows.append({"coverage": coverage, "security": security, "company": company, "market": latest_snapshot(security.id),
+        market = latest_snapshot(security.id); valuation = valuation_result(coverage)
+        model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+        rows.append({"coverage": coverage, "security": security, "company": company, "market": market,
                      "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
-                     "valuation": valuation_result(coverage), "readiness": readiness(coverage)})
+                     "valuation": valuation, "readiness": _research_readiness(coverage),
+                     "intelligence": _intelligence(coverage, company, model, market, valuation) if model else {"action": "WAIT", "bias": "NEUTRAL", "confidence": "LOW"}})
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
-    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts)
+    action_counts = {key: sum(1 for row in rows if row["intelligence"].get("action") == key) for key in ("BUY", "SELL", "WAIT")}
+    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts, action_counts=action_counts)
 
 
 @bp.get("/discovery")
@@ -141,7 +172,7 @@ def discovery():
     rows = []
     for coverage in query.order_by(Coverage.updated_at.desc()).all():
         security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
-        rows.append({"coverage": coverage, "security": security, "company": company, "market": latest_snapshot(security.id), "readiness": readiness(coverage)})
+        rows.append({"coverage": coverage, "security": security, "company": company, "market": latest_snapshot(security.id), "readiness": _research_readiness(coverage)})
     return render_template("discovery.html", rows=rows, q=q)
 
 
@@ -195,7 +226,8 @@ def company_section(ticker, section):
     elif section == "financial-flows":
         periods = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY").order_by(FinancialPeriod.fiscal_year.desc()).all(); year = int(request.args.get("year") or (periods[0].fiscal_year if periods else 0)); period = next((p for p in periods if p.fiscal_year == year), None); flows = {}
         if period:
-            for row in FinancialFlow.query.filter_by(financial_period_id=period.id, calculation_version="0.1.0").all(): flows[row.flow_type] = row.payload
+            for row in FinancialFlow.query.filter_by(financial_period_id=period.id).order_by(FinancialFlow.id.desc()).all():
+                flows.setdefault(row.flow_type, row.payload)
         extra.update({"periods": periods, "selected_year": year, "flows": flows})
     elif section == "management": extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
     elif section == "tape":
