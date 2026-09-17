@@ -30,7 +30,7 @@
 
   {% if rows %}
   <div class="table-card scroll"><table class="data-table coverage-table">
-    <thead><tr><th>Security</th><th>Research action</th><th>Stance</th><th>Bias / Confidence</th><th>Price</th><th>Bear</th><th>Base</th><th>Bull</th><th>Base gap</th><th>Process</th><th>Validate</th><th>Lens</th></tr></thead>
+    <thead><tr><th>Security</th><th>Research action</th><th>Stance</th><th>Bias / Confidence</th><th>Price</th><th>Bear</th><th>Base</th><th>Bull</th><th>Base gap</th><th>Process</th><th>Validate</th><th>Lens</th><th>Manage</th></tr></thead>
     <tbody>
     {% for row in rows %}
       <tr>
@@ -46,6 +46,14 @@
         <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
         <td><span class="status-chip">{{ row.readiness.validation.state }}</span></td>
         <td><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
+        <td>
+          <form class="coverage-manage-inline" method="post" action="{{ url_for('web.manage_coverage', ticker=row.security.ticker) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input class="priority-input" name="priority" inputmode="numeric" value="{{ row.coverage.priority }}" aria-label="Priority">
+            <button class="button micro" type="submit" name="action" value="save">Save</button>
+            <button class="button micro danger" type="submit" name="action" value="archive" onclick="return confirm('Remove {{ row.security.ticker }} from active Coverage? Research history will be preserved.')">Remove</button>
+          </form>
+        </td>
       </tr>
     {% endfor %}
     </tbody>
