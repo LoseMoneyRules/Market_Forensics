@@ -134,18 +134,32 @@ def _tape_price_short(company_id: int, security_id: int, months: int) -> list[di
 
 
 @bp.before_request
-def enforce_numeric_locked_invalidation_016():
-    """0.1.6 invariant: a pre-investment locked monitoring threshold must be numeric."""
-    if request.endpoint != "web.add_monitoring" or request.method != "POST":
+def enforce_release_invariants_016():
+    """0.1.6 invariants that must hold server-side, not only in the browser."""
+    if request.endpoint == "web.add_monitoring" and request.method == "POST":
+        if request.form.get("locked_pre_investment") != "1":
+            return None
+        threshold = dec(request.form.get("threshold_value"))
+        operator = str(request.form.get("operator") or "").strip()
+        if threshold is None or operator not in NUMERIC_OPERATORS:
+            ticker = str((request.view_args or {}).get("ticker") or "").upper()
+            flash("A locked pre-investment invalidation must use a numeric threshold and a numeric comparison operator (<, <=, >, >=, ==, !=).", "error")
+            return redirect(url_for("web.company_section", ticker=ticker, section="monitoring"))
         return None
-    if request.form.get("locked_pre_investment") != "1":
-        return None
-    threshold = dec(request.form.get("threshold_value"))
-    operator = str(request.form.get("operator") or "").strip()
-    if threshold is None or operator not in NUMERIC_OPERATORS:
+
+    if request.endpoint in {"web.snapshot_company", "web.publish_snapshot"} and request.method == "POST":
         ticker = str((request.view_args or {}).get("ticker") or "").upper()
-        flash("A locked pre-investment invalidation must use a numeric threshold and a numeric comparison operator (<, <=, >, >=, ==, !=).", "error")
-        return redirect(url_for("web.company_section", ticker=ticker, section="monitoring"))
+        if not ticker:
+            return None
+        ctx = _ctx(ticker)
+        readiness = ctx["readiness"]
+        ready = bool(readiness.get("total") and readiness.get("done") == readiness.get("total"))
+        if not ready:
+            pending = [row["label"] for row in readiness.get("gates", []) if not row.get("approved")]
+            audit("publication.blocked_readiness_016", "coverage", ctx["coverage"].id, {"pending": pending[:20]})
+            db.session.commit()
+            flash("Publication is locked until every current evidence hash is reviewed and approved in Process readiness.", "error")
+            return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
     return None
 
 
