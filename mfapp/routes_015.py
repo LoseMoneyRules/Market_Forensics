@@ -70,12 +70,18 @@ def refresh_price_015(ticker: str):
             "MARKET_REFRESH", user_id=g.user.id, company_id=ctx["company"].id,
             security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10,
         )
+    reused = bool(job and getattr(job, "_mf_reused", False))
+    queued = bool(job and not reused)
+    status = "FRESH" if fresh else ("REUSED" if reused else "QUEUED")
     return jsonify({
+        "status": status,
         "fresh": fresh,
-        "queued": bool(job and not getattr(job, "_mf_reused", False)),
-        "reused": bool(job and getattr(job, "_mf_reused", False)),
+        "queued": queued,
+        "reused": reused,
         "job_id": job.id if job else None,
+        "ticker": ctx["security"].ticker,
         "price": float(snap.price) if snap else None,
+        "provider": snap.provider if snap else None,
         "as_of": snap.as_of.isoformat() if snap and snap.as_of else None,
     })
 
