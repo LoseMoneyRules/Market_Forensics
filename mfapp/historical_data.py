@@ -9,7 +9,7 @@ from .core_models import HistoricalPrice, Security
 from .data_providers import get_secret
 from .extensions import db
 
-USER_AGENT = "MarketForensics/0.1.5"
+USER_AGENT = "MarketForensics/0.2.0"
 
 
 def _utcnow() -> datetime:
