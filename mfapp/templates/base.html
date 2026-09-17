@@ -49,9 +49,9 @@
 {% endif %}
 <main class="{% if g.user %}app-shell{% else %}auth-shell{% endif %}">
   {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
-  {% if intelligence is defined and security is defined and intelligence and section is defined and section == 'overview' %}
+  {% if intelligence is defined and decision_lenses is defined and security is defined and intelligence and section is defined and section == 'overview' %}
   <section class="research-intelligence-strip" aria-label="Automatic research read">
-    <div class="research-action {{ intelligence.action|lower }}"><span>Research action</span><strong>{{ intelligence.action }}</strong><small>{{ intelligence.stance }}</small></div>
+    <div class="research-action"><span>Research conclusion</span><strong>{{ decision_lenses.research_conclusion }}</strong><small>{{ decision_lenses.value }} value · {{ decision_lenses.path }} path</small></div>
     <div class="research-strip-metric"><span>Bias</span><strong>{{ intelligence.bias }}</strong></div>
     <div class="research-strip-metric"><span>Confidence</span><strong>{{ intelligence.confidence }}</strong></div>
     <div class="research-strip-metric"><span>Base gap</span><strong>{% if intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(intelligence.base_gap_pct) }}%{% else %}—{% endif %}</strong></div>
