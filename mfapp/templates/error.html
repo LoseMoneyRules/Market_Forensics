@@ -1,0 +1,3 @@
+{% extends "base.html" %}{% block title %}Error · Market Forensics{% endblock %}{% block content %}
+<section class="auth-card"><h1>Something went wrong</h1><p>The request failed safely. No silent fallback was used.</p><div class="error-id">Error ID <strong>{{ error_id }}</strong></div>{% if g.user and real_role == 'CONTROL' %}<a class="button" href="{{ url_for('trace.console') }}">Open diagnostics</a>{% endif %}</section>
+{% endblock %}
