@@ -109,6 +109,7 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
     coverage = ctx["coverage"]
     research = ctx["research"]
     intelligence = ctx["intelligence"]
+    decision_lenses = ctx.get("decision_lenses") or {}
     readiness = ctx["readiness"]
     valuation = ctx["valuation"]
     company = ctx["company"]
@@ -137,10 +138,12 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
         "market_price": float(market.price) if market and market.price is not None else None,
         "market_provider": market.provider if market else "",
         "market_as_of": market.as_of.isoformat() if market and market.as_of else "",
-        "action": intelligence.get("action") or "WAIT",
-        "stance": intelligence.get("stance") or "NO EDGE",
+        "action": decision_lenses.get("research_conclusion") or "DATA REVIEW",
+        "stance": decision_lenses.get("value") or intelligence.get("stance") or "UNVERIFIED",
         "bias": intelligence.get("bias") or "NEUTRAL",
-        "confidence": intelligence.get("confidence") or "LOW",
+        "confidence": decision_lenses.get("model_confidence") or intelligence.get("confidence") or "UNVALIDATED",
+        "decision_lenses": list(decision_lenses.get("rows") or []),
+        "diagnostic_action": intelligence.get("action") or "WAIT",
         "score": intelligence.get("score"),
         "bear": valuation.get("bear"),
         "base": valuation.get("base"),
