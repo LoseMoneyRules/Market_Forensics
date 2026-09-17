@@ -131,7 +131,7 @@ class HistoricalTestRun(db.Model):
     coverage_id = db.Column(db.Integer, db.ForeignKey("mf_coverage.id"), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
     status = db.Column(db.String(24), nullable=False, default="RUNNING")
-    engine_version = db.Column(db.String(32), nullable=False, default="0.1.3")
+    engine_version = db.Column(db.String(32), nullable=False, default="0.2.0")
     lookback_years = db.Column(db.Integer, nullable=False, default=10)
     sample_size = db.Column(db.Integer, nullable=False, default=0)
     reliability_score = db.Column(db.Numeric(12, 6))
