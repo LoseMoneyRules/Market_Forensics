@@ -34,26 +34,28 @@ def test_company_research_tabs_exclude_portfolio_risk_and_position():
     assert "risk" not in keys; assert "position" not in keys; assert "valuation" in keys; assert "historical-test" in keys
 
 
-def test_016_version_and_login_assets(tmp_path):
-    app = create_app({"TESTING": True, "SECRET_KEY": "016", "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / '016.db'}", "WTF_CSRF_ENABLED": False, "AUTO_MIGRATE": False})
-    assert app.config["VERSION"] == "0.1.6"
+def test_017_version_and_login_assets(tmp_path):
+    app = create_app({"TESTING": True, "SECRET_KEY": "017", "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / '017.db'}", "WTF_CSRF_ENABLED": False, "AUTO_MIGRATE": False})
+    assert app.config["VERSION"] == "0.1.7"
     page = app.test_client().get("/login").get_data(as_text=True)
     assert "v0.0.1" not in page; assert "Evidence first" not in page; assert "Invite-only" in page
 
 
-def test_templates_compile_and_major_015_ui_surfaces_exist(tmp_path):
-    app = create_app({"TESTING": True, "SECRET_KEY": "015-ui", "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / '015-ui.db'}", "WTF_CSRF_ENABLED": False, "AUTO_MIGRATE": False})
+def test_templates_compile_and_major_research_ui_surfaces_exist(tmp_path):
+    app = create_app({"TESTING": True, "SECRET_KEY": "017-ui", "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / '017-ui.db'}", "WTF_CSRF_ENABLED": False, "AUTO_MIGRATE": False})
     with app.app_context():
         for name in ("base.html", "company_section.html", "valuation_013.html", "historical_test_013.html", "financial_flows_013.html", "publication_preview.html", "publications.html", "published.html", "published_index.html", "settings.html"):
             app.jinja_env.get_template(name)
-    company = Path("mfapp/templates/company_section.html").read_text(); valuation = Path("mfapp/templates/valuation_013.html").read_text(); historical = Path("mfapp/templates/historical_test_013.html").read_text(); preview = Path("mfapp/templates/publication_preview.html").read_text(); base = Path("mfapp/templates/base.html").read_text(); css = Path("mfapp/static/css/v015.css").read_text()
+    company = Path("mfapp/templates/company_section.html").read_text(); valuation = Path("mfapp/templates/valuation_013.html").read_text(); historical = Path("mfapp/templates/historical_test_013.html").read_text(); preview = Path("mfapp/templates/publication_preview.html").read_text(); base = Path("mfapp/templates/base.html").read_text(); css = Path("mfapp/static/css/v017.css").read_text()
     assert "decision-brief" in company; assert "current_financial" in company; assert "management_engine" in company; assert "monitor_plan" in company; assert "journal_prefill" in company
     assert "valuation-model-wide" in valuation; assert "current_financial_basis" in valuation
     assert "mf-historical-chart" in historical; assert "Oldest replay" in historical; assert "Actual replay span" in historical
     assert 'name="visibility"' not in preview; assert "all invited members" in preview
-    assert "mf-mobile-menu" in base; assert "v015.css" in base; assert "--primary:#3a6f99" in css
+    assert "mf-mobile-menu" in base; assert "v017.css" in base; assert "v017.js" in base; assert "--mf-body-size:14px" in css
 
 
-def test_normal_ui_hides_diagnostics_and_product_version_lives_in_settings():
-    base = Path("mfapp/templates/base.html").read_text(); dashboard = Path("mfapp/templates/dashboard.html").read_text(); settings = Path("mfapp/templates/settings.html").read_text()
-    assert "trace.console" not in base; assert "Diagnostics" not in base; assert "Web-native" not in dashboard; assert "mf_version" not in dashboard; assert "mf_version" in settings; assert "v{{ mf_version }}" in settings
+def test_normal_ui_hides_diagnostics_and_visible_product_versions():
+    base = Path("mfapp/templates/base.html").read_text(); dashboard = Path("mfapp/templates/dashboard.html").read_text(); settings = Path("mfapp/templates/settings.html").read_text(); css = Path("mfapp/static/css/v017.css").read_text()
+    assert "trace.console" not in base; assert "Diagnostics" not in base; assert "Web-native" not in dashboard; assert "mf_version" not in dashboard
+    assert "mf_version" in settings
+    assert ".settings-version" in css and "display:none!important" in css
