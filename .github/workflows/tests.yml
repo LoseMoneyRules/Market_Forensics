@@ -24,12 +24,8 @@ jobs:
         run: |
           node --check mfapp/static/js/app.js
           node --check mfapp/static/js/theme.js
-          node --check mfapp/static/js/v015.js
-          node --check mfapp/static/js/v016.js
-          node --check mfapp/static/js/v017.js
-          node --check mfapp/static/js/v0171-pre.js
-          node --check mfapp/static/js/v0171.js
           node --check mfapp/static/js/flows.js
+          node --check mfapp/static/js/validate_chart.js
       - name: Release test suite
         env:
           MF_SECRET_KEY: test-secret-key
