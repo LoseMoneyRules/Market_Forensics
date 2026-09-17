@@ -7,10 +7,21 @@
   </div>
   <div class="kpi-grid">
     <div class="kpi"><span>Market value</span><strong>&#36;{{ '{:,.0f}'.format(totals['market_value']) }}</strong></div>
-    <div class="kpi"><span>Cost basis</span><strong>&#36;{{ '{:,.0f}'.format(totals['cost']) }}</strong></div>
     <div class="kpi"><span>Total P/L</span><strong>{{ '+' if totals['pnl'] >= 0 else '' }}&#36;{{ '{:,.0f}'.format(totals['pnl']) }}</strong></div>
-    <div class="kpi"><span>Positions</span><strong>{{ totals['positions'] }}</strong></div>
+    <div class="kpi"><span>Top position</span><strong>{{ '%.1f'|format(totals['top_weight_pct']) }}%</strong><small>Current concentration</small></div>
+    <div class="kpi"><span>Validated positions</span><strong>{{ totals['validated_positions'] }}/{{ totals['positions'] }}</strong><small>{{ '%.0f'|format(totals['validated_pct']) }}%</small></div>
+    <div class="kpi"><span>Concentration HHI</span><strong>{{ '%.3f'|format(totals['concentration_hhi']) }}</strong><small>0 diversified → 1 concentrated</small></div>
   </div>
+  {% if totals.risk_breaches %}
+  <div class="notice amber"><strong>POSITION LIMIT BREACH.</strong> {% for b in totals.risk_breaches %}{{ b.ticker }} {{ '%.1f'|format(b.weight_pct) }}% vs max {{ '%.1f'|format(b.max_position_pct) }}%{% if not loop.last %} · {% endif %}{% endfor %}</div>
+  {% endif %}
+  {% if totals.correlations %}
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">PORTFOLIO RISK</p><h2>Highest pairwise correlations</h2><p class="muted">Based on overlapping daily split-adjusted returns in stored price history. Correlation is descriptive, not a position instruction.</p></div></div>
+    <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Pair</th><th>Correlation</th><th>Samples</th></tr></thead><tbody>{% for pair in totals.correlations[:10] %}<tr><td><strong>{{ pair.left }} / {{ pair.right }}</strong></td><td>{{ '%+.2f'|format(pair.correlation) }}</td><td>{{ pair.samples }}</td></tr>{% endfor %}</tbody></table></div>
+  </div>
+  {% endif %}
+
   <div class="table-card scroll">
     <table class="data-table numeric">
       <thead><tr><th>Security</th><th>Position state</th><th>Validation</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>Weight</th><th>P/L</th><th>Base</th><th>Risk</th></tr></thead>
