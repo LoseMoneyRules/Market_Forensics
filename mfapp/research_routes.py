@@ -199,7 +199,14 @@ def validate_company(ticker):
 @bp.post("/company/<ticker>/validate/run")
 @role_required("CONTROL")
 def queue_validate_company(ticker):
-    require_control_view(); ctx = _ctx(ticker); lookback = max(3, min(int(n(request.form.get("lookback_years")) or 15), 40))
+    require_control_view(); ctx = _ctx(ticker)
+    if not ctx["readiness"].get("ready_to_validate"):
+        pending = [gate["label"] for gate in ctx["readiness"].get("gates", []) if not gate.get("approved")]
+        audit("validation.blocked_readiness", "coverage", ctx["coverage"].id, {"ticker": ctx["security"].ticker, "pending": pending})
+        db.session.commit()
+        flash("Research is not ready to validate. Review/approve: " + ", ".join(pending[:6]) + ("…" if len(pending) > 6 else ""), "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="overview"))
+    lookback = max(3, min(int(n(request.form.get("lookback_years")) or 15), 40))
     job = enqueue_job("HISTORICAL_TEST", user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
                       payload={"coverage_id": ctx["coverage"].id, "lookback_years": lookback}, priority=55)
     audit("historical_test.reuse" if getattr(job, "_mf_reused", False) else "historical_test.enqueue", "job", job.id, {"ticker": ctx["security"].ticker, "lookback_years": lookback})
