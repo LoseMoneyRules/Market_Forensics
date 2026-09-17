@@ -1,3 +1,5 @@
+import mfapp.routes_013  # noqa: F401
+
 from mfapp import create_app
 from mfapp.research_intelligence import build_research_intelligence
 from mfapp.routes import SECTIONS
