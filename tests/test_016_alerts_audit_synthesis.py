@@ -5,7 +5,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
-from mfapp.core_models import Alert, Company, Coverage, MarketSnapshot, MonitoringRule, Security
+from mfapp.core_models import Alert, Company, Coverage, MarketSnapshot, MonitoringRule, Security, Snapshot
 from mfapp.extensions import db
 from mfapp.flows_016 import build_income_statement_flow
 from mfapp.models import AuditEvent, User
@@ -109,6 +109,20 @@ def test_016_locked_rule_requires_numeric_threshold_in_route(tmp_path, monkeypat
         assert MonitoringRule.query.filter_by(name="Locked narrative only").count() == 0
 
 
+def test_016_snapshot_is_blocked_until_current_evidence_hashes_are_approved(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch); user_id, _, _, coverage_id = seed_control_workspace(app)
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["user_id"] = user_id
+        session["view_as"] = "CONTROL"
+    response = client.post("/company/EXM/snapshot", follow_redirects=False)
+    assert response.status_code == 302
+    assert "/company/EXM/overview" in response.headers["Location"]
+    with app.app_context():
+        assert Snapshot.query.filter_by(coverage_id=coverage_id).count() == 0
+        assert AuditEvent.query.filter_by(action="publication.blocked_readiness_016", object_id=str(coverage_id)).count() == 1
+
+
 def test_016_release_assets_and_routes_are_registered(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
     assert app.config["VERSION"] == "0.1.6"
@@ -123,6 +137,8 @@ def test_016_release_assets_and_routes_are_registered(tmp_path, monkeypatch):
     js = Path("mfapp/static/js/v016.js").read_text()
     flows = Path("mfapp/static/js/flows.js").read_text()
     manage = Path("manage.py").read_text()
+    env_example = Path(".env.example").read_text()
+    deploy = Path("DEPLOY_NAMECHEAP.md").read_text()
     assert "v016.css" in base and "v016.js" in base
     assert ".decision-brief{display:none!important}" in css
     assert "PRICE" in js and "FAIR VALUE" in js and "WHY" in js and "WHEN" in js
@@ -131,4 +147,6 @@ def test_016_release_assets_and_routes_are_registered(tmp_path, monkeypatch):
     assert "state-bullish" in css and "state-bearish" in css
     assert "flow-chain-016" in flows and "meta.value" in flows
     assert "_run_monitoring_for_controls" in manage
+    assert "MF_SMTP_HOST" in env_example and "MF_SMTP_PASSWORD" in env_example
+    assert "workflow_dispatch" in deploy and "/health" in deploy and "0.1.6" in deploy
     assert "purple" not in css.lower()
