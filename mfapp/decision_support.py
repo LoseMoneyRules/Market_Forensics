@@ -105,6 +105,28 @@ def management_engine(company_id: int) -> dict[str, Any]:
     return {"score": round(score, 1) if score is not None else None, "label": label, "coverage_pct": round(coverage * 100), "components": details}
 
 
+def management_accountability(company_id: int) -> list[dict[str, Any]]:
+    """Historical execution ledger from filed results, not personality scoring."""
+    rows = list(reversed(annual_rows(company_id, 7)))
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        metrics = row.get("metrics") or {}
+        ni, fcf = n(row.get("net_income")), n(row.get("fcf"))
+        conversion = (fcf / ni) if fcf is not None and ni not in (None, 0) else None
+        shares = n(row.get("diluted_shares")) or n(row.get("shares_outstanding"))
+        out.append({
+            "fiscal_year": row.get("fiscal_year"),
+            "revenue_growth_pct": n(metrics.get("revenue_growth_pct")),
+            "operating_margin_pct": n(metrics.get("operating_margin_pct")),
+            "fcf_margin_pct": n(metrics.get("fcf_margin_pct")),
+            "fcf_conversion": conversion,
+            "shares": shares,
+            "buybacks": n(row.get("buybacks")),
+            "dividends": n(row.get("dividends")),
+        })
+    return out
+
+
 def _next_filing_window(company_id: int) -> dict[str, Any]:
     latest = FinancialPeriod.query.filter(FinancialPeriod.company_id == company_id, FinancialPeriod.filed_at.is_not(None)).order_by(FinancialPeriod.filed_at.desc(), FinancialPeriod.id.desc()).first()
     if not latest or not latest.filed_at:
@@ -164,21 +186,101 @@ def journal_prefill(intelligence: dict[str, Any], valuation: dict[str, Any], mod
 def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     months = 6 if int(months) <= 6 else 12
     cutoff = date.today() - timedelta(days=31 * months)
-    prices = HistoricalPrice.query.filter(HistoricalPrice.security_id == security.id, HistoricalPrice.trade_date >= cutoff).order_by(HistoricalPrice.trade_date.asc()).all()
-    # Downsample price/volume to weekly observations for a readable browser chart.
+    prices = HistoricalPrice.query.filter(
+        HistoricalPrice.security_id == security.id,
+        HistoricalPrice.trade_date >= cutoff,
+    ).order_by(HistoricalPrice.trade_date.asc()).all()
+
     weekly: list[dict[str, Any]] = []
     last_week = None
+    daily_prices: list[dict[str, Any]] = []
     for row in prices:
+        price = n(row.close_split_adjusted) or n(row.close_raw)
+        volume = n(row.volume)
+        if price is None:
+            continue
+        daily_prices.append({"date": row.trade_date.isoformat(), "price": price, "volume": volume})
         key = row.trade_date.isocalendar()[:2]
+        item = {"date": row.trade_date.isoformat(), "price": price, "volume": volume}
         if key == last_week and weekly:
-            weekly[-1] = {"date": row.trade_date.isoformat(), "price": n(row.close_split_adjusted) or n(row.close_raw), "volume": n(row.volume)}
+            weekly[-1] = item
         else:
-            weekly.append({"date": row.trade_date.isoformat(), "price": n(row.close_split_adjusted) or n(row.close_raw), "volume": n(row.volume)})
+            weekly.append(item)
             last_week = key
+
     finra = finra_stored_summary(security.company_id)
-    short_interest = [{"date": row.get("settlement_date"), "short": n(row.get("current_short")), "days_to_cover": n(row.get("days_to_cover"))} for row in finra.get("short_interest_rows", []) if row.get("settlement_date") and row.get("settlement_date") >= cutoff.isoformat()]
-    short_volume = [{"date": row.get("trade_date"), "short_pct": (n(row.get("short_pct")) * 100 if n(row.get("short_pct")) is not None else None)} for row in finra.get("daily_rows", []) if row.get("trade_date") and row.get("trade_date") >= cutoff.isoformat()]
-    return {"months": months, "market": weekly, "short_interest": short_interest, "short_volume": short_volume}
+    short_interest = [
+        {"date": row.get("settlement_date"), "short": n(row.get("current_short")), "days_to_cover": n(row.get("days_to_cover"))}
+        for row in finra.get("short_interest_rows", [])
+        if row.get("settlement_date") and row.get("settlement_date") >= cutoff.isoformat()
+    ]
+    short_volume = [
+        {"date": row.get("trade_date"), "short_pct": (n(row.get("short_pct")) * 100 if n(row.get("short_pct")) is not None else None)}
+        for row in finra.get("daily_rows", [])
+        if row.get("trade_date") and row.get("trade_date") >= cutoff.isoformat()
+    ]
+
+    def ret(days: int) -> float | None:
+        if len(daily_prices) < 2:
+            return None
+        end = daily_prices[-1]["price"]
+        idx = max(0, len(daily_prices) - 1 - days)
+        start = daily_prices[idx]["price"]
+        return (end / start - 1.0) * 100.0 if start not in (None, 0) else None
+
+    vols = [x["volume"] for x in daily_prices if x.get("volume") not in (None, 0)]
+    recent_vol = mean(vols[-20:]) if vols[-20:] else None
+    prior_vol = mean(vols[-60:-20]) if len(vols) > 20 and vols[-60:-20] else None
+    volume_ratio = recent_vol / prior_vol if recent_vol is not None and prior_vol not in (None, 0) else None
+
+    sv = [x["short_pct"] for x in short_volume if x.get("short_pct") is not None]
+    short_5 = mean(sv[-5:]) if sv else None
+    short_20 = mean(sv[-20:]) if sv else None
+    r20 = ret(20)
+    r60 = ret(60)
+
+    absorption = None
+    if short_20 is not None and r20 is not None:
+        absorption = max(0.0, min(100.0, 50.0 + (short_20 - 50.0) * 1.2 + max(-15.0, min(15.0, r20)) * 1.3))
+    long_demand = None
+    if r20 is not None:
+        long_demand = max(0.0, min(100.0, 50.0 + r20 * 2.0 + ((volume_ratio or 1.0) - 1.0) * 25.0))
+    bear_pressure = None
+    if r20 is not None:
+        bear_pressure = max(0.0, min(100.0, 50.0 - r20 * 2.0 + max(0.0, (short_20 or 50.0) - 50.0) * 1.4))
+    battle = None
+    if volume_ratio is not None or short_20 is not None:
+        battle = max(0.0, min(100.0, 35.0 + max(0.0, (volume_ratio or 1.0) - 1.0) * 35.0 + abs((short_20 or 50.0) - 50.0)))
+    available = [x for x in (absorption, long_demand, bear_pressure, battle) if x is not None]
+    confidence = "HIGH" if len(daily_prices) >= 120 and len(sv) >= 20 else "MEDIUM" if len(daily_prices) >= 40 else "LOW"
+    net_tape = ((long_demand or 50.0) + (absorption or 50.0) - (bear_pressure or 50.0)) / 2.0
+    if net_tape >= 35:
+        regime = "SUPPORTIVE"
+    elif net_tape <= 10:
+        regime = "HOSTILE"
+    else:
+        regime = "MIXED"
+
+    return {
+        "months": months,
+        "market": weekly,
+        "short_interest": short_interest,
+        "short_volume": short_volume,
+        "metrics": {
+            "return_1m_pct": r20,
+            "return_3m_pct": r60,
+            "volume_ratio_20d": volume_ratio,
+            "short_5d_pct": short_5,
+            "short_20d_pct": short_20,
+            "absorption": absorption,
+            "long_demand": long_demand,
+            "bear_pressure": bear_pressure,
+            "battle_intensity": battle,
+            "net_tape": net_tape,
+            "regime": regime,
+            "confidence": confidence,
+        },
+    }
 
 
 def company_brief(company_id: int, valuation: dict[str, Any], intelligence: dict[str, Any], model: ValuationModel | None) -> dict[str, Any]:
@@ -195,4 +297,4 @@ def company_brief(company_id: int, valuation: dict[str, Any], intelligence: dict
     }
 
 
-__all__ = ["management_engine", "monitoring_plan", "journal_prefill", "tape_series", "company_brief"]
+__all__ = ["management_engine", "management_accountability", "monitoring_plan", "journal_prefill", "tape_series", "company_brief"]
