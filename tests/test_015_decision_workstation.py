@@ -95,7 +95,7 @@ def test_015_assets_expose_mobile_blue_ttm_kpis_and_no_visible_auto_marker():
     assert "--primary:#3a6f99" in css
     assert "nav-open" in css and "company-tabs-toggle" in css
     assert "5 * 60 * 1000" in js and "mf-mobile-menu" in base
-    assert "TTM" in template and "Decision Brief" in template
+    assert "TTM" in template and "DECISION BRIEF" in template
     assert "management_engine" in template and "journal_prefill" in template
     assert "[AUTO 0.1.4]" not in template
     assert "Revenue growth" in kpis and "Bear fair value" in kpis and "Positive inflections" in kpis
