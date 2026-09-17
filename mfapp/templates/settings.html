@@ -43,6 +43,16 @@
         <p class="muted">Light / Dark is available from the top bar and is saved locally in this browser.</p>
       </form>
 
+      <form class="panel stack" method="post" action="{{ url_for('web.save_report_branding') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="panel-head"><div><p class="eyebrow">REPORT BRANDING</p><h2>Institutional PDF / Word</h2></div><button class="button" type="submit">Save</button></div>
+        <label>Report title<input name="title" value="{{ report_branding.title }}"></label>
+        <label>Prepared by<input name="prepared_by" value="{{ report_branding.prepared_by }}" placeholder="Optional"></label>
+        <label>Footer<input name="footer" value="{{ report_branding.footer }}"></label>
+        <label>Logo URL<input name="logo_url" type="url" value="{{ report_branding.logo_url }}" placeholder="https://..."></label>
+        <p class="muted">Optional logo is fetched only from public HTTPS image URLs and embedded into generated reports. Private/local network addresses are rejected.</p>
+      </form>
+
       <div class="panel"><div class="panel-head"><h2>Job execution</h2></div><p>CONTROL runs a browser worker while the app is open. Recommended unattended cPanel cron:</p><code class="code-block">python manage.py run-jobs --limit 5</code><p class="muted">{{ queue_status.running }} running · {{ queue_status.queued }} queued · {{ queue_status.failed }} failed. Duplicate logical jobs are not added.</p><div class="button-row"><form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Run discovery scan</button></form><form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Queue full refresh</button></form></div></div>
     </div>
   </div>
