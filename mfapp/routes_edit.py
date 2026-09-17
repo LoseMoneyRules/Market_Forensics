@@ -12,6 +12,7 @@ from .core_models import (
 )
 from .extensions import db
 from .jobs import recalculate_company
+from .management_promises import add_manual_promise
 from .routes import RESEARCH_FIELDS, SECTION_KEYS, _ctx, _research_version, bp, dec, parse_date, utcnow
 from .security import role_required
 from .services import create_snapshot
@@ -138,6 +139,36 @@ def add_management(ticker):
     require_control_view(); ctx = _ctx(ticker); as_of = parse_date(request.form.get("as_of")) or date.today()
     row = ManagementAssessment(coverage_id=ctx["coverage"].id, as_of=as_of, capital_allocation=str(request.form.get("capital_allocation") or "").strip(), execution=str(request.form.get("execution") or "").strip(), incentives=str(request.form.get("incentives") or "").strip(), communication=str(request.form.get("communication") or "").strip(), red_flags=str(request.form.get("red_flags") or "").strip(), notes=str(request.form.get("notes") or "").strip())
     db.session.add(row); audit("management.add", "coverage", ctx["coverage"].id, {"as_of": as_of.isoformat()}); db.session.commit(); flash("Management assessment saved.", "success")
+    return redirect(url_for("web.company_section", ticker=ticker.upper(), section="management"))
+
+
+@bp.post("/company/<ticker>/management/promise")
+@role_required("CONTROL")
+def add_management_promise(ticker):
+    require_control_view()
+    ctx = _ctx(ticker)
+    metric = str(request.form.get("metric") or "").strip()
+    target_year = int(dec(request.form.get("target_year"), 0) or 0)
+    low = dec(request.form.get("low"))
+    high = dec(request.form.get("high"))
+    unit = str(request.form.get("unit") or "").strip()[:16]
+    statement = str(request.form.get("statement") or "").strip()
+    allowed = {"revenue", "revenue_growth_pct", "gross_margin_pct", "operating_margin_pct", "net_margin_pct", "fcf"}
+    if metric not in allowed or target_year < 2000 or low is None:
+        flash("Promise needs a supported metric, target fiscal year and numeric target.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="management"))
+    high = high if high is not None else low
+    add_manual_promise(
+        ctx["company"].id,
+        metric=metric,
+        target_year=target_year,
+        low=float(low),
+        high=float(high),
+        unit=unit or ("%" if metric.endswith("_pct") else "USD"),
+        statement=statement or f"Manual management target: {metric} for FY{target_year}.",
+    )
+    audit("management.promise.add", "company", ctx["company"].id, {"metric": metric, "target_year": target_year})
+    flash("Management promise added and will be scored against filed actuals.", "success")
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section="management"))
 
 
