@@ -331,7 +331,7 @@ def alert_rule(ticker: str, rule_id: int):
 
 @bp.post("/company/<ticker>/monitoring/evaluate-now")
 @role_required("CONTROL")
-def evaluate_monitoring(ticker: str):
+def evaluate_monitoring_now(ticker: str):
     require_control_view()
     ctx = _ctx(ticker)
     result = evaluate_coverage(ctx["coverage"].id, g.user.id)
