@@ -17,7 +17,7 @@ from .historical_data import preferred_provider, price_on_or_after
 from .research_intelligence import build_research_intelligence
 from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, n
 
-# Kept as a public import for compatibility. 0.1.5 no longer renders/stores a visible marker.
+# Kept as a public import for compatibility. 0.2.0 never renders/stores a visible autofill marker.
 AUTO_MARKER = ""
 LEGACY_AUTO_RE = re.compile(r"^\[AUTO\s+[^\]]+\]\s*", re.I)
 
