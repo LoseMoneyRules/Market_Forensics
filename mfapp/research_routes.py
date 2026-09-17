@@ -91,7 +91,7 @@ def _current_model_context(ctx: dict) -> dict:
 @role_required("CONTROL")
 def valuation_company(ticker):
     require_control_view(); ctx = _ctx(ticker); extra = _current_model_context(ctx)
-    return render_template("valuation_company.html", **ctx, **extra)
+    return render_template("valuation.html", **ctx, **extra)
 
 
 @bp.post("/company/<ticker>/valuation/model")
@@ -193,7 +193,7 @@ def validate_company(ticker):
     runs = HistoricalTestRun.query.filter_by(coverage_id=ctx["coverage"].id).order_by(HistoricalTestRun.created_at.desc()).limit(20).all()
     latest = runs[0] if runs else None
     samples = HistoricalTestSample.query.filter_by(run_id=latest.id).order_by(HistoricalTestSample.anchor_date.desc()).all() if latest else []
-    return render_template("validate_company.html", runs=runs, latest_run=latest, samples=samples, **ctx)
+    return render_template("validate.html", runs=runs, latest_run=latest, samples=samples, **ctx)
 
 
 @bp.post("/company/<ticker>/validate/run")
