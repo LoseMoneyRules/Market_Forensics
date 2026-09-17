@@ -9,6 +9,7 @@ from .extensions import db
 from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
+from .portfolio_engine import portfolio_rows
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -109,13 +110,22 @@ def publications():
 @bp.get("/portfolio")
 @login_required
 def portfolio():
-    require_control_view(); rows = []
-    for position in Position.query.filter_by(user_id=g.user.id).all():
-        security = db.session.get(Security, position.security_id); company = db.session.get(Company, security.company_id); coverage = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first(); market = latest_snapshot(security.id)
-        market_value = float(market.price * position.shares) if market else None; cost = float(position.avg_cost * position.shares)
-        rows.append({"position": position, "security": security, "company": company, "coverage": coverage, "market": market, "market_value": market_value,
-                     "pnl": market_value - cost if market_value is not None else None, "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first() if coverage else None})
-    return render_template("portfolio.html", rows=rows)
+    require_control_view()
+    rows, totals = portfolio_rows(g.user.id)
+    return render_template("portfolio.html", rows=rows, totals=totals)
+
+
+@bp.get("/portfolio/<ticker>")
+@login_required
+def portfolio_security(ticker):
+    require_control_view()
+    ctx = _ctx(ticker)
+    rows, totals = portfolio_rows(g.user.id)
+    row = next((item for item in rows if item["security"].id == ctx["security"].id), None)
+    portfolio_value = totals.get("market_value") or 0
+    position_value = (row or {}).get("market_value") if row else None
+    weight_pct = ((position_value / portfolio_value) * 100.0) if position_value is not None and portfolio_value else 0.0
+    return render_template("portfolio_security.html", portfolio_row=row, portfolio_totals=totals, portfolio_weight_pct=weight_pct, **ctx)
 
 
 @bp.post("/company/<ticker>/refresh/<kind>")
