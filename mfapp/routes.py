@@ -180,6 +180,8 @@ def discovery():
     require_control_view()
     q = str(request.args.get("q") or "").strip().upper()
     external = search_universe(q, g.user.id) if q else {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
+    latest_scan_job = Job.query.filter_by(user_id=g.user.id, job_type="DISCOVERY_SCAN", status="DONE").order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    market_scan = dict(((latest_scan_job.result or {}).get("market_scan") or {}) if latest_scan_job else {})
     rows = []
     for coverage in Coverage.query.filter(
         Coverage.user_id == g.user.id,
@@ -197,7 +199,7 @@ def discovery():
             "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
             "discovery_labels": classify_coverage(intelligence, readiness),
         })
-    return render_template("discovery.html", rows=rows, q=q, external=external)
+    return render_template("discovery.html", rows=rows, q=q, external=external, market_scan=market_scan, market_scan_job=latest_scan_job)
 
 
 @bp.post("/coverage")
