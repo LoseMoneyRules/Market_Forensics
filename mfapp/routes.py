@@ -151,7 +151,10 @@ def dashboard():
         return render_template("published_index.html", publications=_published_for_role(role), role=role)
     require_control_view()
     rows = []
-    for coverage in Coverage.query.filter_by(user_id=g.user.id).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
+    for coverage in Coverage.query.filter(
+        Coverage.user_id == g.user.id,
+        Coverage.status != "ARCHIVED",
+    ).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
         security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
         market = latest_snapshot(security.id); valuation = valuation_result(coverage)
         model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
@@ -174,7 +177,10 @@ def discovery():
     q = str(request.args.get("q") or "").strip().upper()
     external = search_universe(q, g.user.id) if q else {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
     rows = []
-    for coverage in Coverage.query.filter_by(user_id=g.user.id).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
+    for coverage in Coverage.query.filter(
+        Coverage.user_id == g.user.id,
+        Coverage.status != "ARCHIVED",
+    ).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
         security = db.session.get(Security, coverage.security_id)
         company = db.session.get(Company, security.company_id)
         market = latest_snapshot(security.id)
@@ -200,6 +206,14 @@ def add_coverage():
     if security:
         existing = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
         if existing:
+            if str(existing.status or "").upper() == "ARCHIVED":
+                existing.status = "MONITOR"
+                existing.research_state = existing.research_state if existing.research_state != "ARCHIVED" else "UNDER_REVIEW"
+                existing.updated_at = utcnow()
+                audit("coverage.restore", "coverage", existing.id, {"ticker": ticker})
+                db.session.commit()
+                flash(f"{ticker} restored to active Coverage.", "success")
+                return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
             flash("Ticker already exists in Coverage.", "error"); return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
     else:
         company = Company(legal_name=validation.name or ticker, display_name=validation.name or ticker); db.session.add(company); db.session.flush()
@@ -216,6 +230,38 @@ def add_coverage():
         enqueue_job("RESEARCH_PREFILL", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=50)
     flash(f"{ticker} added to Coverage. Market, evidence and auto-draft jobs queued where available.", "success")
     return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
+
+
+@bp.post("/coverage/<ticker>/manage")
+@role_required("CONTROL")
+def manage_coverage(ticker):
+    """Manage list membership without deleting research/audit history."""
+    require_control_view()
+    coverage = _coverage(ticker)
+    action = str(request.form.get("action") or "save").lower()
+    if action == "archive":
+        coverage.status = "ARCHIVED"
+        coverage.research_state = "ARCHIVED"
+        audit("coverage.archive", "coverage", coverage.id, {"ticker": ticker.upper()})
+        db.session.commit()
+        flash(f"{ticker.upper()} removed from active Coverage. Research history is preserved.", "success")
+        return redirect(url_for("web.dashboard"))
+
+    raw_priority = request.form.get("priority")
+    if raw_priority not in (None, ""):
+        try:
+            coverage.priority = max(-999, min(999, int(raw_priority)))
+        except (TypeError, ValueError):
+            flash("Priority must be a whole number.", "error")
+            return redirect(request.referrer or url_for("web.dashboard"))
+    status = str(request.form.get("status") or coverage.status).upper()
+    if status in {"MONITOR", "RESEARCH", "READY"}:
+        coverage.status = status
+    coverage.updated_at = utcnow()
+    audit("coverage.manage", "coverage", coverage.id, {"ticker": ticker.upper(), "priority": coverage.priority, "status": coverage.status})
+    db.session.commit()
+    flash(f"{ticker.upper()} Coverage settings saved.", "success")
+    return redirect(request.referrer or url_for("web.dashboard"))
 
 
 @bp.get("/company/<ticker>")
