@@ -28,6 +28,15 @@ def _job_flash(job: Job) -> str:
     return f"{job.job_type} queued as job #{job.id}. Browser worker will process it while CONTROL is open."
 
 
+def _publication_view(publication: Publication, role: str) -> dict:
+    payload = dict(publication.payload or {})
+    views = payload.get("views") if isinstance(payload.get("views"), dict) else None
+    if views:
+        key = "INSIDER" if str(role).upper() in {"INSIDER", "CONTROL"} else "FRIEND"
+        return dict(views.get(key) or views.get("FRIEND") or {})
+    return payload
+
+
 @bp.post("/company/<ticker>/snapshot")
 @role_required("CONTROL")
 def snapshot_company(ticker):
@@ -49,14 +58,25 @@ def preview_snapshot(ticker, snapshot_id):
 def publish_snapshot(ticker, snapshot_id):
     require_control_view(); ctx = _ctx(ticker); snapshot = db.session.get(Snapshot, snapshot_id)
     if not snapshot or snapshot.coverage_id != ctx["coverage"].id: abort(404)
-    visibility = str(request.form.get("visibility") or "FRIEND").upper()
-    if visibility not in {"FRIEND", "INSIDER"}: abort(400)
     version = (db.session.query(db.func.max(Publication.version)).filter(Publication.coverage_id == ctx["coverage"].id).scalar() or 0) + 1
     title = str(request.form.get("title") or f"{ctx['security'].ticker} Research").strip()
-    publication = Publication(coverage_id=ctx["coverage"].id, snapshot_id=snapshot.id, version=version, visibility=visibility, title=title,
-                              slug=slugify(f"{ctx['security'].ticker}-{title}"), payload=publication_payload(snapshot, visibility), published_by=g.user.id)
-    db.session.add(publication); audit("publication.publish", "publication", version, {"coverage_id": ctx["coverage"].id, "visibility": visibility}); db.session.commit()
-    flash(f"Published immutable version {version} for {visibility}+.", "success"); return redirect(url_for("web.publications"))
+    payload = {
+        "audience": "ALL_MEMBERS",
+        "views": {
+            "FRIEND": publication_payload(snapshot, "FRIEND"),
+            "INSIDER": publication_payload(snapshot, "INSIDER"),
+        },
+    }
+    publication = Publication(
+        coverage_id=ctx["coverage"].id, snapshot_id=snapshot.id, version=version,
+        visibility="FRIEND", title=title, slug=slugify(f"{ctx['security'].ticker}-{title}"),
+        payload=payload, published_by=g.user.id,
+    )
+    db.session.add(publication)
+    audit("publication.publish", "publication", version, {"coverage_id": ctx["coverage"].id, "audience": "ALL_MEMBERS", "role_views": ["FRIEND", "INSIDER"]})
+    db.session.commit()
+    flash(f"Published immutable version {version} for all members. Role visibility is applied automatically.", "success")
+    return redirect(url_for("web.publications"))
 
 
 @bp.post("/publication/<int:publication_id>/revoke")
@@ -75,7 +95,7 @@ def published(slug):
     role = effective_role(); rows = Publication.query.filter_by(slug=slug).filter(Publication.revoked_at.is_(None)).order_by(Publication.version.desc()).all()
     publication = next((row for row in rows if can_view_publication(row, role)), None)
     if publication is None: abort(404)
-    return render_template("published.html", publication=publication, role=role)
+    return render_template("published.html", publication=publication, role=role, view_payload=_publication_view(publication, role))
 
 
 @bp.get("/publications")

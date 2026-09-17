@@ -4,12 +4,19 @@
 {% macro money(v) %}{% if v is not none %}${{ '%.2f'|format(v|float) }}{% else %}—{% endif %}{% endmacro %}
 {% block content %}
 <section class="page company-page">
-  <div class="company-head"><div><div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>Point-in-time validation</span></div><h1>Historical Test</h1><p>Re-run today's valuation policy in the past using only information that was available at each historical cutoff, then score it with outcomes that happened later.</p></div><form class="panel compact-run" method="post" action="{{ url_for('web.queue_historical_test_013', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Lookback<select name="lookback_years"><option value="5">5 years</option><option value="10" selected>10 years</option><option value="15">15 years</option></select></label><button class="button primary" type="submit">Run walk-forward</button></form></div>
+  <div class="company-head"><div><div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>Point-in-time validation</span></div><h1>Historical Test</h1><p>Re-run the valuation policy in the past using only information that existed at each cutoff, then compare the frozen Bear / Base / Bull cases with what the market price actually was.</p></div><form class="panel compact-run" method="post" action="{{ url_for('web.queue_historical_test_013', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Lookback<select name="lookback_years"><option value="5">5 years</option><option value="10" selected>10 years</option><option value="15">15 years</option></select></label><button class="button primary" type="submit">Run walk-forward</button></form></div>
   {% set section='historical-test' %}{% include "_company_tabs_013.html" %}
 
   <div class="notice teal"><strong>No-lookahead protocol.</strong> Future filings cannot enter an earlier replay. Current saved company-specific assumptions are never backcast. Future prices are used only after each historical valuation is frozen. Historical prices are reconciled to a common split basis before outcome scoring.</div>
 
   {% if latest_run %}
+  <div class="panel historical-chart-card">
+    <div class="panel-head"><div><p class="eyebrow">AT A GLANCE</p><h2>Historical price vs Bear / Base / Bull</h2></div><span class="status-chip">{{ latest_run.sample_size }} samples</span></div>
+    <div class="chart-legend"><span class="chart-key price"><i></i>Market price then</span><span class="chart-key bear"><i></i>Bear</span><span class="chart-key base"><i></i>Base</span><span class="chart-key bull"><i></i>Bull</span></div>
+    <div class="historical-chart-wrap"><canvas id="mf-historical-chart" data-rows='[{% for s in samples|reverse %}{"anchor":"{{ s.anchor_date }}","price":{{ s.anchor_price if s.anchor_price is not none else 'null' }},"bear":{{ s.bear_value if s.bear_value is not none else 'null' }},"base":{{ s.base_value if s.base_value is not none else 'null' }},"bull":{{ s.bull_value if s.bull_value is not none else 'null' }}}{% if not loop.last %},{% endif %}{% endfor %}]'></canvas></div>
+    <p class="muted">The dashed line is the actual market price at each historical anchor. The three solid lines are what the model would have calculated at that time without future information.</p>
+  </div>
+
   <div class="kpi-grid">
     <div class="kpi accent"><span>Reliability</span><strong>{{ pct(latest_run.reliability_score) }}</strong><small>{{ latest_run.status }}</small></div>
     <div class="kpi"><span>Valuation accuracy</span><strong>{{ pct(latest_run.valuation_accuracy) }}</strong><small>Expected value vs future 1Y</small></div>
@@ -18,7 +25,7 @@
   </div>
   <div class="two-col">
     <div class="panel"><div class="panel-head"><div><p class="eyebrow">LATEST RUN</p><h2>{{ latest_run.lookback_years }}Y walk-forward</h2></div><span class="status-chip">{{ latest_run.sample_size }} scored samples</span></div><p>Engine policy is frozen for the run. Historical calibration can use only prices and filing data dated before each anchor.</p><div class="metric-list"><div><span>Assumption accuracy</span><strong>{{ pct(latest_run.assumption_accuracy) }}</strong></div><div><span>Started</span><strong>{{ latest_run.started_at.strftime('%Y-%m-%d %H:%M') }}</strong></div><div><span>Completed</span><strong>{{ latest_run.finished_at.strftime('%Y-%m-%d %H:%M') if latest_run.finished_at else 'Running' }}</strong></div></div></div>
-    <div class="panel"><div class="panel-head"><h2>What the score means</h2></div><p><strong>Reliability is not a buy/sell signal.</strong> It tells us how well this valuation process survived historical out-of-sample checks.</p><p class="muted">40% valuation accuracy · 20% direction · 20% Bear/Bull range coverage · 20% fundamental-assumption accuracy. Missing outcomes are excluded rather than guessed.</p></div>
+    <div class="panel"><div class="panel-head"><h2>What the score means</h2></div><p><strong>Reliability is not the research action.</strong> It tells us how well this valuation process survived historical out-of-sample checks.</p><p class="muted">40% valuation accuracy · 20% direction · 20% Bear/Bull range coverage · 20% fundamental-assumption accuracy. Missing outcomes are excluded rather than guessed.</p></div>
   </div>
 
   <div class="table-card scroll"><table class="data-table numeric"><thead><tr><th>Anchor</th><th>FY</th><th>Price then</th><th>Bear</th><th>Base</th><th>Bull</th><th>Expected</th><th>1Y actual</th><th>3Y actual</th><th>5Y actual</th><th>Reliability</th><th>Status</th></tr></thead><tbody>
@@ -33,3 +40,4 @@
   {% if runs %}<div class="panel"><div class="panel-head"><h2>Run history</h2></div>{% for run in runs %}<div class="list-row"><div><strong>{{ run.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ run.lookback_years }}Y</strong><p>{{ run.sample_size }} samples · reliability {{ pct(run.reliability_score) }}</p></div><span class="status-chip">{{ run.status }}</span></div>{% endfor %}</div>{% endif %}
 </section>
 {% endblock %}
+{% block scripts %}{% if latest_run %}<script src="{{ url_for('static', filename='js/historical_chart.js') }}" defer></script>{% endif %}{% endblock %}

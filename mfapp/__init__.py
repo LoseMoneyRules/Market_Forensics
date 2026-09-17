@@ -20,11 +20,11 @@ def create_app(test_config: dict | None = None) -> Flask:
     env = os.environ.get("MF_ENV", "development").lower()
     db_url = os.environ.get("MF_DATABASE_URL", "").strip()
     if not db_url:
-        db_url = "sqlite:///" + str(Path(app.instance_path) / "market_forensics_013.db")
+        db_url = "sqlite:///" + str(Path(app.instance_path) / "market_forensics_014.db")
     if db_url.startswith("sqlite:///instance/"):
         db_url = "sqlite:///" + str(Path(app.instance_path) / db_url.split("sqlite:///instance/", 1)[1])
     if env == "production" and db_url.startswith("sqlite"):
-        raise RuntimeError("Market Forensics 0.1.3 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
+        raise RuntimeError("Market Forensics 0.1.4 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
 
     app.config.update(
         SECRET_KEY=os.environ.get("MF_SECRET_KEY", "dev-only-change-me"),
@@ -37,7 +37,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.1.3",
+        VERSION="0.1.4",
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
@@ -101,7 +101,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     from .auth import bp as auth_bp
     from .routes import bp as web_bp
-    from . import routes_013 as release_routes  # noqa: F401  # must load before blueprint registration
+    from . import routes_013 as release_routes  # noqa: F401  # route module name is internal; release behavior is versioned by app config
     from .preview import bp as preview_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(web_bp)
@@ -112,12 +112,14 @@ def create_app(test_config: dict | None = None) -> Flask:
         from .schema import bootstrap_schema
         from .upgrade_012 import queue_existing_coverage_prefill as queue_012
         from .upgrade_013 import queue_existing_coverage_prefill as queue_013
+        from .upgrade_014 import queue_existing_coverage_prefill as queue_014
         with app.app_context():
             schema_result = bootstrap_schema(migrate_legacy=True)
             app.config["SCHEMA_BOOTSTRAP_RESULT"] = {
                 "schema": schema_result,
                 "upgrade_0_1_2": queue_012(),
                 "upgrade_0_1_3": queue_013(),
+                "upgrade_0_1_4": queue_014(),
             }
 
     return app

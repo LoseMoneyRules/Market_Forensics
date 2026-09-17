@@ -3,14 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from .calculations import financial_metrics
 from .core_models import Company, Coverage, FinancialPeriod, HistoricalPrice, NormalizedFinancial, ResearchState, Security, ValuationModel, ValuationScenario
 from .data_providers import latest_snapshot
 from .extensions import db
+from .finra import stored_summary as finra_stored_summary
 from .formatting import format_number
 from .historical_data import preferred_provider, price_on_or_after
+from .research_intelligence import build_research_intelligence
 from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, n
 
-AUTO_MARKER = "[AUTO 0.1.3]"
+AUTO_MARKER = "[AUTO 0.1.4]"
 
 
 def utcnow() -> datetime:
@@ -44,15 +47,27 @@ def _financial_history(company_id: int) -> list[dict[str, Any]]:
             "fiscal_year": period.fiscal_year,
             "filed_at": period.filed_at.isoformat() if period.filed_at else None,
             "period_end": period.end_date.isoformat() if period.end_date else None,
-            "revenue": normalized.revenue, "gross_profit": normalized.gross_profit,
+            "revenue": normalized.revenue, "cogs": normalized.cogs, "gross_profit": normalized.gross_profit,
             "operating_income": normalized.operating_income, "net_income": normalized.net_income,
             "cfo": normalized.cfo, "capex": normalized.capex, "fcf": normalized.fcf,
+            "buybacks": normalized.buybacks, "dividends": normalized.dividends,
             "cash": normalized.cash, "debt": normalized.debt,
             "inventory": normalized.inventory, "receivables": normalized.receivables,
             "payables": normalized.payables, "equity": normalized.equity,
             "shares_outstanding": normalized.shares_outstanding, "diluted_shares": normalized.diluted_shares,
         })
     return rows
+
+
+def _intelligence_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    chronological: list[dict[str, Any]] = []
+    previous: dict[str, Any] = {}
+    for source in history:
+        row = dict(source)
+        row["metrics"] = financial_metrics(row, previous)
+        chronological.append(row)
+        previous = row
+    return list(reversed(chronological))
 
 
 def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], company_type: str) -> dict[str, Any]:
@@ -103,6 +118,115 @@ def _reference_price(security_id: int) -> float | None:
     if row:
         return n(row.close_split_adjusted) or n(row.close_raw)
     return None
+
+
+def _case_line(case: dict[str, Any]) -> str:
+    bits = []
+    for key, label in (("growth", "revenue growth"), ("net_margin", "net margin"), ("fcf_margin", "FCF margin")):
+        value = n(case.get(key))
+        if value is not None:
+            bits.append(f"{label} {value * 100:.1f}%")
+    pe = n(case.get("pe")); evs = n(case.get("ev_sales")); yld = n(case.get("target_fcf_yield"))
+    if pe is not None: bits.append(f"P/E {pe:.1f}x")
+    if evs is not None: bits.append(f"EV/Sales {evs:.2f}x")
+    if yld is not None: bits.append(f"FCF yield {yld * 100:.1f}%")
+    return ", ".join(bits) if bits else "insufficient operating inputs"
+
+
+def _auto_research_sections(
+    *, coverage: Coverage, research: ResearchState, company: Company, security: Security,
+    history: list[dict[str, Any]], result: dict[str, Any], cases: dict[str, dict[str, Any]],
+    current_price: float | None, company_type: str,
+) -> list[str]:
+    updates: list[str] = []
+    evidence_rows = _intelligence_rows(history)
+    finra = finra_stored_summary(company.id)
+    intelligence = build_research_intelligence(
+        evidence_rows,
+        {"bear": result["scenarios"]["BEAR"].get("fair_value"), "base": result["scenarios"]["BASE"].get("fair_value"), "bull": result["scenarios"]["BULL"].get("fair_value"), "expected_value": result.get("expected_value"), "current_price": current_price},
+        market_price=current_price,
+        valuation_quality=str(result.get("quality") or ""),
+        finra_summary=finra,
+    )
+
+    if _replaceable(coverage.owner_summary):
+        gap = intelligence.get("base_gap_pct")
+        gap_text = f" · Base gap {gap:+.1f}%" if gap is not None else ""
+        coverage.owner_summary = f"{AUTO_MARKER} {intelligence['summary']}{gap_text}."
+        updates.append("overview-summary")
+
+    positives = [x for x in intelligence.get("signals", []) if x.get("tone") == "positive"]
+    negatives = [x for x in intelligence.get("signals", []) if x.get("tone") in {"negative", "watch"}]
+    warnings = list(intelligence.get("warnings") or [])
+
+    if _replaceable(research.thesis):
+        thesis_lines = [f"{AUTO_MARKER} Evidence-first draft: {intelligence['summary']}."]
+        thesis_lines += [f"+ {x['label']}: {x['detail']}" for x in positives[:4]]
+        if not positives:
+            thesis_lines.append("No positive signal currently clears the automatic evidence thresholds.")
+        research.thesis = "\n".join(thesis_lines); updates.append("thesis")
+
+    if _replaceable(research.counter_evidence):
+        counter = [f"{AUTO_MARKER} Evidence that argues against the current read."]
+        counter += [f"- {x['label']}: {x['detail']}" for x in negatives[:5]]
+        counter += [f"! {warning}" for warning in warnings[:4]]
+        if len(counter) == 1:
+            counter.append("No automatic numeric counter-signal currently clears the threshold; qualitative disconfirmation still needs review.")
+        research.counter_evidence = "\n".join(counter); updates.append("counter-evidence")
+
+    if _replaceable(research.variant_us):
+        gap = intelligence.get("base_gap_pct")
+        if gap is not None:
+            research.variant_us = f"{AUTO_MARKER} Model-derived variant: intrinsic Base is {gap:+.1f}% versus the verified market reference. Validate the operating assumptions and external expectations before treating this as a true market variant."
+        else:
+            research.variant_us = f"{AUTO_MARKER} DATA WARNING: a verified market-vs-intrinsic gap is not available yet."
+        updates.append("variant")
+
+    if _replaceable(research.expectations):
+        expectation_lines = [f"{AUTO_MARKER} Model-implied operating expectations. These are not sell-side consensus estimates."]
+        for name in ("BEAR", "BASE", "BULL"):
+            expectation_lines.append(f"{name.title()}: {_case_line(cases[name])}.")
+        research.expectations = "\n".join(expectation_lines); updates.append("expectations")
+
+    if _replaceable(research.bear_case_summary):
+        bear_lines = [f"{AUTO_MARKER} Evidence-linked bear case / hidden-risk scan."]
+        bear_lines += [f"- {x['label']}: {x['detail']}" for x in negatives[:6]]
+        bear_lines += [f"! {warning}" for warning in warnings[:3]]
+        if len(bear_lines) == 1:
+            bear_lines.append("No automatic numeric red flag currently clears the threshold. This does not replace qualitative bear-case work.")
+        research.bear_case_summary = "\n".join(bear_lines); updates.append("bear-case")
+
+    if _replaceable(research.catalysts_summary):
+        catalyst_lines = [f"{AUTO_MARKER} Evidence-linked inflections to monitor; these are not claimed event dates."]
+        catalyst_lines += [f"+ {x['label']}: {x['detail']}" for x in positives[:6]]
+        if len(catalyst_lines) == 1:
+            catalyst_lines.append("No positive numeric inflection currently clears the threshold; event catalysts require sourced evidence.")
+        research.catalysts_summary = "\n".join(catalyst_lines); updates.append("catalysts")
+
+    if _replaceable(research.management_summary):
+        latest = history[-1] if history else {}
+        fcf = n(latest.get("fcf")); buybacks = n(latest.get("buybacks")); dividends = n(latest.get("dividends"))
+        mgmt = [f"{AUTO_MARKER} Filing-derived capital-allocation read only; no subjective management score is invented."]
+        if fcf is not None: mgmt.append(f"FCF: {format_number(fcf, 'AUTO')}.")
+        if buybacks is not None: mgmt.append(f"Buybacks: {format_number(buybacks, 'AUTO')}.")
+        if dividends is not None: mgmt.append(f"Dividends: {format_number(dividends, 'AUTO')}.")
+        if fcf not in (None, 0) and buybacks is not None and dividends is not None:
+            payout = (abs(buybacks) + abs(dividends)) / abs(fcf)
+            mgmt.append(f"Buybacks + dividends equal roughly {payout:.2f}x latest FCF; review sustainability and capital-allocation rationale.")
+        research.management_summary = "\n".join(mgmt); updates.append("management")
+
+    if _replaceable(research.tape_summary):
+        tape = [f"{AUTO_MARKER} Positioning / flow evidence, kept separate from intrinsic value."]
+        si = finra.get("latest_short_interest") or {}
+        if si:
+            if si.get("current_short") is not None: tape.append(f"Short interest: {format_number(si.get('current_short'), 'AUTO')} as of {si.get('settlement_date') or 'latest report'}.")
+            if si.get("change_percent") is not None: tape.append(f"Short-interest change: {float(si.get('change_percent')):+.1f}% vs prior report.")
+            if si.get("days_to_cover") is not None: tape.append(f"Days to cover: {float(si.get('days_to_cover')):.2f}.")
+        if finra.get("daily_20d_short_pct") is not None: tape.append(f"FINRA daily short-sale volume 20d average: {float(finra.get('daily_20d_short_pct')) * 100:.1f}% of FINRA-reported volume.")
+        if len(tape) == 1: tape.append("No FINRA positioning series is stored yet; refresh FINRA before drawing a flow conclusion.")
+        research.tape_summary = "\n".join(tape); updates.append("tape")
+
+    return updates
 
 
 def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dict[str, Any]:
@@ -232,12 +356,17 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
         research.business = f"{AUTO_MARKER} Company classification: sector {company.sector or '—'}; industry {company.industry or '—'}; valuation family {company_type}. Expand with business-model evidence before marking this section ready."
         text_updates.append("business")
 
+    text_updates.extend(_auto_research_sections(
+        coverage=coverage, research=research, company=company, security=security,
+        history=history, result=result, cases=case_inputs, current_price=current_price, company_type=company_type,
+    ))
+
     research.updated_by = user_id
     db.session.commit()
     return {
         "coverage_id": coverage.id, "ticker": security.ticker,
         "scenario_values": {name: result["scenarios"][name].get("fair_value") for name in ("BEAR", "BASE", "BULL")},
-        "scenario_updates": changed_scenarios, "text_updates": text_updates,
+        "scenario_updates": changed_scenarios, "text_updates": sorted(set(text_updates)),
         "meta": model.assumptions.get("auto_draft") or {},
     }
 
