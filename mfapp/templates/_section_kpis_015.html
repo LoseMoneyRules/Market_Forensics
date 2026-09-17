@@ -1,0 +1,39 @@
+{% if section == 'expectations' %}
+  {% set cur = brief.current_financial if brief else none %}
+  {% set metrics = cur.metrics if cur else {} %}
+  {% set f1 = forecast_rows[0] if forecast_rows is defined and forecast_rows else none %}
+  <div class="current-strip research-section-kpis">
+    <div class="current-kpi"><span>Current basis</span><strong>{{ cur.period_label if cur else '—' }}</strong><small>{{ cur.period_end if cur else 'Refresh fundamentals' }}</small></div>
+    <div class="current-kpi"><span>Revenue growth</span><strong>{% if metrics.get('revenue_growth_pct') is not none %}{{ '%+.1f'|format(metrics.get('revenue_growth_pct')|float) }}%{% else %}—{% endif %}</strong><small>TTM/FY observed</small></div>
+    <div class="current-kpi"><span>Operating margin</span><strong>{% if metrics.get('operating_margin_pct') is not none %}{{ '%.1f'|format(metrics.get('operating_margin_pct')|float) }}%{% else %}—{% endif %}</strong><small>Current operating basis</small></div>
+    <div class="current-kpi"><span>FCF margin</span><strong>{% if metrics.get('fcf_margin_pct') is not none %}{{ '%.1f'|format(metrics.get('fcf_margin_pct')|float) }}%{% else %}—{% endif %}</strong><small>Cash quality</small></div>
+    <div class="current-kpi"><span>Next Base revenue</span><strong>{{ f1.revenue|mf_num(1) if f1 else '—' }}</strong><small>{{ f1.period_label if f1 else 'Forecast pending' }}</small></div>
+    <div class="current-kpi"><span>Base fair value</span><strong>{{ valuation.base|mf_money(2) if valuation.base is not none else '—' }}</strong><small>~{{ brief.horizon_years }}Y model horizon</small></div>
+  </div>
+{% elif section == 'bear-case' %}
+  {% set cur = brief.current_financial if brief else none %}
+  {% set metrics = cur.metrics if cur else {} %}
+  {% set ns = namespace(negative=0, watch=0) %}
+  {% for s in intelligence.signals %}{% if s.tone == 'negative' %}{% set ns.negative = ns.negative + 1 %}{% elif s.tone == 'watch' %}{% set ns.watch = ns.watch + 1 %}{% endif %}{% endfor %}
+  {% set bear_gap = ((valuation.bear|float / valuation.current_price|float - 1) * 100) if valuation.bear is not none and valuation.current_price not in [none,0] else none %}
+  <div class="current-strip research-section-kpis">
+    <div class="current-kpi"><span>Bear fair value</span><strong>{{ valuation.bear|mf_money(2) if valuation.bear is not none else '—' }}</strong><small>{% if bear_gap is not none %}{{ '%+.1f'|format(bear_gap) }}% vs market{% else %}Gap pending{% endif %}</small></div>
+    <div class="current-kpi"><span>Negative signals</span><strong>{{ ns.negative }}</strong><small>Evidence engine</small></div>
+    <div class="current-kpi"><span>Watch signals</span><strong>{{ ns.watch }}</strong><small>Potential deterioration</small></div>
+    <div class="current-kpi"><span>Net debt / FCF</span><strong>{% if metrics.get('net_debt_to_fcf') is not none %}{{ '%.1f'|format(metrics.get('net_debt_to_fcf')|float) }}x{% else %}—{% endif %}</strong><small>Balance-sheet pressure</small></div>
+    <div class="current-kpi"><span>Data warnings</span><strong>{{ intelligence.warnings|length }}</strong><small>Must be reviewed</small></div>
+    <div class="current-kpi"><span>Manual bear items</span><strong>{{ bear_items|length if bear_items is defined else 0 }}</strong><small>Analyst-added evidence</small></div>
+  </div>
+{% elif section == 'catalysts' %}
+  {% set ns = namespace(positive=0, next_date='—', next_title='No dated catalyst') %}
+  {% for s in intelligence.signals %}{% if s.tone == 'positive' %}{% set ns.positive = ns.positive + 1 %}{% endif %}{% endfor %}
+  {% if catalyst_rows is defined %}{% for c in catalyst_rows %}{% if c.expected_date and ns.next_date == '—' %}{% set ns.next_date = c.expected_date %}{% set ns.next_title = c.title %}{% endif %}{% endfor %}{% endif %}
+  <div class="current-strip research-section-kpis">
+    <div class="current-kpi"><span>Positive inflections</span><strong>{{ ns.positive }}</strong><small>Evidence engine</small></div>
+    <div class="current-kpi"><span>Sourced catalysts</span><strong>{{ catalyst_rows|length if catalyst_rows is defined else 0 }}</strong><small>Ledger items</small></div>
+    <div class="current-kpi"><span>Next dated catalyst</span><strong>{{ ns.next_date }}</strong><small>{{ ns.next_title }}</small></div>
+    <div class="current-kpi"><span>Base gap</span><strong>{% if brief.base_gap_pct is not none %}{{ '%+.1f'|format(brief.base_gap_pct|float) }}%{% else %}—{% endif %}</strong><small>Base FV vs market</small></div>
+    <div class="current-kpi"><span>Model horizon</span><strong>~{{ brief.horizon_years }}Y</strong><small>Target year {{ brief.target_year }}</small></div>
+    <div class="current-kpi"><span>Confidence</span><strong>{{ brief.confidence }}</strong><small>Current evidence read</small></div>
+  </div>
+{% endif %}
