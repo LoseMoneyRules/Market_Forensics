@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime, timezone
 from html import unescape
 from typing import Any
 
 from .core_models import Event, Source
 from .current_financials import annual_rows
 from .extensions import db
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 GUIDANCE_WORDS = r"(?:expect(?:s|ed)?|guidance|outlook|forecast(?:s|ed)?|anticipat(?:e|es|ed)|target(?:s|ed)?)"
@@ -99,6 +104,8 @@ def extract_promises(text: str, *, source_id: int | None = None) -> list[dict[st
 
 def store_promises(company_id: int, promises: list[dict[str, Any]], *, source_id: int | None = None) -> int:
     stored = 0
+    source = db.session.get(Source, source_id) if source_id else None
+    event_date = (source.published_at if source and source.published_at else None) or (source.retrieved_at if source and source.retrieved_at else None) or utcnow()
     for row in promises:
         fp = str(row.get("fingerprint") or "")
         existing = Event.query.filter_by(company_id=company_id, event_type="MANAGEMENT_PROMISE").all()
@@ -111,6 +118,7 @@ def store_promises(company_id: int, promises: list[dict[str, Any]], *, source_id
             source_id=source_id or row.get("source_id"),
             event_type="MANAGEMENT_PROMISE",
             title=f"{row.get('metric')} guidance for {row.get('target_year')}",
+            event_date=event_date,
             payload=payload,
         ))
         stored += 1
@@ -193,6 +201,7 @@ def add_manual_promise(
         source_id=source_id,
         event_type="MANAGEMENT_PROMISE",
         title=f"{metric} guidance for {target_year}",
+        event_date=utcnow(),
         payload={
             "metric": metric,
             "target_year": int(target_year),
