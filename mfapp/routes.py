@@ -22,8 +22,10 @@ from .core_models import (
     Publication, RefreshRun, ResearchState, ResearchVersion, RiskPlan, Security,
     Snapshot, Source, ValuationModel,
 )
-from .readiness_015 import research_readiness
-from .research_intelligence import build_research_intelligence
+from .readiness import research_readiness
+from .decision_engine import build_research_intelligence
+from .discovery_engine import classify_coverage, search_universe
+from .research_synthesis import build_synthesis
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
 from .symbols import validate_ticker
@@ -87,7 +89,7 @@ def _research_readiness(coverage: Coverage) -> dict:
     return research_readiness(coverage)
 
 
-def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, market, valuation: dict) -> dict:
+def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, market, valuation: dict, readiness: dict | None = None) -> dict:
     rows = list(reversed(history_with_current(company.id, 8)))
     issues = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").count()
     latest_engine = dict((model.assumptions or {}).get("latest_engine_result") or {})
@@ -98,6 +100,7 @@ def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, m
         valuation_quality=str(latest_engine.get("quality") or ""),
         data_quality_issues=issues,
         finra_summary=finra_stored_summary(company.id),
+        readiness=readiness or _research_readiness(coverage),
     )
 
 
@@ -114,10 +117,11 @@ def _ctx(ticker: str) -> dict:
     market = latest_snapshot(security.id)
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     valuation = valuation_result(coverage)
-    intelligence = _intelligence(coverage, company, model, market, valuation)
+    readiness = _research_readiness(coverage)
+    intelligence = _intelligence(coverage, company, model, market, valuation, readiness)
     return {"coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
             "investment": investment, "model": model, "market": market, "position": position,
-            "valuation": valuation, "readiness": _research_readiness(coverage), "company_sections": SECTIONS,
+            "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
             "intelligence": intelligence, "brief": company_brief(company.id, valuation, intelligence, model)}
 
 
@@ -151,10 +155,12 @@ def dashboard():
         security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
         market = latest_snapshot(security.id); valuation = valuation_result(coverage)
         model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+        readiness = _research_readiness(coverage)
+        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW"}
         rows.append({"coverage": coverage, "security": security, "company": company, "market": market,
                      "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
-                     "valuation": valuation, "readiness": _research_readiness(coverage),
-                     "intelligence": _intelligence(coverage, company, model, market, valuation) if model else {"action": "WAIT", "bias": "NEUTRAL", "confidence": "LOW"}})
+                     "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
+                     "discovery_labels": classify_coverage(intelligence, readiness)})
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
     action_counts = {key: sum(1 for row in rows if row["intelligence"].get("action") == key) for key in ("BUY", "SELL", "WAIT")}
@@ -164,14 +170,24 @@ def dashboard():
 @bp.get("/discovery")
 @login_required
 def discovery():
-    require_control_view(); q = str(request.args.get("q") or "").strip().upper()
-    query = Coverage.query.join(Security, Coverage.security_id == Security.id).filter(Coverage.user_id == g.user.id)
-    if q: query = query.filter(or_(db.func.upper(Security.ticker).like(f"%{q}%"), db.func.upper(Coverage.owner_summary).like(f"%{q}%")))
+    require_control_view()
+    q = str(request.args.get("q") or "").strip().upper()
+    external = search_universe(q, g.user.id) if q else {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
     rows = []
-    for coverage in query.order_by(Coverage.updated_at.desc()).all():
-        security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
-        rows.append({"coverage": coverage, "security": security, "company": company, "market": latest_snapshot(security.id), "readiness": _research_readiness(coverage)})
-    return render_template("discovery.html", rows=rows, q=q)
+    for coverage in Coverage.query.filter_by(user_id=g.user.id).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
+        security = db.session.get(Security, coverage.security_id)
+        company = db.session.get(Company, security.company_id)
+        market = latest_snapshot(security.id)
+        valuation = valuation_result(coverage)
+        model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+        readiness = _research_readiness(coverage)
+        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW"}
+        rows.append({
+            "coverage": coverage, "security": security, "company": company, "market": market,
+            "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
+            "discovery_labels": classify_coverage(intelligence, readiness),
+        })
+    return render_template("discovery.html", rows=rows, q=q, external=external)
 
 
 @bp.post("/coverage")
@@ -214,6 +230,11 @@ def company_section(ticker, section):
     require_control_view()
     if section not in SECTION_KEYS: abort(404)
     ctx = _ctx(ticker); company = ctx["company"]; coverage = ctx["coverage"]; extra = {}
+    if section in {"overview", "business"}:
+        extra["synthesis"] = build_synthesis(
+            coverage=coverage, security=ctx["security"], company=company, research=ctx["research"], risk=ctx["risk"],
+            model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"], intelligence=ctx["intelligence"], readiness=ctx["readiness"],
+        )
     if section == "expectations":
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
