@@ -9,14 +9,15 @@ from cryptography.fernet import Fernet
 from mfapp import create_app
 from mfapp.alert_engine import alert_email as account_alert_email
 from mfapp.calculations import CALCULATION_VERSION, financial_metrics
-from mfapp.core_models import Company, Coverage, MarketSnapshot, MonitoringRule, Security
+from mfapp.core_models import Company, Coverage, MarketSnapshot, MonitoringRule, Position, RiskPlan, Security
 from mfapp.decision_engine import build_research_intelligence
 from mfapp.discovery_engine import classify_coverage
 from mfapp.extensions import db
 from mfapp.models import User, UserPreference
 from mfapp.readiness import research_readiness
 from mfapp.security import encrypt_secret, hash_password
-from mfapp.services import ensure_workspace
+from mfapp.reporting import research_report_data
+from mfapp.services import create_snapshot, ensure_workspace, publication_payload
 
 
 def make_app(tmp_path, monkeypatch, *, auto_migrate=False):
@@ -282,3 +283,101 @@ def test_020_discovery_lenses_are_evidence_navigation_not_action():
     assert "QUALITY AT DISCOUNT" in labels
     assert "LONG DISLOCATION" in labels
     assert all(label not in {"BUY", "SELL"} for label in labels)
+
+
+def test_020_coverage_manage_archives_without_deleting_research(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, _, _, coverage_id = seed_workspace(app)
+    client = app.test_client(); login_control(client, uid)
+    response = client.post("/coverage/EXM/manage", data={"action": "archive"}, follow_redirects=False)
+    assert response.status_code == 302
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        assert coverage is not None
+        assert coverage.status == "ARCHIVED"
+        assert coverage.research_state == "ARCHIVED"
+        assert coverage.research is not None
+        assert coverage.valuation_models
+
+
+def test_020_private_report_and_publication_boundaries(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, _, security_id, coverage_id = seed_workspace(app)
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first()
+        risk.max_loss_pct = Decimal("4.25")
+        risk.max_position_pct = Decimal("12.5")
+        risk.entry_conditions = "PRIVATE_ENTRY_CONDITION"
+        db.session.add(Position(
+            user_id=uid,
+            security_id=security_id,
+            shares=Decimal("321.5"),
+            avg_cost=Decimal("27.75"),
+            currency="USD",
+            notes="PRIVATE_POSITION_NOTE",
+        ))
+        coverage.research.thesis = "Public-facing research thesis"
+        coverage.research.business = "Business evidence"
+        coverage.research.risk_summary = "Research invalidation summary"
+        db.session.commit()
+
+        from mfapp.routes import _ctx
+        from flask import g
+        with app.test_request_context("/company/EXM/overview"):
+            g.user = db.session.get(User, uid)
+            ctx = _ctx("EXM")
+            report = research_report_data(ctx, mode="full")
+            report_text = str(report)
+            assert "PRIVATE_ENTRY_CONDITION" not in report_text
+            assert "PRIVATE_POSITION_NOTE" not in report_text
+            assert "321.5" not in report_text
+            assert "27.75" not in report_text
+
+        snapshot = create_snapshot(coverage, uid)
+        db.session.add(snapshot); db.session.commit()
+        published = publication_payload(snapshot, "INSIDER")
+        published_text = str(published)
+        assert "PRIVATE_ENTRY_CONDITION" not in published_text
+        assert "PRIVATE_POSITION_NOTE" not in published_text
+        assert "'position':" not in published_text
+        assert "max_loss_pct" not in published_text
+        assert "max_position_pct" not in published_text
+
+    client = app.test_client(); login_control(client, uid)
+    pdf = client.get("/company/EXM/report/pdf?mode=executive")
+    docx = client.get("/company/EXM/report/docx?mode=full")
+    assert pdf.status_code == 200 and pdf.mimetype == "application/pdf" and len(pdf.data) > 500
+    assert docx.status_code == 200 and "openxmlformats" in docx.mimetype and len(docx.data) > 1000
+
+
+def test_020_friend_cannot_access_control_report_or_portfolio(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    _, _, _, _ = seed_workspace(app)
+    with app.app_context():
+        friend = User(
+            email="friend@example.com", display_name="Friend", role="FRIEND",
+            password_hash=hash_password("abcdefghijklmnop"),
+            totp_secret_enc=encrypt_secret("JBSWY3DPEHPK3PXP"), is_active=True,
+        )
+        db.session.add(friend); db.session.commit(); friend_id = friend.id
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["user_id"] = friend_id
+        session["view_as"] = "FRIEND"
+    assert client.get("/portfolio").status_code == 403
+    assert client.get("/portfolio/EXM").status_code == 403
+    assert client.get("/company/EXM/report/pdf").status_code == 403
+
+
+def test_020_overview_contains_local_depth_without_separate_decide_page():
+    company = Path("mfapp/templates/company_section.html").read_text()
+    routes = Path("mfapp/routes.py").read_text()
+    assert "DECISION MAP" in company
+    assert "WHY NOW" in company
+    assert "WHY NOT YET" in company
+    assert "WHAT CHANGES THE DECISION" in company
+    assert "WHAT KILLS THE THESIS" in company
+    assert "Process readiness" in company
+    assert '("overview", "Overview")' in routes
+    assert "decide" not in {key for key in ("decide",) if f'("{key}",' in routes}
