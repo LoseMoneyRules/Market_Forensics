@@ -115,7 +115,7 @@ def _tiingo(ticker: str, user_id: int) -> QuoteResult:
     if not token:
         return QuoteResult(False, "Tiingo", message="not configured")
     try:
-        response = requests.get(f"https://api.tiingo.com/iex/{ticker}", params={"token": token}, headers={"User-Agent": "MarketForensics/0.1.3"}, timeout=8)
+        response = requests.get(f"https://api.tiingo.com/iex/{ticker}", params={"token": token}, headers={"User-Agent": "MarketForensics/0.2.0"}, timeout=8)
         if response.status_code != 200:
             return QuoteResult(False, "Tiingo", message=f"HTTP {response.status_code}")
         raw = response.json() or []
@@ -147,7 +147,7 @@ def _alpha_vantage(ticker: str, user_id: int) -> QuoteResult:
 def _public_chart(ticker: str) -> QuoteResult:
     symbol = ticker.replace(".", "-")
     try:
-        response = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}", params={"range": "5d", "interval": "1d", "events": "div,splits"}, headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.1.3"}, timeout=8)
+        response = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}", params={"range": "5d", "interval": "1d", "events": "div,splits"}, headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.2.0"}, timeout=8)
         if response.status_code != 200:
             return QuoteResult(False, "Public market chart", message=f"HTTP {response.status_code}")
         result = (((response.json() or {}).get("chart") or {}).get("result") or [])
