@@ -14,15 +14,17 @@ from .services import can_view_publication, create_snapshot, publication_payload
 
 
 def _queue_status(user_id: int) -> dict:
-    due = Job.query.filter(
-        Job.user_id == user_id,
-        Job.status == "QUEUED",
-        Job.run_after <= utcnow(),
-    ).count()
+    due = Job.query.filter(Job.user_id == user_id, Job.status == "QUEUED", Job.run_after <= utcnow()).count()
     queued = Job.query.filter_by(user_id=user_id, status="QUEUED").count()
     running = Job.query.filter_by(user_id=user_id, status="RUNNING").count()
     failed = Job.query.filter_by(user_id=user_id, status="FAILED").count()
     return {"due": due, "queued": queued, "running": running, "failed": failed}
+
+
+def _job_flash(job: Job) -> str:
+    if getattr(job, "_mf_reused", False):
+        return f"{job.job_type} is already {job.status.lower()} as job #{job.id}; no duplicate was added."
+    return f"{job.job_type} queued as job #{job.id}. Browser worker will process it while CONTROL is open."
 
 
 @bp.post("/company/<ticker>/snapshot")
@@ -101,7 +103,7 @@ def queue_refresh(ticker, kind):
     require_control_view(); ctx = _ctx(ticker); mapping = {"market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE", "finra": "FINRA_IMPORT", "validate": "DEEP_VALIDATION", "management": "MANAGEMENT_SCAN"}; job_type = mapping.get(kind)
     if not job_type: abort(404)
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10 if kind == "market" else 50)
-    audit("job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(f"{job_type} queued as job #{job.id}. Browser worker will process it while CONTROL is open.", "success")
+    audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
 
@@ -110,7 +112,7 @@ def queue_refresh(ticker, kind):
 def queue_global_job(kind):
     require_control_view(); job_type = {"discovery": "DISCOVERY_SCAN", "bulk": "BULK_REFRESH"}.get(str(kind).lower())
     if not job_type: abort(404)
-    job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); flash(f"{job_type} queued as job #{job.id}. Browser worker will process it while CONTROL is open.", "success")
+    job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.settings"))
 
 
@@ -126,7 +128,7 @@ def job_status():
 def pump_jobs():
     require_control_view()
     before = _queue_status(g.user.id)
-    processed = run_jobs(limit=1) if before["due"] else []
+    processed = run_jobs(limit=1, user_id=g.user.id) if before["due"] or before["running"] else []
     after = _queue_status(g.user.id)
     return jsonify({"processed": processed, **after})
 
@@ -142,7 +144,7 @@ def settings():
 @role_required("CONTROL")
 def save_provider_settings():
     require_control_view()
-    for name in ("alpaca_key", "alpaca_secret", "tiingo_token", "alpha_vantage_key", "massive_key", "sec_user_agent", "finra_token"):
+    for name in ("alpaca_key", "alpaca_secret", "tiingo_token", "alpha_vantage_key", "massive_key", "sec_user_agent"):
         if request.form.get(f"remove_{name}") == "1": set_secret(g.user.id, name, "")
         else:
             value = str(request.form.get(name) or "").strip()
