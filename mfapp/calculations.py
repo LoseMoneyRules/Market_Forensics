@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from math import isfinite
 from typing import Any, Iterable
 
-CALCULATION_VERSION = "0.1.0"
+CALCULATION_VERSION = "0.1.3"
 
 
 def number(value: Any) -> float | None:
