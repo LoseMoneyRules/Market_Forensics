@@ -16,7 +16,7 @@
       <form method="post" action="{{ url_for('web.snapshot_company', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Publish research</button><small class="action-hint">One publication · role-specific view</small></form>
     </div>
   </div>
-  {% set section=section %}{% include "_company_tabs_013.html" %}
+  {% set section=section %}{% include "_research_tabs.html" %}
 
   {% if section == 'overview' %}
     <div class="panel decision-brief">
@@ -30,6 +30,25 @@
       </div>
       {% if brief.reasons %}<ul class="brief-reasons">{% for reason in brief.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% endif %}
       {% if intelligence.warnings %}<div class="notice amber"><strong>Review before relying on the read.</strong> {{ intelligence.warnings|join(' ') }}</div>{% endif %}
+    </div>
+
+    <div class="decision-evidence-grid">
+      <div class="panel">
+        <div class="panel-head"><div><p class="eyebrow">WHY THIS READ</p><h2>{{ intelligence.stance }}</h2></div><span class="status-chip">Evidence score {{ '%+.2f'|format(intelligence.score) }}</span></div>
+        <div class="metric-grid">
+          <div><span>BUY threshold</span><strong>+{{ '%.2f'|format(intelligence.buy_threshold) }}</strong><small>Score alone is not enough; valuation and warnings still gate action.</small></div>
+          <div><span>SELL threshold</span><strong>{{ '%.2f'|format(intelligence.sell_threshold) }}</strong><small>Evidence must also support negative valuation asymmetry.</small></div>
+          <div><span>Validation</span><strong>{{ intelligence.validation_state }}</strong><small>Separate from Research completion.</small></div>
+        </div>
+        {% if intelligence.blockers %}<div class="decision-blockers">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>For / against</h2></div>
+        <div class="evidence-sides">
+          <div><h3>FOR</h3>{% for s in intelligence.supporting_evidence[:5] %}<p><strong>{{ s.label }}</strong> · {{ s.detail }}</p>{% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}</div>
+          <div><h3>AGAINST</h3>{% for s in intelligence.opposing_evidence[:5] %}<p><strong>{{ s.label }}</strong> · {{ s.detail }}</p>{% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}</div>
+        </div>
+      </div>
     </div>
 
     <div class="two-col">
@@ -46,13 +65,23 @@
       </form>
       <div class="stack-gap">
         <div class="panel"><div class="panel-head"><div><h2>Process readiness</h2><p class="muted">Evidence can be ready automatically. A gate remains pending until you approve the current evidence snapshot.</p></div><strong>{{ readiness.done }}/{{ readiness.total }}</strong></div>
-          {% for gate in readiness.gates %}<div class="gate-row-015"><span>{{ gate.label }}</span><strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}</strong><form method="post" action="{{ url_for('web.approve_research_gate_015', ticker=security.ticker, gate_key=gate.key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% if gate.approved %}<input type="hidden" name="action" value="revoke"><button class="button micro" type="submit">Reopen</button>{% elif gate.evidence_ready %}<button class="button micro primary" type="submit">Approve</button>{% else %}<span class="muted">—</span>{% endif %}</form></div>{% endfor %}
+          {% if readiness.ready_to_validate %}<div class="notice teal ready-to-validate"><strong>READY TO VALIDATE.</strong> Research gates are current and approved. <a class="button micro primary" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>{% endif %}
+          {% for gate in readiness.gates %}<div class="gate-row-015"><span>{{ gate.label }}</span><strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}</strong><form method="post" action="{{ url_for('web.approve_research_gate', ticker=security.ticker, gate_key=gate.key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% if gate.approved %}<input type="hidden" name="action" value="revoke"><button class="button micro" type="submit">Reopen</button>{% elif gate.evidence_ready %}<button class="button micro primary" type="submit">Approve</button>{% else %}<span class="muted">—</span>{% endif %}</form></div>{% endfor %}
         </div>
         <div class="panel"><div class="panel-head"><h2>Evidence signals</h2></div>{% for signal in intelligence.signals[:8] %}<div class="list-row"><div><strong>{{ signal.label }}</strong><p>{{ signal.detail }}</p></div><span class="status-chip">{{ signal.tone|upper }}</span></div>{% else %}<p class="muted">Refresh SEC and market evidence to populate signals.</p>{% endfor %}</div>
       </div>
     </div>
 
   {% elif section == 'business' %}
+    <div class="panel business-evidence-path">
+      <div class="panel-head"><div><p class="eyebrow">EVIDENCE PATH</p><h2>MICRO / MACRO / for / against / invalidation</h2></div></div>
+      <div class="evidence-path-grid">
+        <div><h3>MICRO · FOR</h3>{% for item in synthesis.micro_for %}<p>{{ item }}</p>{% else %}<p class="muted">No positive micro signal above threshold.</p>{% endfor %}</div>
+        <div><h3>MICRO · AGAINST</h3>{% for item in synthesis.micro_against %}<p>{{ item }}</p>{% else %}<p class="muted">No automatic counter-signal above threshold.</p>{% endfor %}</div>
+        <div><h3>MACRO / INDUSTRY</h3>{% for item in synthesis.macro %}<p>{{ item }}</p>{% else %}<p class="muted">No stored macro/industry evidence yet.</p>{% endfor %}</div>
+        <div><h3>INVALIDATION / NEXT</h3><p>{{ synthesis.invalidation or 'No locked thesis invalidation stored.' }}</p>{% for item in synthesis.next %}<p>{{ item }}</p>{% endfor %}</div>
+      </div>
+    </div>
     <div class="two-col"><form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='business') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><div><p class="eyebrow">BUSINESS</p><h2>Business quality & model</h2></div><button class="button primary">Save</button></div><label>Evidence-backed business read<textarea name="text" rows="15">{{ research.business|clean_auto }}</textarea></label><p class="muted">Automatic classification is only the starting point. Add moat, customer concentration, pricing power, cyclicality and competitive evidence when known.</p></form><div class="panel"><div class="panel-head"><h2>Automatic numeric clues</h2></div>{% for s in intelligence.signals if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No numeric clue stored yet.</p>{% endfor %}</div></div>
 
   {% elif section == 'numbers' %}
@@ -70,7 +99,7 @@
 
   {% elif section == 'expectations' %}
     <div class="panel"><div class="panel-head"><div><p class="eyebrow">FORWARD VIEW</p><h2>Internal Base-case forecast</h2></div><span class="status-chip">Editable in Valuation</span></div><div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Period</th><th>Revenue</th><th>Growth</th><th>Operating income</th><th>Net income</th><th>FCF</th></tr></thead><tbody>{% for f in forecast_rows %}<tr><td><strong>{{ f.period_label }}</strong></td><td>{{ num(f.revenue) }}</td><td>{{ pct(f.growth*100 if f.growth is not none else none) }}</td><td>{{ num(f.operating_income) }}</td><td>{{ num(f.net_income) }}</td><td>{{ num(f.fcf) }}</td></tr>{% else %}<tr><td colspan="6" class="empty-cell">Refresh fundamentals and valuation assumptions to build forecasts.</td></tr>{% endfor %}</tbody></table></div></div>
-    <div class="two-col"><div class="panel"><h2>Structured expectations</h2>{% for e in expectation_rows %}<div class="list-row"><div><strong>{{ e.metric }} · {{ e.period_label or '—' }}</strong><p>Market {{ e.market_value|mf_num(2) }} {{ e.unit }} · Ours {{ e.internal_value|mf_num(2) }} {{ e.unit }}</p></div><span class="status-chip">{{ e.confidence }}</span></div>{% else %}<p class="muted">No external expectation datapoints stored. Internal model forecasts are shown above and are not labeled consensus.</p>{% endfor %}</div><form class="panel stack" method="post" action="{{ url_for('web.add_expectation', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>Add expectation datapoint</h2><label>Metric<input name="metric" required></label><label>Period<input name="period_label"></label><div class="form-grid two"><label>Market<input name="market_value"></label><label>Our view<input name="internal_value"></label></div><div class="form-grid two"><label>Unit<input name="unit"></label><label>Confidence<select name="confidence"><option>UNRATED</option><option>LOW</option><option>MEDIUM</option><option>HIGH</option></select></label></div><label>Notes<textarea name="notes"></textarea></label><button class="button primary">Add</button></form></div>
+    <div class="two-col"><div class="panel"><div class="panel-head"><div><p class="eyebrow">VARIANT PERCEPTION</p><h2>Market vs our operating path</h2></div></div>{% for e in expectation_rows %}{% set delta = (e.internal_value|float - e.market_value|float) if e.internal_value is not none and e.market_value is not none else none %}<div class="expectation-row"><div><strong>{{ e.metric }} · {{ e.period_label or '—' }}</strong><p>Market {{ e.market_value|mf_num(2) }} {{ e.unit }} · Ours {{ e.internal_value|mf_num(2) }} {{ e.unit }}{% if delta is not none %} · Divergence {{ '%+.2f'|format(delta) }} {{ e.unit }}{% endif %}</p>{% if e.notes %}<small>{{ e.notes }}</small>{% endif %}</div><span class="status-chip">{{ e.confidence }}</span></div>{% else %}<p class="muted">No external expectation datapoints stored. Add the market-implied driver, our operating assumption, and use Notes for the resolution mechanism / horizon.</p>{% endfor %}</div><form class="panel stack" method="post" action="{{ url_for('web.add_expectation', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>Add expectation datapoint</h2><label>Metric<input name="metric" required></label><label>Period<input name="period_label"></label><div class="form-grid two"><label>Market<input name="market_value"></label><label>Our view<input name="internal_value"></label></div><div class="form-grid two"><label>Unit<input name="unit"></label><label>Confidence<select name="confidence"><option>UNRATED</option><option>LOW</option><option>MEDIUM</option><option>HIGH</option></select></label></div><label>Notes<textarea name="notes"></textarea></label><button class="button primary">Add</button></form></div>
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='expectations') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Expectations thesis</h2><button class="button primary">Save</button></div><textarea name="text" rows="8">{{ research.expectations|clean_auto }}</textarea></form>
 
   {% elif section == 'bear-case' %}
