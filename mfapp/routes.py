@@ -8,7 +8,7 @@ from flask import Blueprint, abort, current_app, flash, g, redirect, render_temp
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
-from .current_financials import annual_rows, current_row, forecast_rows, history_with_current
+from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, scenario_forecasts
 from .decision_support import company_brief, journal_prefill, management_engine, monitoring_plan, tape_series
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
@@ -250,7 +250,8 @@ def company_section(ticker, section):
             extra["peer_candidates"] = peer_query.order_by(Company.display_name.asc()).limit(12).all()
     if section == "expectations":
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
-        extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
+        extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 5)
+        extra["scenario_forecasts"] = scenario_forecasts(company.id, ctx["model"], 5)
     elif section == "numbers":
         extra["financials"] = annual_rows(company.id, 15)
         extra["current_financial"] = current_row(company.id)
