@@ -3,9 +3,12 @@ name: Deploy Market Forensics to Namecheap
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: market-forensics-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -17,10 +20,12 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: main
+
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: 'pip'
+
       - name: Test release before upload
         env:
           MF_SECRET_KEY: test-secret-key
@@ -30,6 +35,21 @@ jobs:
           export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
           python -m compileall -q app.py manage.py mfapp tests
           pytest -q
+
+      - name: Build production payload
+        run: |
+          set -euo pipefail
+          rm -rf .release-payload
+          mkdir -p .release-payload
+          cp app.py manage.py requirements.txt VERSION .release-payload/
+          cp -a mfapp .release-payload/
+          find .release-payload -type d -name __pycache__ -prune -exec rm -rf {} +
+          find .release-payload -type f -name '*.pyc' -delete
+          test ! -e .release-payload/mfapp/full312.py
+          test ! -e .release-payload/mfapp/v312_routes.py
+          test ! -e .release-payload/mfapp/research_core.py
+          test ! -e .release-payload/mfapp/marketdata.py
+
       - name: Verify FTPES secrets
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
@@ -37,12 +57,16 @@ jobs:
           FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in FTP_HOST FTP_USER FTP_PASS; do test -n "${!name:-}" || { echo "Missing $name"; exit 1; }; done
+          for name in FTP_HOST FTP_USER FTP_PASS; do
+            test -n "${!name:-}" || { echo "Missing $name"; exit 1; }
+          done
+
       - name: Install FTPES client
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq lftp
-      - name: Upload application payload and restart Passenger
+
+      - name: Clean legacy runtime and upload 0.1.0
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
           FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
@@ -58,17 +82,30 @@ jobs:
           set net:max-retries 3
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
-          mirror --reverse --delete --verbose --exclude-glob __pycache__/ --exclude-glob '*.pyc' ./mfapp ./mfapp
-          mirror --reverse --delete --verbose ./docs ./docs
-          put -O . app.py
-          put -O . manage.py
-          put -O . requirements.txt
-          put -O . requirements-dev.txt
-          put -O . README.md
-          put -O . VERSION
+
+          # Remove the 0.0.4/V3 hosted runtime. Persistent hosting state is not touched.
+          rm -rf ./market_forensics
+          rm -rf ./mfengine
+          rm -rf ./docs
+          rm -rf ./_vendor
+          rm -f ./requirements-dev.txt
+          rm -f ./requirements-vendor.txt
+          rm -f ./README.md
+
+          # mfapp is authoritative: --delete removes obsolete modules/templates/static files.
+          mirror --reverse --delete --verbose \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
+            ./.release-payload/mfapp ./mfapp
+
+          put -O . .release-payload/app.py
+          put -O . .release-payload/manage.py
+          put -O . .release-payload/requirements.txt
+          put -O . .release-payload/VERSION
           put /tmp/restart.txt -o tmp/restart.txt
           bye
           LFTP
+
       - name: Production health check
         run: |
           set -euo pipefail
@@ -77,7 +114,8 @@ jobs:
             if printf '%s' "$body" | grep -q '"status":"ok"' \
               && printf '%s' "$body" | grep -q '"version":"0.1.0"' \
               && printf '%s' "$body" | grep -q '"architecture":"web-native"'; then
-              echo "$body"; exit 0
+              echo "$body"
+              exit 0
             fi
             sleep 6
           done
