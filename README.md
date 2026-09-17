@@ -1,44 +1,23 @@
-# Market Forensics
+# Market Forensics 0.1.0
 
-**Current build: v0.0.1**
+Market Forensics 0.1.0 is the web-native implementation of the Market Forensics research process.
 
-Market Forensics is being rebuilt as a private, responsive research platform for phone, iPad/tablet and desktop. The product name is simply **Market Forensics**.
+The production application uses the existing account/security foundation and a new MariaDB research core. V3.1.12 remains a design/reference artifact only; it is not imported into the 0.1.0 request path.
 
-## v0.0.1 scope
+## Runtime model
 
-- invite-only accounts
-- FRIEND / INSIDER / CONTROL access roles
-- mandatory password + authenticator 2FA
-- Argon2 password hashing; no plaintext/recoverable passwords
-- encrypted TOTP secrets
-- server-side role enforcement
-- private CONTROL area
-- FRIEND/INSIDER published research views
-- immutable-publication data model foundation
-- audit events
-- responsive mobile/tablet/desktop shell
-- no purple in the design system
-- MariaDB-ready production configuration; SQLite for local development
-- Namecheap Passenger/WSGI entrypoint
+`INGEST → NORMALIZE → CALCULATE → STORE → DISPLAY`
 
-The v0.0.1 research content is intentionally minimal. Its job is to prove the platform, access control, security, responsive UI and deployment path before the full V3 research engine is migrated.
+Page GETs read stored data and render HTML. Heavy refreshes are queued in `mf_job` and executed by `python manage.py run-jobs --limit 5`, which is compatible with cPanel cron and does not require permanent workers.
 
-## Local start
+## Production requirements
 
-```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements-dev.txt
-python manage.py generate-secrets
-# copy the generated values into environment variables or .env
-python manage.py bootstrap-admin --email you@example.com --name "Your Name"
-python manage.py seed-demo
-python app.py
-```
+- Python / Passenger / WSGI
+- MariaDB via `MF_DATABASE_URL`
+- `MF_SECRET_KEY`
+- existing `MF_ENCRYPTION_KEY` (do not rotate during migration unless encrypted secrets are deliberately re-encrypted)
+- optional provider credentials stored through the encrypted settings UI
 
-Open `http://127.0.0.1:5000`.
+## Version
 
-## Production
-
-See `DEPLOY_NAMECHEAP.md`.
+`Market Forensics 0.1.0`
