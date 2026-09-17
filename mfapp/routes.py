@@ -4,7 +4,7 @@ import re
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, url_for
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
@@ -110,7 +110,7 @@ def _published_for_role(role: str):
 
 @bp.get("/health")
 def health():
-    return {"status": "ok", "version": "0.1.0", "architecture": "web-native", "database": "primary"}
+    return {"status": "ok", "version": current_app.config["VERSION"], "architecture": "web-native", "database": "primary"}
 
 
 @bp.get("/")
@@ -126,7 +126,7 @@ def dashboard():
         rows.append({"coverage": coverage, "security": security, "company": company, "market": latest_snapshot(security.id),
                      "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
                      "valuation": valuation_result(coverage), "readiness": readiness(coverage)})
-    queued = Job.query.filter(Job.status.in_(["QUEUED", "RUNNING"])).count()
+    queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
     return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts)
 
