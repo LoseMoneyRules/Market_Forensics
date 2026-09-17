@@ -19,6 +19,7 @@ from .extensions import db
 from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
 from .historical_engine import run_historical_test
 from .management_promises import extract_promises, html_to_text, store_promises
+from .positioning import refresh_positioning_bundle
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
@@ -276,6 +277,18 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "FINRA_IMPORT":
         if not security: raise RuntimeError("Security not found")
         return _store_finra_bundle(security, refresh_finra_bundle(security.ticker, job.user_id, int((job.payload or {}).get("lookback_days") or 35)))
+    if kind == "POSITIONING_REFRESH":
+        if not security: raise RuntimeError("Security not found")
+        bundle = refresh_positioning_bundle(security.ticker, job.user_id)
+        db.session.add(Event(
+            company_id=security.company_id,
+            event_type="ALPACA_POSITIONING",
+            title=f"{security.ticker} borrow/options positioning",
+            event_date=utcnow(),
+            payload=bundle,
+        ))
+        db.session.commit()
+        return bundle
     if kind == "DEEP_VALIDATION":
         if not job.company_id: raise RuntimeError("company_id is required")
         return _deep_validation(job.company_id, coverage_id)
