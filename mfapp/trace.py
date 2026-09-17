@@ -16,7 +16,7 @@ from werkzeug.exceptions import HTTPException
 from .security import login_required
 
 bp = Blueprint("trace", __name__, url_prefix="/trace")
-TRACE_BUILD = "0.1.1-observability"
+TRACE_BUILD = "0.1.2-observability"
 
 
 def _utc_now() -> str:
