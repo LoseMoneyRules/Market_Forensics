@@ -149,7 +149,7 @@ def queue_refresh(ticker, kind):
 @bp.post("/jobs/<kind>")
 @role_required("CONTROL")
 def queue_global_job(kind):
-    require_control_view(); job_type = {"discovery": "DISCOVERY_SCAN", "bulk": "BULK_REFRESH"}.get(str(kind).lower())
+    require_control_view(); job_type = {"discovery": "DISCOVERY_SCAN", "bulk": "BULK_REFRESH", "stale": "STALE_REFRESH"}.get(str(kind).lower())
     if not job_type: abort(404)
     job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.settings"))
