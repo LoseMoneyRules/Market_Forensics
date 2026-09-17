@@ -34,9 +34,9 @@ def test_company_research_tabs_exclude_portfolio_risk_and_position():
     assert "risk" not in keys; assert "position" not in keys; assert "valuation" in keys; assert "historical-test" in keys
 
 
-def test_015_version_and_login_assets(tmp_path):
-    app = create_app({"TESTING": True, "SECRET_KEY": "015", "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / '015.db'}", "WTF_CSRF_ENABLED": False, "AUTO_MIGRATE": False})
-    assert app.config["VERSION"] == "0.1.5"
+def test_016_version_and_login_assets(tmp_path):
+    app = create_app({"TESTING": True, "SECRET_KEY": "016", "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / '016.db'}", "WTF_CSRF_ENABLED": False, "AUTO_MIGRATE": False})
+    assert app.config["VERSION"] == "0.1.6"
     page = app.test_client().get("/login").get_data(as_text=True)
     assert "v0.0.1" not in page; assert "Evidence first" not in page; assert "Invite-only" in page
 
