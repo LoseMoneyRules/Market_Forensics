@@ -1,61 +1,53 @@
 from __future__ import annotations
 
-"""Server-side SEC ingestion adapter for the V3.1.12 web migration.
-
-The analytical rules live in the preserved V3.1.12 engine. This module only maps official SEC
-Companyfacts into the MariaDB FundamentalPeriod store. Ambiguous or missing facts remain None.
-"""
-
 from collections import defaultdict
 from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
+import hashlib
 import math
-from typing import Iterable
+from typing import Any, Iterable
 
 import requests
 
 from .extensions import db
-from .marketdata import get_secret
-from .models import Company, FundamentalPeriod
+from .data_providers import get_secret
+from .core_models import Company, DataQualityIssue, FinancialPeriod, NormalizedFinancial, Provenance, RawFinancialFact, Security, Source
 
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 
-TAGS = {
+DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"],
     "gross_profit": ["GrossProfit"],
     "operating_income": ["OperatingIncomeLoss"],
-    "flow_total_costs": ["CostsAndExpenses"],
-    "flow_operating_expenses": ["OperatingExpenses", "OperatingCostsAndExpenses"],
-    "flow_sga": ["SellingGeneralAndAdministrativeExpense"],
-    "flow_rd": ["ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"],
-    "pretax": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
-    "tax": ["IncomeTaxExpenseBenefit"],
+    "pretax_income": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
+    "income_tax": ["IncomeTaxExpenseBenefit"],
     "net_income": ["NetIncomeLoss", "ProfitLoss"],
     "cfo": ["NetCashProvidedByUsedInOperatingActivities"],
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsForAdditionsToPropertyPlantAndEquipment"],
     "buybacks": ["PaymentsForRepurchaseOfCommonStock"],
     "dividends": ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],
-    "diluted_shares": ["WeightedAverageNumberOfDilutedSharesOutstanding"],
-    "basic_shares": ["WeightedAverageNumberOfSharesOutstandingBasic"],
+    "diluted_shares": ["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic"],
+}
+INSTANT_TAGS = {
     "cash": ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
     "receivables": ["AccountsReceivableNetCurrent"],
-    "inventory": ["InventoryNet", "InventoryFinishedGoodsNetOfAllowancesCustomerAdvancesAndProgressBillings"],
+    "inventory": ["InventoryNet"],
     "payables": ["AccountsPayableCurrent"],
     "assets": ["Assets"],
     "liabilities": ["Liabilities"],
     "equity": ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-    "short_borrowings": ["ShortTermBorrowings", "CommercialPaper"],
-    "long_debt_current": ["LongTermDebtAndFinanceLeaseObligationsCurrent", "LongTermDebtCurrent", "DebtCurrent"],
-    "long_debt_noncurrent": ["LongTermDebtAndFinanceLeaseObligationsNoncurrent", "LongTermDebtNoncurrent"],
-    "long_debt_total": ["LongTermDebtAndFinanceLeaseObligations", "LongTermDebt"],
-    "debt_combined": ["DebtLongtermAndShorttermCombinedAmount"],
-    "shares_outstanding_dei": ["EntityCommonStockSharesOutstanding"],
-    "shares_outstanding_gaap": ["CommonStockSharesOutstanding"],
+    "debt": ["DebtLongtermAndShorttermCombinedAmount", "LongTermDebtAndFinanceLeaseObligations", "LongTermDebt"],
+    "shares_outstanding": ["CommonStockSharesOutstanding"],
 }
 
 
 class SECRefreshError(RuntimeError):
     pass
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _ua(user_id: int) -> str:
@@ -65,254 +57,181 @@ def _ua(user_id: int) -> str:
     return value
 
 
-def _headers(user_agent: str) -> dict:
-    return {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
-
-
 def _json(url: str, user_agent: str) -> dict:
-    response = requests.get(url, headers=_headers(user_agent), timeout=35)
+    response = requests.get(url, headers={"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}, timeout=35)
     if response.status_code != 200:
         raise SECRefreshError(f"SEC HTTP {response.status_code}")
     return response.json() or {}
 
 
-def _ticker_meta(ticker: str, user_agent: str) -> dict:
-    raw = _json(f"{SEC_WWW}/files/company_tickers.json", user_agent)
+def _ticker_meta(ticker: str, user_agent: str) -> dict[str, str]:
+    mapping = _json(f"{SEC_WWW}/files/company_tickers.json", user_agent)
     target = ticker.upper().strip()
-    for row in raw.values():
-        if str(row.get("ticker") or "").upper() == target:
-            cik = str(row.get("cik_str") or "").zfill(10)
-            submissions = _json(f"{SEC_DATA}/submissions/CIK{cik}.json", user_agent)
-            return {
-                "cik": cik,
-                "name": submissions.get("name") or row.get("title") or target,
-                "sic": str(submissions.get("sic") or ""),
-                "sic_description": submissions.get("sicDescription") or "",
-                "fiscal_year_end": submissions.get("fiscalYearEnd") or "",
-            }
+    for row in mapping.values():
+        if str(row.get("ticker") or "").upper() != target:
+            continue
+        cik = str(row.get("cik_str") or "").zfill(10)
+        submission = _json(f"{SEC_DATA}/submissions/CIK{cik}.json", user_agent)
+        return {
+            "cik": cik,
+            "name": str(submission.get("name") or row.get("title") or target),
+            "sic": str(submission.get("sic") or ""),
+            "sic_description": str(submission.get("sicDescription") or ""),
+            "fiscal_year_end": str(submission.get("fiscalYearEnd") or ""),
+        }
     raise SECRefreshError(f"{target} not found in SEC ticker mapping.")
 
 
-def _fact_records(companyfacts: dict, namespace: str, tag: str) -> list[dict]:
+def _facts(companyfacts: dict, namespace: str, tag: str) -> list[dict[str, Any]]:
     node = (((companyfacts.get("facts") or {}).get(namespace) or {}).get(tag) or {})
-    units = node.get("units") or {}
-    records: list[dict] = []
-    for unit_name, values in units.items():
-        for raw in values or []:
-            row = dict(raw)
-            row["unit"] = unit_name
-            row["tag"] = tag
-            records.append(row)
-    return records
+    out: list[dict[str, Any]] = []
+    for unit, rows in (node.get("units") or {}).items():
+        for raw in rows or []:
+            item = dict(raw); item["unit"] = unit; item["tag"] = tag; item["namespace"] = namespace
+            out.append(item)
+    return out
 
 
-def _duration_days(row: dict) -> int | None:
+def _as_decimal(value: Any) -> Decimal | None:
+    try:
+        d = Decimal(str(value))
+        return d if d.is_finite() else None
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _duration_days(row: dict[str, Any]) -> int | None:
     try:
         return (date.fromisoformat(str(row.get("end"))[:10]) - date.fromisoformat(str(row.get("start"))[:10])).days
     except Exception:
         return None
 
 
-def _annual_for_tag(companyfacts: dict, tag: str) -> dict[int, dict]:
-    """Conservative 10-K/FY resolver; one reported consolidated-looking fact per fiscal year."""
-    candidates: dict[int, list[dict]] = defaultdict(list)
-    for row in _fact_records(companyfacts, "us-gaap", tag):
-        if row.get("form") not in {"10-K", "10-K/A"} or str(row.get("fp") or "") != "FY":
-            continue
-        days = _duration_days(row)
-        if days is None or not 300 <= days <= 430:
-            continue
-        try:
-            fy = int(row.get("fy"))
-            value = float(row.get("val"))
-        except Exception:
-            continue
-        if not math.isfinite(value):
-            continue
-        item = dict(row)
-        item["val"] = value
-        candidates[fy].append(item)
-
-    out: dict[int, dict] = {}
-    for fy, rows in candidates.items():
-        # Prefer the latest filing for the same annual period. If the latest filing still contains
-        # conflicting values for the same end/tag, fail closed for that tag/year.
-        rows.sort(key=lambda r: (str(r.get("filed") or ""), str(r.get("end") or ""), str(r.get("accn") or "")))
-        latest_filed = str(rows[-1].get("filed") or "")
-        latest = [r for r in rows if str(r.get("filed") or "") == latest_filed]
-        by_end: dict[str, list[dict]] = defaultdict(list)
-        for row in latest:
-            by_end[str(row.get("end") or "")].append(row)
-        end = max(by_end) if by_end else ""
-        same = by_end.get(end, [])
-        values = []
-        for row in same:
-            if not any(abs(row["val"] - existing) <= max(1.0, abs(existing) * 1e-9) for existing in values):
-                values.append(row["val"])
-        if len(values) != 1:
-            continue
-        chosen = next(r for r in same if abs(r["val"] - values[0]) <= max(1.0, abs(values[0]) * 1e-9))
-        out[fy] = chosen
-    return out
-
-
-def _annual_metric(companyfacts: dict, tags: Iterable[str]) -> dict[int, dict]:
-    """Use the first taxonomy tag that provides a year, preserving V3.1.12 tag priority."""
-    merged: dict[int, dict] = {}
+def _annual_duration(companyfacts: dict, tags: Iterable[str]) -> dict[int, dict[str, Any]]:
+    output: dict[int, dict[str, Any]] = {}
     for tag in tags:
-        rows = _annual_for_tag(companyfacts, tag)
-        for fy, row in rows.items():
-            merged.setdefault(fy, row)
-    return merged
+        candidates: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for row in _facts(companyfacts, "us-gaap", tag):
+            if row.get("form") not in {"10-K", "10-K/A"} or str(row.get("fp") or "") != "FY":
+                continue
+            days = _duration_days(row)
+            if days is None or not 300 <= days <= 430:
+                continue
+            try: fy = int(row.get("fy"))
+            except Exception: continue
+            if _as_decimal(row.get("val")) is None: continue
+            candidates[fy].append(row)
+        for fy, rows in candidates.items():
+            if fy in output: continue
+            rows.sort(key=lambda r: (str(r.get("filed") or ""), str(r.get("end") or ""), str(r.get("accn") or "")))
+            output[fy] = rows[-1]
+    return output
 
 
-def _annual_instant_for_tag(companyfacts: dict, namespace: str, tag: str) -> dict[int, dict]:
-    candidates: dict[int, list[dict]] = defaultdict(list)
-    for row in _fact_records(companyfacts, namespace, tag):
-        if row.get("form") not in {"10-K", "10-K/A"}:
-            continue
-        if row.get("start"):
-            continue
-        try:
-            fy = int(row.get("fy"))
-            value = float(row.get("val"))
-        except Exception:
-            continue
-        if not math.isfinite(value):
-            continue
-        item = dict(row)
-        item["val"] = value
-        candidates[fy].append(item)
-    out = {}
-    for fy, rows in candidates.items():
-        rows.sort(key=lambda r: (str(r.get("filed") or ""), str(r.get("end") or ""), str(r.get("accn") or "")))
-        latest = rows[-1]
-        out[fy] = latest
-    return out
-
-
-def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "us-gaap") -> dict[int, dict]:
-    merged = {}
+def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "us-gaap") -> dict[int, dict[str, Any]]:
+    output: dict[int, dict[str, Any]] = {}
     for tag in tags:
-        for fy, row in _annual_instant_for_tag(companyfacts, namespace, tag).items():
-            merged.setdefault(fy, row)
-    return merged
+        candidates: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for row in _facts(companyfacts, namespace, tag):
+            if row.get("form") not in {"10-K", "10-K/A"} or row.get("start"):
+                continue
+            try: fy = int(row.get("fy"))
+            except Exception: continue
+            if _as_decimal(row.get("val")) is None: continue
+            candidates[fy].append(row)
+        for fy, rows in candidates.items():
+            if fy in output: continue
+            rows.sort(key=lambda r: (str(r.get("filed") or ""), str(r.get("end") or ""), str(r.get("accn") or "")))
+            output[fy] = rows[-1]
+    return output
 
 
-def _debt(short_rec, current_rec, noncurrent_rec, total_rec, combined_rec):
-    short = short_rec.get("val") if short_rec else None
-    current = current_rec.get("val") if current_rec else None
-    noncurrent = noncurrent_rec.get("val") if noncurrent_rec else None
-    total = total_rec.get("val") if total_rec else None
-    combined = combined_rec.get("val") if combined_rec else None
-    current_tag = str((current_rec or {}).get("tag") or "")
-    if noncurrent is not None or current is not None:
-        short_component = 0 if current_tag == "DebtCurrent" else (short or 0)
-        return (noncurrent or 0) + (current or 0) + short_component
-    if total is not None:
-        return total + (short or 0)
-    return combined
+def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> Source:
+    content_hash = hashlib.sha256(str(facts.get("entityName") or meta["name"]).encode()).hexdigest()
+    source = Source(
+        company_id=company.id,
+        provider="SEC",
+        source_type="COMPANYFACTS",
+        title=f"{meta['name']} SEC Companyfacts",
+        url=f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json",
+        retrieved_at=utcnow(),
+        content_hash=content_hash,
+        meta={"cik": meta["cik"], "user_agent_present": bool(user_agent)},
+    )
+    db.session.add(source); db.session.flush()
+    return source
 
 
-def _flow_operating_income(row: dict, maps: dict[str, dict[int, dict]], fy: int) -> tuple[float | None, str | None]:
-    direct = (maps["operating_income"].get(fy) or {}).get("val")
-    if direct is not None:
-        return float(direct), "REPORTED_OPERATING_INCOME"
-    revenue = row.get("revenue")
-    gross_profit = row.get("gross_profit")
-    total_costs = (maps["flow_total_costs"].get(fy) or {}).get("val")
-    operating_expenses = (maps["flow_operating_expenses"].get(fy) or {}).get("val")
-    sga_rec = maps["flow_sga"].get(fy) or {}
-    rd_rec = maps["flow_rd"].get(fy) or {}
-    value = None
-    method = None
-    if revenue is not None and total_costs is not None:
-        value = float(revenue) - float(total_costs)
-        method = "DERIVED_REVENUE_MINUS_TOTAL_COSTS"
-    elif gross_profit is not None and operating_expenses is not None:
-        value = float(gross_profit) - float(operating_expenses)
-        method = "DERIVED_GROSS_PROFIT_MINUS_OPERATING_EXPENSES"
-    elif gross_profit is not None and sga_rec.get("val") is not None:
-        value = float(gross_profit) - float(sga_rec["val"]) - float(rd_rec.get("val") or 0.0)
-        method = "DERIVED_GROSS_PROFIT_MINUS_SG&A" + ("_AND_R&D" if rd_rec.get("val") is not None else "")
-        pretax = row.get("pretax")
-        if pretax is not None:
-            rev_abs = abs(float(revenue or 0.0))
-            gp_abs = abs(float(gross_profit or 0.0))
-            if abs(value - float(pretax)) > max(1.0, rev_abs * 0.10, gp_abs * 0.25):
-                return None, "DATA_REVIEW_SG&A_BRIDGE_NOT_RECONCILABLE"
-    if value is not None:
-        rev_abs = abs(float(revenue or 0.0))
-        if not math.isfinite(value) or (gross_profit is not None and value > float(gross_profit) + max(1.0, rev_abs * 1e-8)):
-            return None, "DATA_REVIEW_IMPLAUSIBLE_OPERATING_BRIDGE"
-    return value, method
+def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) -> None:
+    if not record: return
+    value = _as_decimal(record.get("val"))
+    if value is None: return
+    context = f"{record.get('start','')}|{record.get('end','')}|{record.get('accn','')}|{record.get('unit','')}"
+    db.session.add(RawFinancialFact(
+        financial_period_id=period.id,
+        source_id=source.id,
+        taxonomy=str(record.get("namespace") or "us-gaap"),
+        tag=str(record.get("tag") or ""),
+        unit=str(record.get("unit") or ""),
+        value=value,
+        context_hash=hashlib.sha256(context.encode()).hexdigest(),
+        filed_at=date.fromisoformat(str(record.get("filed"))[:10]) if record.get("filed") else None,
+        raw_payload={k: record.get(k) for k in ("fy", "fp", "form", "start", "end", "filed", "accn", "frame")},
+    ))
 
 
-def refresh_company_fundamentals(company: Company, user_id: int) -> dict:
+def refresh_company_fundamentals(company: Company, security: Security, user_id: int) -> dict[str, Any]:
     user_agent = _ua(user_id)
-    meta = _ticker_meta(company.ticker, user_agent)
-    facts = _json(f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json", user_agent)
-
-    duration_keys = [
-        "revenue", "gross_profit", "operating_income", "flow_total_costs", "flow_operating_expenses",
-        "flow_sga", "flow_rd", "pretax", "tax", "net_income", "cfo", "capex", "buybacks", "dividends",
-        "diluted_shares", "basic_shares",
-    ]
-    maps = {key: _annual_metric(facts, TAGS[key]) for key in duration_keys}
-    instant_keys = ["cash", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "short_borrowings", "long_debt_current", "long_debt_noncurrent", "long_debt_total", "debt_combined"]
-    instant = {key: _annual_instant(facts, TAGS[key]) for key in instant_keys}
-    outstanding = _annual_instant(facts, TAGS["shares_outstanding_dei"], namespace="dei")
-    if not outstanding:
-        outstanding = _annual_instant(facts, TAGS["shares_outstanding_gaap"])
-
-    years = sorted(set().union(*(set(m.keys()) for m in maps.values()), *(set(m.keys()) for m in instant.values()), set(outstanding.keys())))
+    meta = _ticker_meta(security.ticker, user_agent)
+    companyfacts = _json(f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json", user_agent)
+    source = _source_for(company, meta, user_agent, companyfacts)
+    duration = {key: _annual_duration(companyfacts, tags) for key, tags in DURATION_TAGS.items()}
+    instant = {key: _annual_instant(companyfacts, tags) for key, tags in INSTANT_TAGS.items()}
+    dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei")
+    if dei_shares: instant["shares_outstanding"] = dei_shares
+    years = sorted(set().union(*(set(rows) for rows in duration.values()), *(set(rows) for rows in instant.values())))
     saved = 0
     for fy in years[-10:]:
-        revenue_rec = maps["revenue"].get(fy) or {}
-        anchor = revenue_rec or next((m.get(fy) for m in maps.values() if m.get(fy)), {})
-        row = {
-            "revenue": (maps["revenue"].get(fy) or {}).get("val"),
-            "gross_profit": (maps["gross_profit"].get(fy) or {}).get("val"),
-            "operating_income": (maps["operating_income"].get(fy) or {}).get("val"),
-            "pretax": (maps["pretax"].get(fy) or {}).get("val"),
-            "tax": (maps["tax"].get(fy) or {}).get("val"),
-            "net_income": (maps["net_income"].get(fy) or {}).get("val"),
-            "cfo": (maps["cfo"].get(fy) or {}).get("val"),
-            "capex": (maps["capex"].get(fy) or {}).get("val"),
-            "buybacks": (maps["buybacks"].get(fy) or {}).get("val"),
-            "dividends": (maps["dividends"].get(fy) or {}).get("val"),
-        }
-        row["fcf"] = row["cfo"] - row["capex"] if row["cfo"] is not None and row["capex"] is not None else None
-        flow_oi, flow_method = _flow_operating_income(row, maps, fy)
-        row["flow_operating_income"] = flow_oi
-        row["flow_operating_income_method"] = flow_method
-        diluted = maps["diluted_shares"].get(fy) or maps["basic_shares"].get(fy) or {}
-        row["diluted_shares"] = diluted.get("val")
-        row["shares_outstanding"] = (outstanding.get(fy) or {}).get("val")
-        for key in ["cash", "receivables", "inventory", "payables", "assets", "liabilities", "equity"]:
-            row[key] = (instant[key].get(fy) or {}).get("val")
-        row["debt"] = _debt(
-            instant["short_borrowings"].get(fy), instant["long_debt_current"].get(fy),
-            instant["long_debt_noncurrent"].get(fy), instant["long_debt_total"].get(fy), instant["debt_combined"].get(fy),
-        )
-
-        period = FundamentalPeriod.query.filter_by(company_id=company.id, period_key=f"FY{fy}").first()
+        anchor = duration["revenue"].get(fy) or next((rows.get(fy) for rows in duration.values() if rows.get(fy)), None) or next((rows.get(fy) for rows in instant.values() if rows.get(fy)), None)
+        if not anchor or not anchor.get("end"): continue
+        end_date = date.fromisoformat(str(anchor["end"])[:10])
+        period = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY", fiscal_year=fy, end_date=end_date).first()
         if period is None:
-            period = FundamentalPeriod(company_id=company.id, period_key=f"FY{fy}", period_type="FY", fiscal_year=fy)
-            db.session.add(period)
-        period.period_end = str(anchor.get("end") or "")[:10] or None
-        period.period_filed = str(anchor.get("filed") or "")[:10] or None
-        for key, value in row.items():
-            setattr(period, key, value)
-        period.source = "SEC Companyfacts"
-        period.provenance = {
-            "cik": meta["cik"],
-            "company_name": meta["name"],
-            "refreshed_at": datetime.now(timezone.utc).isoformat(),
-            "engine_basis": "Market Forensics V3.1.12 FULL",
-        }
+            period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type="FY", fiscal_year=fy, end_date=end_date, currency="USD")
+            db.session.add(period); db.session.flush()
+        period.source_id = source.id
+        period.filed_at = date.fromisoformat(str(anchor.get("filed"))[:10]) if anchor.get("filed") else None
+        period.accession_no = str(anchor.get("accn") or "")
+        normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
+        if normalized is None:
+            normalized = NormalizedFinancial(financial_period_id=period.id)
+            db.session.add(normalized)
+        source_map: dict[str, Any] = {}
+        for field, records in duration.items():
+            rec = records.get(fy); _record_raw(period, source, rec)
+            value = _as_decimal((rec or {}).get("val")); setattr(normalized, field, value)
+            if rec: source_map[field] = {"tag": rec.get("tag"), "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id}
+        for field, records in instant.items():
+            rec = records.get(fy); _record_raw(period, source, rec)
+            value = _as_decimal((rec or {}).get("val")); setattr(normalized, field, value)
+            if rec: source_map[field] = {"tag": rec.get("tag"), "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id}
+        if normalized.revenue is not None and normalized.gross_profit is not None:
+            normalized.cogs = normalized.revenue - normalized.gross_profit
+        if normalized.gross_profit is not None and normalized.operating_income is not None:
+            normalized.operating_expenses = normalized.gross_profit - normalized.operating_income
+        if normalized.cfo is not None and normalized.capex is not None:
+            normalized.fcf = normalized.cfo - normalized.capex
+        normalized.source_map = source_map
+        normalized.quality = {"provider": "SEC", "filing_aware": True, "raw_facts_persisted": True}
+        for field, ref in source_map.items():
+            db.session.add(Provenance(source_id=source.id, object_type="normalized_financial", object_id=str(period.id), field_name=field, raw_or_normalized="NORMALIZED", financial_period_id=period.id, provider="SEC", freshness_at=utcnow(), calculation_version="0.1.0", notes=f"{ref.get('tag','')} / {ref.get('accession','')}"))
+        if normalized.revenue is None:
+            db.session.add(DataQualityIssue(company_id=company.id, object_type="financial_period", object_id=str(period.id), code="MISSING_REVENUE", severity="REVIEW", message=f"FY{fy}: revenue was not resolved from SEC Companyfacts."))
         saved += 1
-
-    company.name = meta["name"] or company.name
+    company.legal_name = meta["name"] or company.legal_name
+    company.display_name = meta["name"] or company.display_name
+    company.cik = meta["cik"]
+    company.industry = meta["sic_description"] or company.industry
+    company.fiscal_year_end = meta["fiscal_year_end"] or company.fiscal_year_end
     db.session.commit()
-    return {"saved": saved, "cik": meta["cik"], "name": company.name, "years": years[-10:]}
+    return {"saved": saved, "cik": meta["cik"], "name": company.display_name, "years": years[-10:], "source_id": source.id}

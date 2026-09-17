@@ -36,7 +36,7 @@ def _should_trace() -> bool:
 
 def _safe_role() -> str | None:
     user = getattr(g, "user", None)
-    return (str(getattr(user, "role", "") or "").upper() or None) if user else None
+    return str(getattr(user, "role", "") or "").upper() or None if user else None
 
 
 def write_trace(kind: str, **fields) -> None:
@@ -122,10 +122,8 @@ def read_trace(limit: int = 250) -> list[dict]:
             for line in fh:
                 line = line.strip()
                 if line:
-                    try:
-                        rows.append(json.loads(line))
-                    except Exception:
-                        rows.append({"kind": "RAW", "raw": line})
+                    try: rows.append(json.loads(line))
+                    except Exception: rows.append({"kind": "RAW", "raw": line})
     except Exception as exc:
         return [{"kind": "TRACE_READ_ERROR", "message": f"{type(exc).__name__}: {exc}"}]
     return list(rows)
