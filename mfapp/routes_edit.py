@@ -7,8 +7,8 @@ from flask import abort, flash, g, redirect, request, url_for
 
 from .access import audit, require_control_view
 from .core_models import (
-    BearCaseItem, Catalyst, DecisionJournal, Expectation, ManagementAssessment,
-    MonitoringHistory, MonitoringRule, Position, ValuationScenario,
+    BearCaseItem, Catalyst, DecisionJournal, Event, Expectation, ManagementAssessment,
+    MonitoringHistory, MonitoringRule, Position, Source, ValuationScenario,
 )
 from .extensions import db
 from .jobs import recalculate_company
@@ -36,6 +36,47 @@ def save_research(ticker, section):
     research.updated_by = g.user.id; _research_version(ctx["coverage"], research, f"Saved {section}")
     audit("research.save", "coverage", ctx["coverage"].id, {"section": section}); db.session.commit(); flash("Research saved.", "success")
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section=section if section in SECTION_KEYS else "overview"))
+
+
+@bp.post("/company/<ticker>/triangulation")
+@role_required("CONTROL")
+def add_triangulation(ticker):
+    require_control_view()
+    ctx = _ctx(ticker)
+    relation = str(request.form.get("relation") or "INDUSTRY").upper().strip()
+    if relation not in {"PEER", "COMPETITOR", "CUSTOMER", "SUPPLIER", "DISTRIBUTOR", "INDUSTRY"}:
+        relation = "INDUSTRY"
+    subject = str(request.form.get("subject") or "").strip()[:180]
+    evidence = str(request.form.get("evidence") or "").strip()
+    url = str(request.form.get("url") or "").strip()[:1000]
+    if not subject or not evidence:
+        flash("Triangulation needs a subject and evidence.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="business"))
+    source = None
+    if url:
+        source = Source(
+            company_id=ctx["company"].id,
+            provider="MANUAL",
+            source_type=f"TRIANGULATION_{relation}",
+            title=subject,
+            url=url,
+            retrieved_at=utcnow(),
+            meta={"relation": relation},
+        )
+        db.session.add(source)
+        db.session.flush()
+    db.session.add(Event(
+        company_id=ctx["company"].id,
+        source_id=source.id if source else None,
+        event_type=f"TRIANGULATION_{relation}",
+        title=subject,
+        event_date=utcnow(),
+        payload={"relation": relation, "evidence": evidence, "url": url, "actor_user_id": g.user.id},
+    ))
+    audit("research.triangulation.add", "company", ctx["company"].id, {"relation": relation, "subject": subject})
+    db.session.commit()
+    flash("External evidence added.", "success")
+    return redirect(url_for("web.company_section", ticker=ticker.upper(), section="business"))
 
 
 @bp.post("/company/<ticker>/expectation")
