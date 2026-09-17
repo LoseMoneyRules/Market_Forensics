@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/v015.css', v=mf_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/v016.css', v=mf_version) }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/v017.css', v=mf_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/v0171.css', v=mf_version) }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 {% if g.user %}
@@ -25,10 +26,6 @@
   <button id="mf-mobile-tools" class="mobile-tools-button" type="button" aria-label="Open controls">•••</button>
   <div class="top-actions">
     {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}
-    <form class="number-format-form" method="post" action="{{ url_for('web.save_display_settings') }}" title="Financial table number display">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><span>Numbers</span>
-      <select name="number_format" onchange="this.form.submit()" aria-label="Number display">{% for mode in ['AUTO','FULL','K','M','B','T'] %}<option value="{{ mode }}" {% if number_format == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}</select>
-    </form>
     <span class="status-chip" id="mf-worker-chip" title="CONTROL browser worker">Worker · checking</span>
     {% endif %}
     <button class="theme-toggle" id="mf-theme-toggle" type="button" aria-label="Toggle light and dark mode">Dark</button>
@@ -57,7 +54,7 @@
 {% endif %}
 <main class="{% if g.user %}app-shell{% else %}auth-shell{% endif %}">
   {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
-  {% if intelligence is defined and security is defined and intelligence %}
+  {% if intelligence is defined and security is defined and intelligence and section is defined and section == 'overview' %}
   <section class="research-intelligence-strip" aria-label="Automatic research read">
     <div class="research-action {{ intelligence.action|lower }}"><span>Research action</span><strong>{{ intelligence.action }}</strong></div>
     <div class="research-strip-metric"><span>Bias</span><strong>{{ intelligence.bias }}</strong></div><div class="research-strip-metric"><span>Confidence</span><strong>{{ intelligence.confidence }}</strong></div>
@@ -68,7 +65,7 @@
   {% block content %}{% endblock %}
 </main>
 {% if g.user %}<nav class="mobile-nav">{% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}<a href="{{ url_for('web.dashboard') }}">Coverage</a><a href="{{ url_for('web.discovery') }}">Discover</a><a href="{{ url_for('web.portfolio') }}">Portfolio</a><a href="{{ url_for('web.settings') }}">Data</a>{% else %}<a href="{{ url_for('web.dashboard') }}">Research</a>{% if real_role == 'CONTROL' %}<a href="{{ url_for('preview.control_mode') }}">CONTROL</a>{% endif %}{% endif %}</nav>{% endif %}
-<script src="{{ url_for('static', filename='js/app.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/theme.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v015.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v016.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v017.js', v=mf_version) }}" defer></script>
+<script src="{{ url_for('static', filename='js/app.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/theme.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v015.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v0171-pre.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v016.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v017.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v0171.js', v=mf_version) }}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

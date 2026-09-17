@@ -98,6 +98,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     from . import routes_015 as release_routes_015  # noqa: F401
     from . import routes_016 as release_routes_016  # noqa: F401
     from . import routes_017 as release_routes_017  # noqa: F401
+    from .alerts_0171 import install_account_email_policy
+    install_account_email_policy()
     from .preview import bp as preview_bp
     app.register_blueprint(auth_bp); app.register_blueprint(web_bp); app.register_blueprint(preview_bp); app.register_blueprint(trace_bp)
 

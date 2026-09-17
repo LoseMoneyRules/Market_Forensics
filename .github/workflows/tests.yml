@@ -26,6 +26,9 @@ jobs:
           node --check mfapp/static/js/theme.js
           node --check mfapp/static/js/v015.js
           node --check mfapp/static/js/v016.js
+          node --check mfapp/static/js/v017.js
+          node --check mfapp/static/js/v0171-pre.js
+          node --check mfapp/static/js/v0171.js
           node --check mfapp/static/js/flows.js
       - name: Release test suite
         env:
