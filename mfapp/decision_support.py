@@ -5,7 +5,7 @@ from math import isfinite
 from statistics import mean
 from typing import Any
 
-from .core_models import FinancialPeriod, HistoricalPrice, Security, ValuationModel
+from .core_models import Event, FinancialPeriod, HistoricalPrice, Security, ValuationModel
 from .current_financials import annual_rows, current_row, forecast_rows
 from .finra import stored_summary as finra_stored_summary
 
@@ -199,7 +199,12 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         volume = n(row.volume)
         if price is None:
             continue
-        daily_prices.append({"date": row.trade_date.isoformat(), "price": price, "volume": volume})
+        daily_prices.append({
+            "date": row.trade_date.isoformat(),
+            "price": price,
+            "volume": volume,
+            "turnover": (price * volume) if volume is not None else None,
+        })
         key = row.trade_date.isocalendar()[:2]
         item = {"date": row.trade_date.isoformat(), "price": price, "volume": volume}
         if key == last_week and weekly:
@@ -220,18 +225,33 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         if row.get("trade_date") and row.get("trade_date") >= cutoff.isoformat()
     ]
 
+    positioning_event = Event.query.filter_by(
+        company_id=security.company_id,
+        event_type="ALPACA_POSITIONING",
+    ).order_by(Event.event_date.desc(), Event.id.desc()).first()
+    positioning = dict((positioning_event.payload or {}) if positioning_event else {})
+    borrow = dict(positioning.get("borrow") or {})
+    options = dict(positioning.get("options") or {})
+    locate = dict(positioning.get("locate") or {})
+    put_call = n(options.get("put_call_oi"))
+
     def ret(days: int) -> float | None:
         if len(daily_prices) < 2:
             return None
-        end = daily_prices[-1]["price"]
+        end_price = daily_prices[-1]["price"]
         idx = max(0, len(daily_prices) - 1 - days)
-        start = daily_prices[idx]["price"]
-        return (end / start - 1.0) * 100.0 if start not in (None, 0) else None
+        start_price = daily_prices[idx]["price"]
+        return (end_price / start_price - 1.0) * 100.0 if start_price not in (None, 0) else None
 
     vols = [x["volume"] for x in daily_prices if x.get("volume") not in (None, 0)]
     recent_vol = mean(vols[-20:]) if vols[-20:] else None
     prior_vol = mean(vols[-60:-20]) if len(vols) > 20 and vols[-60:-20] else None
     volume_ratio = recent_vol / prior_vol if recent_vol is not None and prior_vol not in (None, 0) else None
+
+    turnovers = [x["turnover"] for x in daily_prices if x.get("turnover") not in (None, 0)]
+    recent_turnover = mean(turnovers[-20:]) if turnovers[-20:] else None
+    prior_turnover = mean(turnovers[-60:-20]) if len(turnovers) > 20 and turnovers[-60:-20] else None
+    turnover_ratio = recent_turnover / prior_turnover if recent_turnover is not None and prior_turnover not in (None, 0) else None
 
     sv = [x["short_pct"] for x in short_volume if x.get("short_pct") is not None]
     short_5 = mean(sv[-5:]) if sv else None
@@ -242,46 +262,80 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     absorption = None
     if short_20 is not None and r20 is not None:
         absorption = max(0.0, min(100.0, 50.0 + (short_20 - 50.0) * 1.2 + max(-15.0, min(15.0, r20)) * 1.3))
+
+    price_resilience = None
+    if r20 is not None:
+        short_pressure = max(0.0, (short_20 or 50.0) - 50.0)
+        price_resilience = max(0.0, min(100.0, 50.0 + r20 * 2.2 + short_pressure * .55))
+
     long_demand = None
     if r20 is not None:
-        long_demand = max(0.0, min(100.0, 50.0 + r20 * 2.0 + ((volume_ratio or 1.0) - 1.0) * 25.0))
+        long_demand = 50.0 + r20 * 2.0 + ((volume_ratio or 1.0) - 1.0) * 25.0 + ((turnover_ratio or 1.0) - 1.0) * 12.0
+        if put_call is not None and put_call < .70:
+            long_demand += 5.0
+        long_demand = max(0.0, min(100.0, long_demand))
+
     bear_pressure = None
     if r20 is not None:
-        bear_pressure = max(0.0, min(100.0, 50.0 - r20 * 2.0 + max(0.0, (short_20 or 50.0) - 50.0) * 1.4))
+        bear_pressure = 50.0 - r20 * 2.0 + max(0.0, (short_20 or 50.0) - 50.0) * 1.4
+        if put_call is not None and put_call > 1.20:
+            bear_pressure += min(12.0, (put_call - 1.20) * 20.0)
+        if "hard" in str(borrow.get("borrow_status") or "").lower():
+            bear_pressure += 5.0
+        bear_pressure = max(0.0, min(100.0, bear_pressure))
+
     battle = None
-    if volume_ratio is not None or short_20 is not None:
-        battle = max(0.0, min(100.0, 35.0 + max(0.0, (volume_ratio or 1.0) - 1.0) * 35.0 + abs((short_20 or 50.0) - 50.0)))
-    available = [x for x in (absorption, long_demand, bear_pressure, battle) if x is not None]
-    confidence = "HIGH" if len(daily_prices) >= 120 and len(sv) >= 20 else "MEDIUM" if len(daily_prices) >= 40 else "LOW"
-    net_tape = ((long_demand or 50.0) + (absorption or 50.0) - (bear_pressure or 50.0)) / 2.0
-    if net_tape >= 35:
+    if volume_ratio is not None or short_20 is not None or turnover_ratio is not None:
+        battle = 35.0
+        battle += max(0.0, (volume_ratio or 1.0) - 1.0) * 25.0
+        battle += max(0.0, (turnover_ratio or 1.0) - 1.0) * 20.0
+        battle += abs((short_20 or 50.0) - 50.0)
+        if put_call is not None:
+            battle += min(10.0, abs(put_call - 1.0) * 8.0)
+        battle = max(0.0, min(100.0, battle))
+
+    data_points = sum(x is not None for x in (absorption, long_demand, bear_pressure, battle, put_call, turnover_ratio))
+    confidence = "HIGH" if len(daily_prices) >= 120 and len(sv) >= 20 and data_points >= 5 else "MEDIUM" if len(daily_prices) >= 40 and data_points >= 3 else "LOW"
+    net_tape = ((long_demand or 50.0) + (absorption or 50.0) + (price_resilience or 50.0) - (bear_pressure or 50.0)) / 3.0
+    if net_tape >= 38:
         regime = "SUPPORTIVE"
-    elif net_tape <= 10:
+    elif net_tape <= 12:
         regime = "HOSTILE"
     else:
         regime = "MIXED"
 
+    rank_score = max(0.0, min(100.0, 50.0 + net_tape - 25.0))
     return {
         "months": months,
         "market": weekly,
         "short_interest": short_interest,
         "short_volume": short_volume,
+        "positioning": positioning,
         "metrics": {
             "return_1m_pct": r20,
             "return_3m_pct": r60,
             "volume_ratio_20d": volume_ratio,
+            "turnover_ratio_20d": turnover_ratio,
             "short_5d_pct": short_5,
             "short_20d_pct": short_20,
+            "put_call_oi": put_call,
+            "put_open_interest": n(options.get("put_open_interest")),
+            "call_open_interest": n(options.get("call_open_interest")),
+            "borrow_status": borrow.get("borrow_status") or "unknown",
+            "shortable": borrow.get("shortable"),
+            "locate_price": n(locate.get("price")),
+            "locate_available_qty": n(locate.get("available_qty")),
             "absorption": absorption,
+            "price_resilience": price_resilience,
             "long_demand": long_demand,
             "bear_pressure": bear_pressure,
             "battle_intensity": battle,
             "net_tape": net_tape,
+            "rank_score": rank_score,
             "regime": regime,
             "confidence": confidence,
         },
     }
-
 
 def company_brief(company_id: int, valuation: dict[str, Any], intelligence: dict[str, Any], model: ValuationModel | None) -> dict[str, Any]:
     price = n(valuation.get("current_price")); base = n(valuation.get("base")); bear = n(valuation.get("bear")); bull = n(valuation.get("bull"))
