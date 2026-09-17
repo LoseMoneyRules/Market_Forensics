@@ -220,7 +220,7 @@ def recalculate_flows(ticker: str):
 
 @bp.post("/company/<ticker>/monitoring/evaluate")
 @role_required("CONTROL")
-def evaluate_monitoring(ticker: str):
+def evaluate_monitoring_rules(ticker: str):
     require_control_view(); ctx = _ctx(ticker)
     result = evaluate_coverage(ctx["coverage"].id, g.user.id)
     audit("monitoring.evaluate", "coverage", ctx["coverage"].id, {"created_alerts": result.get("created_alerts", 0)})
