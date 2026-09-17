@@ -25,7 +25,7 @@ def bootstrap_admin(email: str, name: str) -> None:
     app = create_app({"AUTO_MIGRATE": True})
     with app.app_context():
         if User.query.filter_by(email=email.lower().strip()).first():
-            raise SystemExit("User already exists. Market Forensics 0.1.0 does not reset accounts or 2FA.")
+            raise SystemExit("User already exists. Market Forensics does not reset accounts or 2FA.")
         password = getpass.getpass("Admin password: ")
         confirm = getpass.getpass("Confirm password: ")
         if password != confirm:
@@ -50,12 +50,28 @@ def migrate() -> None:
         print(bootstrap_schema(migrate_legacy=True))
 
 
+def _run_monitoring_for_controls() -> None:
+    from mfapp.monitoring_016 import evaluate_user
+    controls = User.query.filter_by(role="CONTROL", is_active=True).order_by(User.id).all()
+    for user in controls:
+        print({"monitoring": evaluate_user(user.id)})
+
+
 def run_jobs(limit: int) -> None:
     from mfapp.jobs import run_jobs as execute
     app = create_app({"AUTO_MIGRATE": True})
     with app.app_context():
         for result in execute(limit=limit):
             print(result)
+        # Monitoring is intentionally evaluated even when the queue is empty so cPanel cron
+        # remains a true unattended trigger engine rather than a browser-only feature.
+        _run_monitoring_for_controls()
+
+
+def run_monitoring() -> None:
+    app = create_app({"AUTO_MIGRATE": True})
+    with app.app_context():
+        _run_monitoring_for_controls()
 
 
 def main() -> None:
@@ -65,11 +81,13 @@ def main() -> None:
     p = sub.add_parser("bootstrap-admin"); p.add_argument("--email", required=True); p.add_argument("--name", default="Control")
     sub.add_parser("migrate")
     jobs = sub.add_parser("run-jobs"); jobs.add_argument("--limit", type=int, default=5)
+    sub.add_parser("monitor")
     args = parser.parse_args()
     if args.cmd == "generate-secrets": generate_secrets()
     elif args.cmd == "bootstrap-admin": bootstrap_admin(args.email, args.name)
     elif args.cmd == "migrate": migrate()
     elif args.cmd == "run-jobs": run_jobs(args.limit)
+    elif args.cmd == "monitor": run_monitoring()
 
 
 if __name__ == "__main__":

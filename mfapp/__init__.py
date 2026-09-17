@@ -26,7 +26,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     if db_url.startswith("sqlite:///instance/"):
         db_url = "sqlite:///" + str(Path(app.instance_path) / db_url.split("sqlite:///instance/", 1)[1])
     if env == "production" and db_url.startswith("sqlite"):
-        raise RuntimeError("Market Forensics 0.1.5 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
+        raise RuntimeError("Market Forensics 0.1.6 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
 
     app.config.update(
         SECRET_KEY=os.environ.get("MF_SECRET_KEY", "dev-only-change-me"),
@@ -39,7 +39,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.1.5",
+        VERSION="0.1.6",
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
@@ -96,6 +96,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     from .routes import bp as web_bp
     from . import routes_013 as release_routes_013  # noqa: F401
     from . import routes_015 as release_routes_015  # noqa: F401
+    from . import routes_016 as release_routes_016  # noqa: F401
     from .preview import bp as preview_bp
     app.register_blueprint(auth_bp); app.register_blueprint(web_bp); app.register_blueprint(preview_bp); app.register_blueprint(trace_bp)
 

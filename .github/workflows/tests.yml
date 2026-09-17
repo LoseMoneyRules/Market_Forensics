@@ -18,8 +18,15 @@ jobs:
           cache: 'pip'
       - name: Install lightweight runtime and tests
         run: pip install -r requirements-dev.txt
-      - name: Syntax check
+      - name: Python syntax check
         run: python -m compileall -q app.py manage.py mfapp tests
+      - name: JavaScript syntax check
+        run: |
+          node --check mfapp/static/js/app.js
+          node --check mfapp/static/js/theme.js
+          node --check mfapp/static/js/v015.js
+          node --check mfapp/static/js/v016.js
+          node --check mfapp/static/js/flows.js
       - name: Release test suite
         env:
           MF_SECRET_KEY: test-secret-key

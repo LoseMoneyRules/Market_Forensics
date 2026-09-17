@@ -1,0 +1,43 @@
+:root{--mf-bull:#39745d;--mf-bull-soft:#edf7f1;--mf-bear:#a04444;--mf-bear-soft:#fbefef;--mf-neutral:#667785;--mf-neutral-soft:#f1f4f6;--mf-zero:#8d99a3}
+
+/* 0.1.6 hierarchy: reserve bold for decisions, totals and true headings. */
+.company-page .panel p strong,.company-page .list-row p strong,.company-page .monitor-plan-card p strong{font-weight:600}
+.company-states strong,.company-page .data-table td strong{font-weight:650}
+.company-page h2,.company-page h3{font-weight:650}.company-page .panel-head>strong{font-weight:650}
+.decision-brief{display:none!important}
+
+/* Publish belongs to readiness, never beside live price. */
+.publish-readiness-016{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}
+.publish-readiness-016 .action-hint{display:block;color:var(--muted);font-size:10px;margin-top:4px}.publish-readiness-016.pending .button{opacity:.46;pointer-events:none}.publish-readiness-016.ready{border-top-color:var(--primary-line);background:linear-gradient(90deg,var(--primary-soft),transparent);margin-left:-12px;margin-right:-12px;padding:14px 12px 0}.publish-readiness-016.ready .button{box-shadow:0 0 0 3px var(--primary-soft),0 4px 12px rgba(58,111,153,.18)}
+
+/* Evidence tone is immediately readable. */
+.status-chip.tone-positive,.status-chip.state-bullish{background:var(--mf-bull-soft);border-color:#b9d9c7;color:var(--mf-bull)}
+.status-chip.tone-negative,.status-chip.state-bearish{background:var(--mf-bear-soft);border-color:#e2baba;color:var(--mf-bear)}
+.status-chip.tone-watch{background:#fbf4e7;border-color:#e2c990;color:#8a6216}.status-chip.tone-neutral,.status-chip.state-neutral{background:var(--mf-neutral-soft);border-color:#ccd5db;color:var(--mf-neutral)}
+
+/* Existing top strip becomes the single PRICE → FAIR VALUE → WHY → WHEN surface. */
+.research-intelligence-strip.synthesis-016{grid-template-columns:150px repeat(4,minmax(105px,1fr));align-items:stretch}
+.synthesis-kpi-016{padding:9px 11px;border-left:1px solid var(--line);min-width:0}.synthesis-kpi-016 span{display:block;font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:650}.synthesis-kpi-016 strong{display:block;margin-top:4px;font-size:14px;font-weight:650;color:var(--navy)}.synthesis-kpi-016 small{display:block;margin-top:3px;color:var(--muted);font-size:9px;line-height:1.35}.synthesis-details-016{grid-column:1/-1;border-top:1px solid var(--line);padding:10px 12px 4px}.synthesis-details-016 summary{cursor:pointer;color:var(--primary-2);font-size:11px;font-weight:650}.synthesis-grid-016{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:10px}.synthesis-block-016{border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--white)}.synthesis-block-016 h4{margin:0 0 6px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:650}.synthesis-block-016 p,.synthesis-block-016 li{font-size:11px;line-height:1.45;margin:4px 0}.synthesis-block-016 ul{margin:0;padding-left:16px}.verified-dot-016{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--mf-bull);margin-right:5px}.verified-dot-016.unverified{background:var(--watch)}
+
+/* Business update clock / work queue. */
+.business-status-016{margin-bottom:16px}.business-status-grid-016{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.business-status-item-016{border:1px solid var(--line);border-radius:8px;padding:11px;background:var(--white)}.business-status-item-016 span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:650}.business-status-item-016 strong{display:block;margin-top:5px;font-size:12px;font-weight:600;color:var(--navy)}.business-todo-016{margin:10px 0 0;padding-left:18px;font-size:11px;color:var(--ink)}
+
+/* Charts: explicit zero plane and clear positive / negative convention. */
+.chart-legend-016{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:7px;font-size:10px;color:var(--muted)}.legend-line-016{display:inline-flex;align-items:center;gap:5px}.legend-line-016 i{width:16px;height:2px;background:var(--primary);display:inline-block}.legend-line-016.bear i{background:var(--mf-bear)}.legend-line-016.bull i{background:var(--mf-bull)}.legend-line-016.neutral i{background:var(--mf-zero)}
+.expectations-chart-016,.valuation-chart-016,.tape-combined-016{margin-bottom:18px}.expectations-chart-016 canvas,.valuation-chart-016 canvas,.tape-combined-016 canvas{display:block;width:100%;height:300px}
+
+/* Monitoring: larger, directional and explicit about thesis flips. */
+.monitor-legend-016{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 16px}.monitor-legend-item-016{border:1px solid var(--line);border-radius:9px;padding:12px;background:var(--white)}.monitor-legend-item-016 span{font-size:11px;font-weight:650}.monitor-legend-item-016 p{font-size:11px;line-height:1.45;margin:4px 0 0;color:var(--muted)}
+.monitor-signal-016{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;border-top:1px solid var(--line);padding:12px 0}.monitor-signal-016:first-of-type{border-top:0}.monitor-signal-016 p{font-size:12px;line-height:1.5;margin:2px 0}.monitor-signal-016 .flip{font-size:11px;color:var(--muted)}
+.monitor-plan-card h3{font-size:15px}.monitor-plan-card p{font-size:12px;line-height:1.45}.monitor-plan-card strong{font-size:12px;font-weight:600}.monitor-flip-016{margin-bottom:16px;border-left:3px solid var(--primary);padding:12px 14px;background:var(--primary-soft);font-size:12px;line-height:1.5}.monitor-actions-016{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+
+/* Audit 2.0 summary stays compact; deep lineage is expandable. */
+.audit-summary-016{margin-bottom:16px}.audit-warning-grid-016{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.audit-warning-016{border:1px solid var(--line);border-radius:8px;padding:11px}.audit-warning-016 strong{display:block;font-size:18px;font-weight:650;color:var(--navy)}.audit-warning-016 span{font-size:10px;color:var(--muted)}.audit-lineage-016{margin-top:12px}.audit-lineage-016 summary{cursor:pointer;font-size:12px;font-weight:650;color:var(--primary-2)}
+
+/* Financial Flows 0.1.6: statement spine is explicit before the Sankey. */
+.flow-chain-016{display:flex;align-items:stretch;gap:7px;overflow-x:auto;padding:9px 0 15px}.flow-chain-node{min-width:132px;border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:var(--white)}.flow-chain-node.anchor{border-color:var(--primary);border-width:2px}.flow-chain-node span{display:block;font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:650}.flow-chain-node strong{display:block;margin-top:5px;font-size:14px;font-weight:650;color:var(--navy)}.flow-chain-arrow{display:flex;align-items:center;color:var(--primary);font-size:18px}.flow-title strong,.flow-exceptions>strong,.flow-reconciliation>strong{font-weight:650}
+
+html[data-theme="dark"]{--mf-bull-soft:#152d24;--mf-bear-soft:#351d1d;--mf-neutral-soft:#202a31}html[data-theme="dark"] .status-chip.tone-positive,html[data-theme="dark"] .status-chip.state-bullish{border-color:#355f4b}html[data-theme="dark"] .status-chip.tone-negative,html[data-theme="dark"] .status-chip.state-bearish{border-color:#6d3c3c}
+
+@media(max-width:900px){.research-intelligence-strip.synthesis-016{grid-template-columns:1fr 1fr}.synthesis-grid-016,.business-status-grid-016{grid-template-columns:1fr 1fr}.monitor-legend-016,.audit-warning-grid-016{grid-template-columns:1fr}.synthesis-details-016{grid-column:1/-1}}
+@media(max-width:600px){.synthesis-grid-016,.business-status-grid-016{grid-template-columns:1fr}.monitor-signal-016{grid-template-columns:1fr}.expectations-chart-016 canvas,.valuation-chart-016 canvas,.tape-combined-016 canvas{height:250px}.publish-readiness-016{align-items:flex-start;flex-direction:column}}
