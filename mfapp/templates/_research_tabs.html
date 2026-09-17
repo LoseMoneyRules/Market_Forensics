@@ -1,0 +1,13 @@
+<nav class="company-tabs" aria-label="Research workflow">
+  {% for key,label in company_sections %}
+    {% if key == 'valuation' %}
+      {% set href = url_for('web.valuation_company', ticker=security.ticker) %}
+    {% elif key == 'financial-flows' %}
+      {% set href = url_for('web.financial_flows', ticker=security.ticker) %}
+    {% else %}
+      {% set href = url_for('web.company_section', ticker=security.ticker, section=key) %}
+    {% endif %}
+    <a href="{{ href }}" class="{% if section == key %}active{% endif %}">{{ label }}</a>
+  {% endfor %}
+</nav>
+{% include "_research_kpis.html" %}
