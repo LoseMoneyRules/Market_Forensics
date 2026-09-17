@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import abort, flash, g, jsonify, redirect, render_template, request, url_for
+from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, url_for
 
 from .access import audit, effective_role, require_control_view
 from .core_models import Company, Coverage, InvestmentState, Job, Position, Publication, RefreshRun, Security, Snapshot
@@ -10,6 +10,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
+from .reporting import render_docx, render_pdf, research_report_data
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -105,6 +106,30 @@ def publications():
     role = effective_role()
     if role != "CONTROL": return render_template("published_index.html", publications=_published_for_role(role), role=role)
     require_control_view(); return render_template("publications.html", publications=Publication.query.order_by(Publication.published_at.desc()).all())
+
+
+@bp.get("/company/<ticker>/report/<fmt>")
+@role_required("CONTROL")
+def research_report(ticker, fmt):
+    require_control_view()
+    ctx = _ctx(ticker)
+    mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
+    data = research_report_data(ctx, mode=mode)
+    fmt = str(fmt or "").lower()
+    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.0"
+    if fmt == "docx":
+        stream = render_docx(data)
+        mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        suffix = "docx"
+    elif fmt == "pdf":
+        stream = render_pdf(data)
+        mimetype = "application/pdf"
+        suffix = "pdf"
+    else:
+        abort(404)
+    audit("research.report.export", "coverage", ctx["coverage"].id, {"ticker": ctx["security"].ticker, "format": fmt, "mode": mode})
+    db.session.commit()
+    return send_file(stream, mimetype=mimetype, as_attachment=True, download_name=f"{stem}.{suffix}", max_age=0)
 
 
 @bp.get("/portfolio")
