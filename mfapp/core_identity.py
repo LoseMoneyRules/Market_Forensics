@@ -154,6 +154,6 @@ class NormalizedFinancial(db.Model):
     equity = db.Column(db.Numeric(34, 8))
     source_map = db.Column(db.JSON, nullable=False, default=dict)
     quality = db.Column(db.JSON, nullable=False, default=dict)
-    calculation_version = db.Column(db.String(32), nullable=False, default="0.1.0")
+    calculation_version = db.Column(db.String(32), nullable=False, default="0.2.0")
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
     period = db.relationship("FinancialPeriod", backref=db.backref("normalized", uselist=False))
