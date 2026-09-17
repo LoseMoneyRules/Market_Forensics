@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
 
@@ -47,16 +47,42 @@ def test_intrinsic_value_is_not_market_anchored():
     at_500 = evaluate(metrics, policy, policy["weights"], 5, current_price=500)
     for name in ("BEAR", "BASE", "BULL"):
         assert at_50["scenarios"][name]["fair_value"] == at_500["scenarios"][name]["fair_value"]
+        assert at_50["scenarios"][name]["quality"] == "INTRINSIC"
     assert at_50["expected_value"] == at_500["expected_value"]
     assert at_50["scenarios"]["BASE"]["gap_pct"] != at_500["scenarios"]["BASE"]["gap_pct"]
 
 
-def test_missing_share_basis_blocks_targets_instead_of_using_market_price():
+def test_missing_share_basis_keeps_flagged_case_prices_visible():
     history = [{"fiscal_year": 2025, "revenue": 1000, "net_income": 100, "fcf": 80, "cash": 50, "debt": 20}]
     metrics = metrics_from_history(history)
     policy = default_cases(metrics, "Generic")
     result = evaluate(metrics, policy, policy["weights"], 5, current_price=123.45)
     assert metrics["basis_usable"] is False
+    assert result["quality"] == "PROVISIONAL_REFERENCE_FALLBACK"
+    values = [result["scenarios"][name]["fair_value"] for name in ("BEAR", "BASE", "BULL")]
+    assert all(value is not None and value > 0 for value in values)
+    assert values[0] < values[1] < values[2]
+    for name in ("BEAR", "BASE", "BULL"):
+        row = result["scenarios"][name]
+        assert row["fallback_source"] == "VERIFIED_MARKET_REFERENCE"
+        assert any("DATA WARNING" in flag for flag in row["flags"])
+
+
+def test_no_fundamentals_still_has_complete_metrics_shape_and_reference_cases():
+    metrics = metrics_from_history([])
+    policy = default_cases(metrics, "Generic")
+    result = evaluate(metrics, policy, policy["weights"], current_price=40)
+    assert metrics["revenue"] is None
+    assert metrics["shares"] is None
+    assert set(result["scenarios"]) == {"BEAR", "BASE", "BULL"}
+    assert all(result["scenarios"][name]["fair_value"] is not None for name in result["scenarios"])
+    assert result["warnings"]
+
+
+def test_historical_mode_can_disable_reference_price_fallback():
+    metrics = metrics_from_history([])
+    policy = default_cases(metrics, "Generic")
+    result = evaluate(metrics, policy, policy["weights"], current_price=40, allow_reference_fallback=False)
     assert all(result["scenarios"][name]["fair_value"] is None for name in ("BEAR", "BASE", "BULL"))
 
 
@@ -68,20 +94,10 @@ def test_robust_blend_downweights_method_outlier():
 
 
 def test_sec_point_in_time_history_excludes_future_filing():
-    companyfacts = {
-        "facts": {
-            "us-gaap": {
-                "RevenueFromContractWithCustomerExcludingAssessedTax": {
-                    "units": {
-                        "USD": [
-                            {"fy": 2023, "fp": "FY", "form": "10-K", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-02-01", "accn": "old", "val": 100},
-                            {"fy": 2023, "fp": "FY", "form": "10-K/A", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-06-01", "accn": "future", "val": 150},
-                        ]
-                    }
-                }
-            }
-        }
-    }
+    companyfacts = {"facts": {"us-gaap": {"RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
+        {"fy": 2023, "fp": "FY", "form": "10-K", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-02-01", "accn": "old", "val": 100},
+        {"fy": 2023, "fp": "FY", "form": "10-K/A", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-06-01", "accn": "future", "val": 150},
+    ]}}}}}
     feb = annual_history_asof(companyfacts, datetime.fromisoformat("2024-02-15").date())
     july = annual_history_asof(companyfacts, datetime.fromisoformat("2024-07-01").date())
     assert feb[-1]["revenue"] == 100
@@ -90,7 +106,7 @@ def test_sec_point_in_time_history_excludes_future_filing():
 
 
 def test_quote_consensus_rejects_material_provider_disagreement(monkeypatch):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     monkeypatch.setattr(data_providers, "_alpaca", lambda ticker, uid: QuoteResult(True, "Alpaca", 100, as_of=now, quality="OBSERVED"))
     monkeypatch.setattr(data_providers, "_tiingo", lambda ticker, uid: QuoteResult(True, "Tiingo", 120, as_of=now, quality="OBSERVED"))
     monkeypatch.setattr(data_providers, "_alpha_vantage", lambda ticker, uid: QuoteResult(False, "Alpha", message="off"))
@@ -98,6 +114,16 @@ def test_quote_consensus_rejects_material_provider_disagreement(monkeypatch):
     result = data_providers.fetch_quote("EXM", 1)
     assert result.ok is False
     assert "disagreement" in result.message.lower()
+
+
+def test_login_copy_is_clean_and_green_button_hook_exists(tmp_path, monkeypatch):
+    app = build_app(tmp_path, monkeypatch)
+    page = app.test_client().get("/login").get_data(as_text=True)
+    assert "Evidence first. Decisions second." not in page
+    assert "beta" not in page.lower()
+    assert "v0.0.1" not in page
+    assert "Invite-only" in page
+    assert "auth-submit" in page
 
 
 def test_historical_job_runs_through_normal_queue(tmp_path, monkeypatch):

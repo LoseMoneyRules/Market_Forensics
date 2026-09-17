@@ -86,7 +86,6 @@ def _case_from_row(row: ValuationScenario | None, fallback: dict[str, Any], forc
     auto_owned = bool(inputs.get("auto_prefill"))
     if force or auto_owned or row.equity_value_per_share is None:
         return dict(fallback), True
-    # A manually controlled case remains exactly as the user saved it.
     return {
         "growth": n(inputs.get("growth")), "net_margin": n(inputs.get("net_margin")),
         "fcf_margin": n(inputs.get("fcf_margin")), "pe": n(inputs.get("pe")),
@@ -94,6 +93,16 @@ def _case_from_row(row: ValuationScenario | None, fallback: dict[str, Any], forc
         "equity_discount_rate": n(inputs.get("equity_discount_rate")), "terminal_growth": n(inputs.get("terminal_growth")),
         "probability": n(row.probability), "manual_override": n(inputs.get("manual_override")),
     }, False
+
+
+def _reference_price(security_id: int) -> float | None:
+    market = latest_snapshot(security_id)
+    if market and n(market.price) not in (None, 0):
+        return n(market.price)
+    row = HistoricalPrice.query.filter_by(security_id=security_id).order_by(HistoricalPrice.trade_date.desc(), HistoricalPrice.id.desc()).first()
+    if row:
+        return n(row.close_split_adjusted) or n(row.close_raw)
+    return None
 
 
 def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dict[str, Any]:
@@ -122,15 +131,15 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
     defaults = default_cases(metrics, company_type, calibration)
     weights = dict(saved.get("weights") or defaults["weights"])
     horizon_years = int(saved.get("horizon_years") or defaults["horizon_years"])
-    market = latest_snapshot(security.id)
-    current_price = n(market.price) if market else None
+    current_price = _reference_price(security.id)
 
     scenario_rows = {row.name.upper(): row for row in model.scenarios}
     case_inputs: dict[str, dict[str, Any]] = {}
     auto_flags: dict[str, bool] = {}
+    fallback_values = {name: n(scenario_rows[name].equity_value_per_share) if name in scenario_rows else None for name in ("BEAR", "BASE", "BULL")}
     for name in ("BEAR", "BASE", "BULL"):
         case_inputs[name], auto_flags[name] = _case_from_row(scenario_rows.get(name), defaults[name], force)
-    result = evaluate(metrics, case_inputs, weights, horizon_years, current_price=current_price)
+    result = evaluate(metrics, case_inputs, weights, horizon_years, current_price=current_price, fallback_values=fallback_values)
 
     changed_scenarios: list[str] = []
     for name in ("BEAR", "BASE", "BULL"):
@@ -142,9 +151,10 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
             auto_flags[name] = True
         output = result["scenarios"][name]
         if auto_flags[name]:
-            row.equity_value_per_share = output.get("fair_value")
+            if output.get("fair_value") is not None:
+                row.equity_value_per_share = output.get("fair_value")
             row.probability = case_inputs[name].get("probability") or 0
-            row.confidence = "MEDIUM" if calibration.get("source") == "POINT_IN_TIME_CALIBRATION" else "LOW"
+            row.confidence = "MEDIUM" if output.get("quality") == "INTRINSIC" and calibration.get("source") == "POINT_IN_TIME_CALIBRATION" else "LOW"
             row.inputs = {"auto_prefill": True, **case_inputs[name]}
             row.outputs = output
             row.calculated_at = utcnow()
@@ -164,8 +174,9 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
         "auto_draft": {
             "source": calibration.get("source"), "sample_size": calibration.get("sample_size", 0),
             "latest_fiscal_year": metrics.get("fiscal_year"), "current_price": current_price,
-            "current_price_role": "COMPARISON_ONLY_NOT_AN_INPUT_TO_INTRINSIC_VALUE",
+            "current_price_role": "COMPARISON_ONLY_UNLESS_REQUIRED_AS_EXPLICIT_PROVISIONAL_FALLBACK",
             "generated_at": utcnow().isoformat(), "basis_usable": metrics.get("basis_usable"),
+            "valuation_quality": result.get("quality"), "warnings": result.get("warnings") or [],
         },
         "latest_engine_result": result,
     }
@@ -204,14 +215,17 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
             research.flows_summary = "\n".join(flow_lines); text_updates.append("financial-flows")
 
     if _replaceable(research.valuation_notes):
-        if metrics.get("basis_usable"):
+        if result.get("quality") == "INTRINSIC":
             research.valuation_notes = (
                 f"{AUTO_MARKER} Multi-method intrinsic valuation using P/E, EV/Sales and FCF-yield robust blend; DCF is an independent cross-check. "
                 f"Multiples source={calibration.get('source')}, historical sample={calibration.get('sample_size', 0)}. "
                 "Current market price is excluded from fair-value construction and used only for upside/downside comparison."
             )
         else:
-            research.valuation_notes = f"{AUTO_MARKER} DATA REVIEW: {metrics.get('basis_issue')}. Intrinsic targets are blocked rather than anchored to market price."
+            research.valuation_notes = (
+                f"{AUTO_MARKER} DATA WARNING: one or more valuation inputs are incomplete. Bear/Base/Bull stay visible using the last stored case or an explicit market-reference fallback. "
+                "Fallback values are provisional and are not treated as intrinsic evidence."
+            )
         text_updates.append("valuation")
 
     if _replaceable(research.business) and (company.sector or company.industry):

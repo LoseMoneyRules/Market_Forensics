@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from flask import flash, g, redirect, render_template, request, url_for
 
 from .access import audit, require_control_view
 from .autofill import _financial_history, _point_in_time_calibration, prefill_coverage
-from .core_models import FinancialFlow, FinancialPeriod, HistoricalTestRun, HistoricalTestSample, ValuationScenario
+from .core_models import FinancialFlow, FinancialPeriod, HistoricalPrice, HistoricalTestRun, HistoricalTestSample, ValuationScenario
 from .extensions import db
 from .jobs import enqueue_job
 from .routes import SECTIONS, _ctx, bp
@@ -25,6 +26,22 @@ def _fraction(value, default=None):
     return out / 100.0 if abs(out) > 1.0 else out
 
 
+def _reference_price(ctx: dict) -> tuple[float | None, str, bool]:
+    market = ctx.get("market")
+    if market and n(market.price) not in (None, 0):
+        age_hours = None
+        if market.as_of:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            age_hours = max(0.0, (now - market.as_of).total_seconds() / 3600.0)
+        return n(market.price), str(market.provider or "Stored market quote"), bool(age_hours is not None and age_hours > 72)
+    row = HistoricalPrice.query.filter_by(security_id=ctx["security"].id).order_by(HistoricalPrice.trade_date.desc(), HistoricalPrice.id.desc()).first()
+    if row:
+        value = n(row.close_split_adjusted) or n(row.close_raw)
+        if value not in (None, 0):
+            return value, f"Historical price cache · {row.trade_date}", True
+    return None, "No stored price reference", True
+
+
 def _current_model_context(ctx: dict) -> dict:
     model = ctx["model"]
     saved = dict(model.assumptions or {})
@@ -37,10 +54,12 @@ def _current_model_context(ctx: dict) -> dict:
     years = int(saved.get("horizon_years") or defaults["horizon_years"])
     scenario_rows = {row.name.upper(): row for row in model.scenarios}
     cases = {}
+    fallback_values = {}
     for name in ("BEAR", "BASE", "BULL"):
         row = scenario_rows.get(name)
         inputs = dict((row.inputs or {}) if row else {})
         fallback = defaults[name]
+        fallback_values[name] = n(row.equity_value_per_share) if row else None
         cases[name] = {
             "growth": n(inputs.get("growth")) if n(inputs.get("growth")) is not None else fallback["growth"],
             "net_margin": n(inputs.get("net_margin")) if n(inputs.get("net_margin")) is not None else fallback["net_margin"],
@@ -53,10 +72,21 @@ def _current_model_context(ctx: dict) -> dict:
             "probability": n(row.probability) if row and row.probability is not None else fallback["probability"],
             "manual_override": n(inputs.get("manual_override")),
         }
-    current_price = n(ctx["market"].price) if ctx.get("market") else None
-    result = evaluate(metrics, cases, weights, years, current_price=current_price)
-    return {"metrics": metrics, "company_type": company_type, "calibration": calibration, "weights": weights, "years": years,
-            "cases": cases, "engine_result": result, "model_settings": saved, "quote_candidates": ((ctx["market"].payload or {}).get("candidates") or []) if ctx.get("market") else []}
+    current_price, reference_price_source, reference_price_stale = _reference_price(ctx)
+    result = evaluate(metrics, cases, weights, years, current_price=current_price, fallback_values=fallback_values)
+    return {
+        "metrics": metrics,
+        "company_type": company_type,
+        "calibration": calibration,
+        "weights": weights,
+        "years": years,
+        "cases": cases,
+        "engine_result": result,
+        "model_settings": saved,
+        "reference_price_source": reference_price_source,
+        "reference_price_stale": reference_price_stale,
+        "quote_candidates": ((ctx["market"].payload or {}).get("candidates") or []) if ctx.get("market") else [],
+    }
 
 
 @bp.get("/company/<ticker>/valuation")
@@ -104,16 +134,19 @@ def save_valuation_013(ticker):
             "probability": _fraction(request.form.get(f"{key}_probability"), fallback["probability"]),
             "manual_override": n(request.form.get(f"{key}_manual_override")),
         }
-    current_price = n(ctx["market"].price) if ctx.get("market") else None
-    result = evaluate(metrics, cases, weights, years, current_price=current_price)
     rows = {row.name.upper(): row for row in model.scenarios}
+    fallback_values = {name: n(rows[name].equity_value_per_share) if name in rows else None for name in ("BEAR", "BASE", "BULL")}
+    current_price, _, _ = _reference_price(ctx)
+    result = evaluate(metrics, cases, weights, years, current_price=current_price, fallback_values=fallback_values)
     for name in ("BEAR", "BASE", "BULL"):
         row = rows.get(name)
         if row is None:
             row = ValuationScenario(model_id=model.id, name=name); db.session.add(row)
         row.probability = Decimal(str(cases[name]["probability"] or 0))
-        row.equity_value_per_share = result["scenarios"][name].get("fair_value")
-        row.confidence = "USER_REVIEWED" if share_verified else "PROVISIONAL"
+        fair = result["scenarios"][name].get("fair_value")
+        if fair is not None:
+            row.equity_value_per_share = Decimal(str(fair))
+        row.confidence = "USER_REVIEWED" if share_verified and result.get("quality") == "INTRINSIC" else "PROVISIONAL"
         row.inputs = {"auto_prefill": False, **cases[name]}
         row.outputs = result["scenarios"][name]
     model.method = "MULTI_METHOD_INTRINSIC"
@@ -122,11 +155,12 @@ def save_valuation_013(ticker):
         "engine_version": "0.1.3", "company_type": company_type, "current_shares": current_shares,
         "share_source": share_source, "share_basis_verified": share_verified, "share_basis_note": share_note,
         "weights": weights, "horizon_years": years, "calibration": calibration, "latest_engine_result": result,
+        "notes": str(request.form.get("assumptions_notes") or saved.get("notes") or "").strip(),
     }
     model.updated_by = g.user.id
-    audit("valuation.model.save", "coverage", ctx["coverage"].id, {"method": model.method, "share_basis_verified": share_verified})
+    audit("valuation.model.save", "coverage", ctx["coverage"].id, {"method": model.method, "share_basis_verified": share_verified, "quality": result.get("quality")})
     db.session.commit()
-    flash("Intrinsic valuation assumptions saved and recalculated.", "success")
+    flash("Valuation assumptions saved and recalculated.", "success")
     return redirect(url_for("web.valuation_013", ticker=ticker.upper()))
 
 

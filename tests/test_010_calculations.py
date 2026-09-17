@@ -16,7 +16,7 @@ def test_financial_metrics_are_pure_and_auditable():
     assert round(metrics["gross_margin_pct"], 1) == 40.0
     assert round(metrics["operating_margin_pct"], 1) == 12.0
     assert round(metrics["net_debt"], 1) == 150.0
-    assert metrics["calculation_version"] == "0.1.0"
+    assert metrics["calculation_version"] == "0.1.3"
 
 
 def test_negative_flow_is_not_rendered_as_fake_positive_width():
