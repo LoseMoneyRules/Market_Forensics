@@ -1,0 +1,33 @@
+:root{
+  --mf-chart-market:#7f8a94;
+}
+html[data-theme="dark"]{
+  --mf-chart-market:#9aa6b2;
+}
+
+/* Restore the 0.1.5 overview composition: research state left, readiness/signals right. */
+.company-page .two-col.overview-support-017{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.85fr);gap:18px}
+.company-page .two-col.overview-support-017>.stack-gap{display:flex;flex-direction:column;gap:0}
+
+/* Evidence path belongs to Business and is intentionally always open. */
+.business-evidence-path-0171{margin-bottom:18px}
+.business-evidence-path-0171 .evidence-path-body-017{border-top:0;padding:0;margin-top:12px}
+
+/* Market price must remain visually distinct from Base fair value. */
+.chart-key-017.market i{background:var(--mf-chart-market)!important}
+.chart-key-017.base i{background:var(--mf-chart-price)!important}
+
+/* Alert address is account identity, not a second editable mailbox. */
+.alert-account-email-0171{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--white);font-size:13px;color:var(--muted);margin-bottom:10px}
+.alert-account-email-0171 strong{color:var(--ink);font-weight:500}
+html[data-theme="dark"] .alert-account-email-0171{background:var(--paper)}
+
+/* Mobile navigation must always sit above the page/backdrop and accept taps. */
+@media(max-width:760px){
+  .topbar{z-index:90}
+  .navrail{z-index:85}
+  .mobile-backdrop{z-index:80}
+  .top-actions{z-index:95}
+  .mobile-menu-button,.mobile-tools-button{position:relative;z-index:96;pointer-events:auto;touch-action:manipulation}
+  .company-page .two-col.overview-support-017{grid-template-columns:1fr}
+}
