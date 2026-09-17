@@ -62,32 +62,23 @@ def _active_rule_ids(coverage_id: int) -> set[int]:
 
 
 def alert_email(user_id: int) -> str:
-    pref = UserPreference.query.filter_by(user_id=user_id, key=EMAIL_PREF_KEY).first()
-    if pref and isinstance(pref.value, dict) and str(pref.value.get("email") or "").strip():
-        return str(pref.value.get("email") or "").strip().lower()
+    """Account registration email is the only alert-email source of truth."""
     user = db.session.get(User, user_id)
     return str(user.email if user else "").strip().lower()
 
 
 def save_alert_email(user_id: int, email: str, actor_user_id: int) -> str:
-    email = str(email or "").strip().lower()
-    if not _EMAIL_RE.match(email):
-        raise ValueError("Enter a valid notification email address.")
-    row = UserPreference.query.filter_by(user_id=user_id, key=EMAIL_PREF_KEY).first()
-    if row is None:
-        row = UserPreference(user_id=user_id, key=EMAIL_PREF_KEY, value={"email": email})
-        db.session.add(row)
-    else:
-        row.value = {"email": email}
+    """Compatibility no-op: notification email cannot diverge from the account email."""
+    value = alert_email(user_id)
     db.session.add(AuditEvent(
         actor_user_id=actor_user_id,
-        action="alerts.email.save",
+        action="alerts.email.account_source",
         object_type="user",
         object_id=str(user_id),
-        meta={"email_domain": email.rsplit("@", 1)[-1]},
+        meta={"email_domain": value.rsplit("@", 1)[-1] if "@" in value else ""},
     ))
     db.session.commit()
-    return email
+    return value
 
 
 def alert_subscription(user_id: int, coverage_id: int) -> dict[str, Any]:
