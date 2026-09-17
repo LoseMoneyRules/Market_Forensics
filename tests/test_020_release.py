@@ -497,7 +497,7 @@ def test_020_management_promises_parse_and_score_met_miss(tmp_path, monkeypatch)
     _, company_id, _, _ = seed_workspace(app)
     import mfapp.management_promises as mp
     sentence = "Management expects 2027 revenue growth of 8% to 10% as capacity normalizes."
-    parsed = mp.extract_promises(sentence, source_id=1)
+    parsed = mp.extract_promises(sentence)
     assert len(parsed) == 1
     assert parsed[0]["metric"] == "revenue_growth_pct"
     assert parsed[0]["target_year"] == 2027
@@ -532,6 +532,7 @@ def test_020_tape_reads_options_borrow_turnover_and_resilience(tmp_path, monkeyp
             company_id=company_id,
             event_type="ALPACA_POSITIONING",
             title="positioning",
+            event_date=datetime.now(timezone.utc).replace(tzinfo=None),
             payload={
                 "borrow": {"borrow_status": "easy_to_borrow", "shortable": True},
                 "options": {"put_open_interest": 7000, "call_open_interest": 10000, "put_call_oi": .70},
