@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from .access import audit, effective_role, require_control_view
 from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, scenario_forecasts
 from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_series
+from .management_promises import evaluate_promises
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
 from .jobs import enqueue_job
@@ -334,6 +335,7 @@ def company_section(ticker, section):
         extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
         extra["management_engine"] = management_engine(company.id)
         extra["management_accountability"] = management_accountability(company.id)
+        extra["management_promises"] = evaluate_promises(company.id)
     elif section == "tape":
         months = 6 if str(request.args.get("months") or "12") == "6" else 12
         extra["tape_events"] = Event.query.filter_by(company_id=company.id).order_by(Event.event_date.desc()).limit(30).all()
