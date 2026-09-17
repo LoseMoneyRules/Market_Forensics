@@ -160,11 +160,11 @@ def queue_refresh(ticker, kind):
     mapping = {
         "market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE",
         "prefill": "RESEARCH_PREFILL", "finra": "FINRA_IMPORT", "validate": "DEEP_VALIDATION",
-        "management": "MANAGEMENT_SCAN",
+        "management": "MANAGEMENT_SCAN", "positioning": "POSITIONING_REFRESH",
     }
     job_type = mapping.get(kind)
     if not job_type: abort(404)
-    priorities = {"market": 10, "sec": 30, "recalculate": 45, "prefill": 50, "finra": 60, "validate": 70, "management": 80}
+    priorities = {"market": 10, "sec": 30, "recalculate": 45, "prefill": 50, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
                       payload={"coverage_id": ctx["coverage"].id}, priority=priorities.get(kind, 50))
     audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
