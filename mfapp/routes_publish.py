@@ -42,7 +42,16 @@ def _publication_view(publication: Publication, role: str) -> dict:
 @bp.post("/company/<ticker>/snapshot")
 @role_required("CONTROL")
 def snapshot_company(ticker):
-    require_control_view(); ctx = _ctx(ticker); snapshot = create_snapshot(ctx["coverage"], g.user.id, snapshot_type="DECISION")
+    require_control_view(); ctx = _ctx(ticker); snapshot = create_snapshot(
+        ctx["coverage"], g.user.id, snapshot_type="DECISION",
+        decision_context={
+            "research_conclusion": ctx["decision_lenses"].get("research_conclusion"),
+            "lenses": ctx["decision_lenses"].get("rows") or [],
+            "model_confidence": ctx["decision_lenses"].get("model_confidence"),
+            "expectations": ctx["decision_lenses"].get("expectations"),
+            "path": ctx["decision_lenses"].get("path"),
+        },
+    )
     audit("snapshot.create", "snapshot", snapshot.id, {"coverage_id": ctx["coverage"].id}); db.session.commit(); flash(f"Snapshot v{snapshot.version} created. Review it before publishing.", "success")
     return redirect(url_for("web.preview_snapshot", ticker=ticker.upper(), snapshot_id=snapshot.id))
 
