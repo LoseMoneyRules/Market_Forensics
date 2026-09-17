@@ -57,7 +57,8 @@ def test_forecast_uses_base_case_without_calling_it_consensus(tmp_path, monkeypa
     with app.app_context():
         add_period(company_id,"FY",2025,date(2025,12,31),1000,80,120,30,100); db.session.commit()
         coverage = db.session.get(Coverage,coverage_id); model=coverage.valuation_models[0]
-        model.assumptions={"latest_engine_result":{"scenarios":{"BASE":{"inputs":{"growth":.05,"net_margin":.09,"fcf_margin":.10}}}}}; db.session.commit()
+        base = next(s for s in model.scenarios if s.name.upper() == "BASE")
+        base.inputs={"growth":.05,"net_margin":.09,"fcf_margin":.10}; db.session.commit()
         rows=forecast_rows(company_id,model,3)
         assert len(rows)==3
         assert round(rows[0]["revenue"],1)==1050.0
@@ -87,6 +88,7 @@ def test_015_assets_expose_mobile_blue_ttm_kpis_and_no_visible_auto_marker():
     css=Path("mfapp/static/css/v015.css").read_text()
     js=Path("mfapp/static/js/v015.js").read_text()
     template=Path("mfapp/templates/company_section.html").read_text()
+    historical=Path("mfapp/templates/historical_test_013.html").read_text()
     base=Path("mfapp/templates/base.html").read_text()
     kpis=Path("mfapp/templates/_section_kpis_015.html").read_text()
     pytest_ini=Path("pytest.ini").read_text()
@@ -98,4 +100,5 @@ def test_015_assets_expose_mobile_blue_ttm_kpis_and_no_visible_auto_marker():
     assert "[AUTO 0.1.4]" not in template
     assert "Revenue growth" in kpis and "Bear fair value" in kpis and "Positive inflections" in kpis
     assert "Run started" in kpis and "Run completed" in kpis and "Distinct replay dates" in kpis
+    assert "unique(attribute='anchor_date')" in historical
     assert "test_015_*.py" in pytest_ini
