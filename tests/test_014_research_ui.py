@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import mfapp.routes_013  # noqa: F401
 
 from mfapp import create_app
@@ -53,3 +55,29 @@ def test_014_version_and_login_assets(tmp_path):
     assert "v0.0.1" not in page
     assert "Evidence first" not in page
     assert "Invite-only" in page
+
+
+def test_templates_compile_and_major_014_ui_surfaces_exist(tmp_path):
+    app = create_app({"TESTING": True, "SECRET_KEY": "014-ui", "SQLALCHEMY_DATABASE_URI": f"sqlite:///{tmp_path / '014-ui.db'}", "WTF_CSRF_ENABLED": False, "AUTO_MIGRATE": False})
+    with app.app_context():
+        for name in ("base.html", "valuation_013.html", "historical_test_013.html", "publication_preview.html", "publications.html", "published.html", "published_index.html", "settings.html"):
+            app.jinja_env.get_template(name)
+    valuation = Path("mfapp/templates/valuation_013.html").read_text()
+    historical = Path("mfapp/templates/historical_test_013.html").read_text()
+    preview = Path("mfapp/templates/publication_preview.html").read_text()
+    assert "valuation-model-wide" in valuation
+    assert "mf-historical-chart" in historical
+    assert 'name="visibility"' not in preview
+    assert "all invited members" in preview
+
+
+def test_normal_ui_hides_diagnostics_and_product_version_lives_in_settings():
+    base = Path("mfapp/templates/base.html").read_text()
+    dashboard = Path("mfapp/templates/dashboard.html").read_text()
+    settings = Path("mfapp/templates/settings.html").read_text()
+    assert "trace.console" not in base
+    assert "Diagnostics" not in base
+    assert "Web-native" not in dashboard
+    assert "mf_version" not in dashboard
+    assert "mf_version" in settings
+    assert "v{{ mf_version }}" in settings
