@@ -9,7 +9,7 @@
       <div class="company-states">
         <span>Research <strong>{{ coverage.research_state }}</strong></span>
         <span>Validation <strong>{{ readiness.validation.state }}</strong></span>
-        <span>Research action <strong>{{ intelligence.action }}</strong></span>
+        <span>Research conclusion <strong>{{ decision_lenses.research_conclusion }}</strong></span>
       </div>
     </div>
     <div class="company-actions"><a class="button" href="{{ url_for('web.company_section', ticker=security.ticker, section='overview') }}">Open Research</a><a class="button" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>
