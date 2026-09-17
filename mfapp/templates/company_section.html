@@ -56,9 +56,9 @@
     </div>
 
     <div class="panel decision-map">
-      <div class="panel-head"><div><p class="eyebrow">DECISION MAP</p><h2>From evidence to validation</h2></div><span class="status-chip">{{ synthesis.research_action }} · {{ synthesis.confidence }}</span></div>
-      <div class="lens-grid">
-        {% for lens in synthesis.lenses %}<div class="lens-card {{ lens.state|lower }}"><span>{{ lens.label }}</span><strong>{{ lens.state }}</strong></div>{% endfor %}
+      <div class="panel-head"><div><p class="eyebrow">DECISION MAP</p><h2>From evidence to validation</h2></div><span class="status-chip">{{ decision_lenses.research_conclusion }}</span></div>
+      <div class="lens-grid mature-lenses">
+        {% for lens in decision_lenses.rows %}<a class="lens-card lens-state" href="{{ url_for('web.company_section', ticker=security.ticker, section=(lens.section if lens.section != 'validate' else 'overview')) }}"><span>{{ lens.label }}</span><strong>{{ lens.state }}</strong></a>{% endfor %}
       </div>
       <div class="decision-questions-grid">
         <div><h3>WHY NOW</h3>{% for item in synthesis.why_now %}<p>{{ item }}</p>{% endfor %}</div>
@@ -144,6 +144,28 @@
         </tbody>
       </table></div>
     </div>
+    <div class="panel implied-expectations">
+      <div class="panel-head">
+        <div><p class="eyebrow">PRICE-IMPLIED EXPECTATIONS</p><h2>What does the current price require?</h2><p class="muted">Single-variable inversion of the Base earnings framework. Diagnostic, not consensus.</p></div>
+        <span class="status-chip">{{ implied_expectations.classification }}</span>
+      </div>
+      {% if implied_expectations.available %}
+      <div class="expectations-driver-grid">
+        {% for d in implied_expectations.drivers %}
+        <div class="driver-card">
+          <span>{{ d.label }}</span>
+          <strong>{% if d.unit == '%' %}{{ '%.1f'|format(d.market_implied*100) }}%{% else %}{{ '%.1f'|format(d.market_implied) }}x{% endif %}</strong>
+          <small>Market-implied · {{ d.read }}</small>
+          <p>Our Base: {% if d.unit == '%' %}{{ '%.1f'|format(d.base*100) }}%{% else %}{{ '%.1f'|format(d.base) }}x{% endif %}</p>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="muted">{{ implied_expectations.note }}</p>
+      {% else %}
+      <div class="notice amber"><strong>IMPLIED EXPECTATIONS UNAVAILABLE.</strong> {{ implied_expectations.errors|join(' ') }}</div>
+      {% endif %}
+    </div>
+
     <div class="two-col"><div class="panel"><div class="panel-head"><div><p class="eyebrow">VARIANT PERCEPTION</p><h2>Market vs our operating path</h2></div></div>{% for e in expectation_rows %}{% set delta = (e.internal_value|float - e.market_value|float) if e.internal_value is not none and e.market_value is not none else none %}<div class="expectation-row"><div><strong>{{ e.metric }} · {{ e.period_label or '—' }}</strong><p>Market {{ e.market_value|mf_num(2) }} {{ e.unit }} · Ours {{ e.internal_value|mf_num(2) }} {{ e.unit }}{% if delta is not none %} · Divergence {{ '%+.2f'|format(delta) }} {{ e.unit }}{% endif %}</p>{% if e.notes %}<small>{{ e.notes }}</small>{% endif %}</div><span class="status-chip">{{ e.confidence }}</span></div>{% else %}<p class="muted">No external expectation datapoints stored. Add the market-implied driver, our operating assumption, and use Notes for the resolution mechanism / horizon.</p>{% endfor %}</div><form class="panel stack" method="post" action="{{ url_for('web.add_expectation', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>Add expectation datapoint</h2><label>Metric<input name="metric" required></label><label>Period<input name="period_label"></label><div class="form-grid two"><label>Market<input name="market_value"></label><label>Our view<input name="internal_value"></label></div><div class="form-grid two"><label>Unit<input name="unit"></label><label>Confidence<select name="confidence"><option>UNRATED</option><option>LOW</option><option>MEDIUM</option><option>HIGH</option></select></label></div><label>Notes<textarea name="notes"></textarea></label><button class="button primary">Add</button></form></div>
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='expectations') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Expectations thesis</h2><button class="button primary">Save</button></div><textarea name="text" rows="8">{{ research.expectations|clean_auto }}</textarea></form>
 
