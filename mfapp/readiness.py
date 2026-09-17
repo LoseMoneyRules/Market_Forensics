@@ -49,11 +49,21 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     hist = HistoricalTestRun.query.filter_by(coverage_id=coverage.id).order_by(HistoricalTestRun.created_at.desc()).first()
 
     gates = [
+        _gate(
+            "Thesis / Variant", "overview",
+            {
+                "thesis": _text(research.thesis if research else ""),
+                "counter": _text(research.counter_evidence if research else ""),
+                "market": _text(research.variant_market if research else ""),
+                "variant": _text(research.variant_us if research else ""),
+                "evidence": _text(research.variant_evidence if research else ""),
+            },
+            bool(research and _text(research.thesis) and _text(research.counter_evidence) and _text(research.variant_us)),
+        ),
         _gate("Business", "business", {"text": _text(research.business if research else ""), "company": company.display_name if company else ""}, bool(research and _text(research.business))),
         _gate("Numbers", "numbers", {"annual_periods": annual_count, "quarter_periods": quarter_count, "text": _text(research.numbers if research else "")}, annual_count >= 2 and bool(research and _text(research.numbers))),
         _gate("Expectations", "expectations", {"structured": expectation_count, "text": _text(research.expectations if research else ""), "base_inputs": (scenario_rows.get("BASE").inputs if scenario_rows.get("BASE") else {})}, expectation_count > 0 or bool(research and _text(research.expectations))),
         _gate("Valuation", "valuation", {"bear": valuation.get("bear"), "base": valuation.get("base"), "bull": valuation.get("bull"), "quality": ((model.assumptions or {}).get("latest_engine_result") or {}).get("quality") if model else None}, all(valuation.get(k) is not None for k in ("bear", "base", "bull"))),
-        _gate("Historical Test", "historical-test", {"run_id": hist.id if hist else None, "status": hist.status if hist else None, "samples": hist.sample_size if hist else 0, "score": float(hist.reliability_score) if hist and hist.reliability_score is not None else None}, bool(hist and hist.sample_size >= 3)),
         _gate("Bear Case", "bear-case", {"structured": bear_count, "text": _text(research.bear_case_summary if research else "")}, bear_count > 0 or bool(research and _text(research.bear_case_summary))),
         _gate("Catalysts", "catalysts", {"structured": catalyst_count, "text": _text(research.catalysts_summary if research else "")}, catalyst_count > 0 or bool(research and _text(research.catalysts_summary))),
         _gate("Financial Flows", "financial-flows", {"flows": flow_count, "text": _text(research.flows_summary if research else "")}, flow_count > 0),
@@ -73,11 +83,34 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         gate["approved_at"] = approval.approved_at if fresh else None
         gate["status"] = "APPROVED" if fresh else ("PENDING APPROVAL" if gate["evidence_ready"] else "MISSING EVIDENCE")
 
+    done = sum(1 for gate in gates if gate["approved"])
+    reliability = float(hist.reliability_score) if hist and hist.reliability_score is not None else None
+    if hist is None:
+        validation_state = "NOT RUN"
+    elif str(hist.status or "").upper() in {"FAILED", "ERROR"}:
+        validation_state = "REVIEW"
+    elif (hist.sample_size or 0) < 3 or reliability is None:
+        validation_state = "LIMITED"
+    elif reliability >= 65 and (hist.sample_size or 0) >= 5:
+        validation_state = "VALIDATED"
+    elif reliability < 40:
+        validation_state = "REVIEW"
+    else:
+        validation_state = "LIMITED"
+
     return {
-        "done": sum(1 for gate in gates if gate["approved"]),
+        "done": done,
         "evidence_ready": sum(1 for gate in gates if gate["evidence_ready"]),
         "total": len(gates),
         "gates": gates,
+        "ready_to_validate": bool(gates) and done == len(gates),
+        "validation": {
+            "state": validation_state,
+            "run_id": hist.id if hist else None,
+            "status": hist.status if hist else None,
+            "samples": hist.sample_size if hist else 0,
+            "reliability": reliability,
+        },
         "bias_flags": [],
     }
 
