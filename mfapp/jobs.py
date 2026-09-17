@@ -165,7 +165,7 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
 def _discovery(user_id: int) -> dict[str, Any]:
     from .services import readiness, valuation_result
     ranked = []
-    for coverage in Coverage.query.filter_by(user_id=user_id).all():
+    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
         ready = readiness(coverage); val = valuation_result(coverage); price, base = val.get("current_price"), val.get("base")
@@ -176,7 +176,7 @@ def _discovery(user_id: int) -> dict[str, Any]:
 
 def _bulk(user_id: int) -> dict[str, Any]:
     sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
-    for coverage in Coverage.query.filter_by(user_id=user_id).all():
+    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
         specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70)]
@@ -193,7 +193,7 @@ def _stale(user_id: int) -> dict[str, Any]:
     now = utcnow()
     sec_ready = provider_status(user_id).get("sec", False)
     queued = reused = scanned = 0
-    for coverage in Coverage.query.filter_by(user_id=user_id).all():
+    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security:
             continue
