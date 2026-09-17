@@ -128,36 +128,81 @@ def update_monitoring(ticker, rule_id):
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
 
 
-@bp.post("/company/<ticker>/risk")
+@bp.post("/company/<ticker>/thesis-invalidation")
 @role_required("CONTROL")
-def save_risk(ticker):
-    require_control_view(); ctx = _ctx(ticker); risk = ctx["risk"]; proposed = str(request.form.get("thesis_invalidation") or "").strip()
+def save_thesis_invalidation(ticker):
+    """Research invalidation belongs to the thesis, not to portfolio sizing."""
+    require_control_view()
+    ctx = _ctx(ticker)
+    risk = ctx["risk"]
+    proposed = str(request.form.get("thesis_invalidation") or "").strip()
     if risk.invalidation_locked_at and proposed != risk.thesis_invalidation:
-        flash("The locked thesis invalidation cannot be changed retroactively. Record a new thesis instead.", "error"); return redirect(url_for("web.company_section", ticker=ticker.upper(), section="risk"))
-    risk.thesis_invalidation = proposed; risk.max_loss_pct = dec(request.form.get("max_loss_pct")); risk.max_position_pct = dec(request.form.get("max_position_pct")); risk.entry_conditions = str(request.form.get("entry_conditions") or "").strip(); risk.add_conditions = str(request.form.get("add_conditions") or "").strip(); risk.trim_conditions = str(request.form.get("trim_conditions") or "").strip(); risk.exit_conditions = str(request.form.get("exit_conditions") or "").strip(); risk.notes = str(request.form.get("notes") or "").strip()
-    ctx["research"].risk_summary = risk.notes; ctx["research"].updated_by = g.user.id
+        flash("The locked thesis invalidation cannot be changed retroactively. Record a new thesis instead.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
+    risk.thesis_invalidation = proposed
     if request.form.get("lock_invalidation") == "1" and not risk.invalidation_locked_at:
         if not proposed:
-            flash("Enter thesis invalidation before locking it.", "error"); return redirect(url_for("web.company_section", ticker=ticker.upper(), section="risk"))
+            flash("Enter thesis invalidation before locking it.", "error")
+            return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
         risk.invalidation_locked_at = utcnow()
-    risk.updated_by = g.user.id; audit("risk.save", "coverage", ctx["coverage"].id, {"locked": bool(risk.invalidation_locked_at)}); db.session.commit(); flash("Risk plan saved.", "success")
-    return redirect(url_for("web.company_section", ticker=ticker.upper(), section="risk"))
+    risk.updated_by = g.user.id
+    ctx["research"].risk_summary = proposed
+    ctx["research"].updated_by = g.user.id
+    _research_version(ctx["coverage"], ctx["research"], "Updated thesis invalidation")
+    audit("research.invalidation.save", "coverage", ctx["coverage"].id, {"locked": bool(risk.invalidation_locked_at)})
+    db.session.commit()
+    flash("Thesis invalidation saved.", "success")
+    return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
 
 
-@bp.post("/company/<ticker>/position")
+@bp.post("/portfolio/<ticker>/risk")
+@role_required("CONTROL")
+def save_risk(ticker):
+    """Private monetary risk belongs to Portfolio and never changes the research thesis."""
+    require_control_view()
+    ctx = _ctx(ticker)
+    risk = ctx["risk"]
+    risk.max_loss_pct = dec(request.form.get("max_loss_pct"))
+    risk.max_position_pct = dec(request.form.get("max_position_pct"))
+    risk.entry_conditions = str(request.form.get("entry_conditions") or "").strip()
+    risk.add_conditions = str(request.form.get("add_conditions") or "").strip()
+    risk.trim_conditions = str(request.form.get("trim_conditions") or "").strip()
+    risk.exit_conditions = str(request.form.get("exit_conditions") or "").strip()
+    risk.notes = str(request.form.get("notes") or "").strip()
+    risk.updated_by = g.user.id
+    audit("portfolio.risk.save", "coverage", ctx["coverage"].id, {"max_loss_pct": float(risk.max_loss_pct) if risk.max_loss_pct is not None else None, "max_position_pct": float(risk.max_position_pct) if risk.max_position_pct is not None else None})
+    db.session.commit()
+    flash("Portfolio risk plan saved.", "success")
+    return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
+
+
+@bp.post("/portfolio/<ticker>/position")
 @role_required("CONTROL")
 def save_position(ticker):
-    require_control_view(); ctx = _ctx(ticker); shares = dec(request.form.get("shares")); avg_cost = dec(request.form.get("avg_cost"))
+    require_control_view()
+    ctx = _ctx(ticker)
+    shares = dec(request.form.get("shares"))
+    avg_cost = dec(request.form.get("avg_cost"))
     if shares is None or avg_cost is None or avg_cost < 0:
-        flash("Enter valid shares and average cost.", "error"); return redirect(url_for("web.company_section", ticker=ticker.upper(), section="position"))
+        flash("Enter valid shares and average cost.", "error")
+        return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
     position = ctx["position"] or Position(user_id=g.user.id, security_id=ctx["security"].id)
-    if position.id is None: db.session.add(position)
-    position.shares = shares; position.avg_cost = avg_cost; position.currency = ctx["security"].currency; position.notes = str(request.form.get("notes") or "").strip()
+    if position.id is None:
+        db.session.add(position)
+    position.shares = shares
+    position.avg_cost = avg_cost
+    position.currency = ctx["security"].currency
+    position.notes = str(request.form.get("notes") or "").strip()
     state = str(request.form.get("investment_state") or ctx["investment"].state).upper()
-    if state in {"NO_POSITION", "WATCHLIST", "EXISTING_LONG", "EXISTING_SHORT", "LONG_UNDER_REVIEW", "SHORT_UNDER_REVIEW", "EXITING"}: ctx["investment"].state = state
-    ctx["investment"].action = str(request.form.get("action") or ctx["investment"].action).upper()[:80]; ctx["investment"].review_reason = str(request.form.get("review_reason") or "").strip(); ctx["investment"].updated_by = g.user.id
-    audit("position.save", "coverage", ctx["coverage"].id, {"shares": float(shares), "investment_state": ctx["investment"].state}); db.session.commit(); flash("Position and investment state saved.", "success")
-    return redirect(url_for("web.company_section", ticker=ticker.upper(), section="position"))
+    if state in {"NO_POSITION", "WATCHLIST", "EXISTING_LONG", "EXISTING_SHORT", "LONG_UNDER_REVIEW", "SHORT_UNDER_REVIEW", "EXITING"}:
+        ctx["investment"].state = state
+    ctx["investment"].action = str(request.form.get("action") or ctx["investment"].action).upper()[:80]
+    ctx["investment"].review_reason = str(request.form.get("review_reason") or "").strip()
+    ctx["investment"].updated_by = g.user.id
+    audit("portfolio.position.save", "coverage", ctx["coverage"].id, {"shares": float(shares), "investment_state": ctx["investment"].state})
+    db.session.commit()
+    flash("Position saved.", "success")
+    return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
 
 
 @bp.post("/company/<ticker>/journal")
