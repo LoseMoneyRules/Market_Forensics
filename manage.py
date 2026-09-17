@@ -51,7 +51,7 @@ def migrate() -> None:
 
 
 def _run_monitoring_for_controls() -> None:
-    from mfapp.monitoring_017 import evaluate_all
+    from mfapp.alert_engine import evaluate_all
     print({"monitoring": evaluate_all()})
 
 
