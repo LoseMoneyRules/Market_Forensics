@@ -103,7 +103,9 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     if app.config.get("AUTO_MIGRATE"):
         from .schema import bootstrap_schema
+        from .upgrade_020 import migrate_semantic_preferences
         with app.app_context():
             schema_result = bootstrap_schema(migrate_legacy=True)
-            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {"schema": schema_result, "release": "0.2.0"}
+            preference_result = migrate_semantic_preferences()
+            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {"schema": schema_result, "preferences": preference_result, "release": "0.2.0"}
     return app
