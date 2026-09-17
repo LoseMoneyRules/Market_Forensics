@@ -128,13 +128,13 @@ def history_with_current(company_id: int, annual_limit: int = 15) -> list[dict[s
     return annual
 
 
-def forecast_rows(company_id: int, model: ValuationModel | None, years: int = 3) -> list[dict[str, Any]]:
+def forecast_rows(company_id: int, model: ValuationModel | None, years: int = 3, scenario_name: str = "BASE") -> list[dict[str, Any]]:
     base = current_row(company_id)
     if not base:
         return []
     scenario = None
     if model:
-        scenario = next((row for row in model.scenarios if str(row.name).upper() == "BASE"), None)
+        scenario = next((row for row in model.scenarios if str(row.name).upper() == str(scenario_name).upper()), None)
     inputs = dict((scenario.inputs or {}) if scenario else {})
     growth = n(inputs.get("growth"))
     if growth is None:
@@ -173,9 +173,14 @@ def forecast_rows(company_id: int, model: ValuationModel | None, years: int = 3)
             "operating_margin": op_margin,
             "net_margin": net_margin,
             "fcf_margin": fcf_margin,
-            "source": "BASE_CASE_MODEL",
+            "source": f"{str(scenario_name).upper()}_CASE_MODEL",
         })
     return out
 
 
-__all__ = ["annual_rows", "quarterly_rows", "current_row", "history_with_current", "forecast_rows"]
+def scenario_forecasts(company_id: int, model: ValuationModel | None, years: int = 5) -> dict[str, list[dict[str, Any]]]:
+    """Five-year operating paths kept distinct from valuation-method outputs."""
+    return {name: forecast_rows(company_id, model, years, name) for name in ("BEAR", "BASE", "BULL")}
+
+
+__all__ = ["annual_rows", "quarterly_rows", "current_row", "history_with_current", "forecast_rows", "scenario_forecasts"]
