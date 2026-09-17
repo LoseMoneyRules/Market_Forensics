@@ -3,6 +3,11 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 from xml.sax.saxutils import escape
+import ipaddress
+import socket
+from urllib.parse import urlparse
+
+import requests
 
 from docx import Document
 from PIL import Image as PILImage, ImageDraw, ImageFont
@@ -16,6 +21,8 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
 
 from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessment, Source
+from .extensions import db
+from .models import UserPreference
 
 
 def _money(value: Any) -> str:
@@ -36,7 +43,69 @@ def _txt(value: Any) -> str:
     return str(value or "").strip()
 
 
-def research_report_data(ctx: dict[str, Any], *, mode: str = "full") -> dict[str, Any]:
+def get_report_branding(user_id: int, default_logo_url: str = "") -> dict[str, str]:
+    row = UserPreference.query.filter_by(user_id=user_id, key="report_branding").first()
+    value = dict((row.value or {}) if row else {})
+    return {
+        "title": str(value.get("title") or "Market Forensics"),
+        "prepared_by": str(value.get("prepared_by") or ""),
+        "footer": str(value.get("footer") or "Lose Money Rules"),
+        "logo_url": str(value.get("logo_url") or default_logo_url or ""),
+    }
+
+
+def set_report_branding(user_id: int, *, title: str, prepared_by: str, footer: str, logo_url: str) -> dict[str, str]:
+    parsed = urlparse(logo_url) if logo_url else None
+    if parsed and parsed.scheme not in {"https"}:
+        raise ValueError("Report logo URL must use HTTPS.")
+    row = UserPreference.query.filter_by(user_id=user_id, key="report_branding").first()
+    if row is None:
+        row = UserPreference(user_id=user_id, key="report_branding", value={})
+        db.session.add(row)
+    row.value = {
+        "title": str(title or "Market Forensics")[:100],
+        "prepared_by": str(prepared_by or "")[:120],
+        "footer": str(footer or "Lose Money Rules")[:120],
+        "logo_url": str(logo_url or "")[:500],
+    }
+    db.session.commit()
+    return dict(row.value)
+
+
+def _safe_logo(url: str) -> BytesIO | None:
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.hostname:
+            return None
+        addresses = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+        for addr in addresses:
+            ip = ipaddress.ip_address(addr[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return None
+        response = requests.get(url, timeout=8, allow_redirects=False, stream=True)
+        if response.status_code != 200:
+            return None
+        content_type = str(response.headers.get("content-type") or "").lower()
+        if not content_type.startswith("image/"):
+            return None
+        raw = response.raw.read(2_000_001, decode_content=True)
+        if len(raw) > 2_000_000:
+            return None
+        image = PILImage.open(BytesIO(raw))
+        image.thumbnail((1200, 400))
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGBA")
+        out = BytesIO()
+        image.save(out, format="PNG")
+        out.seek(0)
+        return out
+    except Exception:
+        return None
+
+
+def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict[str, str] | None = None) -> dict[str, Any]:
     coverage = ctx["coverage"]
     research = ctx["research"]
     intelligence = ctx["intelligence"]
@@ -52,7 +121,14 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full") -> dict[str
     management = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
     sources = Source.query.filter_by(company_id=company.id).order_by(Source.retrieved_at.desc()).limit(40).all()
 
+    branding = dict(branding or {})
     return {
+        "branding": {
+            "title": str(branding.get("title") or "Market Forensics"),
+            "prepared_by": str(branding.get("prepared_by") or ""),
+            "footer": str(branding.get("footer") or "Lose Money Rules"),
+            "logo_url": str(branding.get("logo_url") or ""),
+        },
         "mode": "executive" if str(mode).lower() == "executive" else "full",
         "ticker": security.ticker,
         "company": company.display_name,
@@ -171,11 +247,18 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
     sec = doc.sections[0]
     sec.top_margin = Inches(.55); sec.bottom_margin = Inches(.55); sec.left_margin = Inches(.65); sec.right_margin = Inches(.65)
 
+    brand = data.get("branding") or {}
+    logo = _safe_logo(str(brand.get("logo_url") or ""))
+    if logo:
+        doc.add_picture(logo, width=Inches(1.25))
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = title.add_run(f"{data['ticker']} · {data['company']}")
     run.bold = True; run.font.size = Pt(20)
-    p = doc.add_paragraph(f"Market Forensics 0.2.0 · {data['action']} · {data['stance']} · {data['confidence']} confidence")
+    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.0 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    if brand.get("prepared_by"):
+        subtitle += f" · Prepared by {brand['prepared_by']}"
+    p = doc.add_paragraph(subtitle)
     p.runs[0].font.size = Pt(10)
 
     table = doc.add_table(rows=2, cols=6)
@@ -223,7 +306,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
             doc.add_paragraph(f"{row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}", style="List Bullet")
 
     footer=doc.sections[0].footer.paragraphs[0]
-    footer.text="Lose Money Rules · Market Forensics 0.2.0"
+    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'} 0.2.0"
     footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
 
     out=BytesIO(); doc.save(out); out.seek(0); return out
@@ -236,8 +319,16 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     styles.add(ParagraphStyle(name="MFTitle",parent=styles["Title"],fontSize=18,leading=21,textColor=colors.HexColor("#0b1f33"),alignment=TA_LEFT,spaceAfter=6))
     styles.add(ParagraphStyle(name="MFH2",parent=styles["Heading2"],fontSize=11,leading=14,textColor=colors.HexColor("#1f4e79"),spaceBefore=8,spaceAfter=4))
     styles.add(ParagraphStyle(name="MFBody",parent=styles["BodyText"],fontSize=8.7,leading=11,spaceAfter=5))
-    story=[Paragraph(f"{data['ticker']} · {data['company']}",styles["MFTitle"]),
-           Paragraph(f"Market Forensics 0.2.0 · {data['action']} · {data['stance']} · {data['confidence']} confidence",styles["MFBody"])]
+    brand = data.get("branding") or {}
+    story=[]
+    logo = _safe_logo(str(brand.get("logo_url") or ""))
+    if logo:
+        story += [RLImage(logo, width=1.1*inch, height=.38*inch), Spacer(1,4)]
+    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.0 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    if brand.get("prepared_by"):
+        subtitle += f" · Prepared by {brand['prepared_by']}"
+    story += [Paragraph(f"{data['ticker']} · {data['company']}",styles["MFTitle"]),
+              Paragraph(escape(subtitle),styles["MFBody"])]
     grid=[
         ["Market","Bear","Base","Bull","Base gap","Validate"],
         [_money(data["market_price"]),_money(data["bear"]),_money(data["base"]),_money(data["bull"]),_pct(data["base_gap_pct"]),data["validation_state"]],
@@ -276,4 +367,4 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     out.seek(0); return out
 
 
-__all__=["research_report_data","render_docx","render_pdf"]
+__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf"]
