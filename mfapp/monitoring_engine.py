@@ -24,7 +24,7 @@ from .models import AuditEvent, User, UserPreference
 from .services import valuation_result
 
 
-NOTIFICATION_PREF_KEY = "notifications_016"
+NOTIFICATION_PREF_KEY = "notifications"
 DEFAULT_PREFS = {
     "email_enabled": True,
     "in_app_enabled": True,
