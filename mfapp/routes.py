@@ -123,10 +123,18 @@ def _ctx(ticker: str) -> dict:
     valuation = valuation_result(coverage)
     readiness = _research_readiness(coverage)
     intelligence = _intelligence(coverage, company, model, market, valuation, readiness)
+    management_read = management_engine(company.id)
+    tape_read = tape_series(security, 12)
+    decision_lenses = build_decision_lenses(
+        coverage=coverage, company=company, research=research, risk=risk, model=model, market=market,
+        valuation=valuation, intelligence=intelligence, readiness=readiness,
+        management=management_read, tape=tape_read,
+    )
     return {"coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
             "investment": investment, "model": model, "market": market, "position": position,
             "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
-            "intelligence": intelligence, "brief": company_brief(company.id, valuation, intelligence, model)}
+            "intelligence": intelligence, "decision_lenses": decision_lenses,
+            "brief": company_brief(company.id, valuation, intelligence, model)}
 
 
 def _research_version(coverage: Coverage, research: ResearchState, reason: str) -> None:
@@ -163,11 +171,18 @@ def dashboard():
         market = latest_snapshot(security.id); valuation = valuation_result(coverage)
         model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
         readiness = _research_readiness(coverage)
-        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW"}
+        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW", "positives": 0, "negatives": 0, "warnings": []}
+        research = ResearchState.query.filter_by(coverage_id=coverage.id).first()
+        risk = RiskPlan.query.filter_by(coverage_id=coverage.id).first()
+        lenses = build_decision_lenses(
+            coverage=coverage, company=company, research=research, risk=risk, model=model, market=market,
+            valuation=valuation, intelligence=intelligence, readiness=readiness,
+            management=management_engine(company.id), tape=tape_series(security, 12),
+        ) if all((research, risk, model)) else {"research_conclusion": "DATA REVIEW", "rows": []}
         rows.append({"coverage": coverage, "security": security, "company": company, "market": market,
                      "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
                      "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
-                     "discovery_labels": classify_coverage(intelligence, readiness)})
+                     "decision_lenses": lenses, "discovery_labels": classify_coverage(intelligence, readiness)})
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
     action_counts = {key: sum(1 for row in rows if row["intelligence"].get("action") == key) for key in ("BUY", "SELL", "WAIT")}
@@ -287,15 +302,6 @@ def company_section(ticker, section):
             coverage=coverage, security=ctx["security"], company=company, research=ctx["research"], risk=ctx["risk"],
             model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"], intelligence=ctx["intelligence"], readiness=ctx["readiness"],
         )
-        if section == "overview":
-            overview_management = management_engine(company.id)
-            overview_tape = tape_series(ctx["security"], 12)
-            extra["decision_lenses"] = build_decision_lenses(
-                coverage=coverage, company=company, research=ctx["research"], risk=ctx["risk"],
-                model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"],
-                intelligence=ctx["intelligence"], readiness=ctx["readiness"],
-                management=overview_management, tape=overview_tape,
-            )
         if section == "business":
             extra["auto_triangulation"] = automatic_triangulation(company.id, g.user.id)
             extra["triangulation_rows"] = Event.query.filter(
