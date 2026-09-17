@@ -8,6 +8,8 @@ from flask import Blueprint, abort, current_app, flash, g, redirect, render_temp
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
+from .current_financials import annual_rows, current_row, forecast_rows, history_with_current
+from .decision_support import company_brief, journal_prefill, management_engine, monitoring_plan, tape_series
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
 from .jobs import enqueue_job
@@ -20,9 +22,10 @@ from .core_models import (
     Publication, RefreshRun, ResearchState, ResearchVersion, RiskPlan, Security,
     Snapshot, Source, ValuationModel,
 )
+from .readiness_015 import research_readiness
 from .research_intelligence import build_research_intelligence
 from .security import login_required, role_required
-from .services import can_view_publication, coverage_for_ticker, ensure_workspace, financial_rows, readiness, valuation_result
+from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
 from .symbols import validate_ticker
 
 bp = Blueprint("web", __name__)
@@ -81,17 +84,11 @@ def _coverage(ticker: str) -> Coverage:
 
 
 def _research_readiness(coverage: Coverage) -> dict:
-    result = readiness(coverage)
-    excluded = {"Risk invalidation", "Position sizing"}
-    gates = [gate for gate in result.get("gates", []) if gate.get("label") not in excluded]
-    result["gates"] = gates
-    result["total"] = len(gates)
-    result["done"] = sum(1 for gate in gates if gate.get("ok"))
-    return result
+    return research_readiness(coverage)
 
 
 def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, market, valuation: dict) -> dict:
-    rows = financial_rows(company.id, 6)
+    rows = list(reversed(history_with_current(company.id, 8)))
     issues = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").count()
     latest_engine = dict((model.assumptions or {}).get("latest_engine_result") or {})
     return build_research_intelligence(
@@ -117,10 +114,11 @@ def _ctx(ticker: str) -> dict:
     market = latest_snapshot(security.id)
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     valuation = valuation_result(coverage)
+    intelligence = _intelligence(coverage, company, model, market, valuation)
     return {"coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
             "investment": investment, "model": model, "market": market, "position": position,
             "valuation": valuation, "readiness": _research_readiness(coverage), "company_sections": SECTIONS,
-            "intelligence": _intelligence(coverage, company, model, market, valuation)}
+            "intelligence": intelligence, "brief": company_brief(company.id, valuation, intelligence, model)}
 
 
 def _research_version(coverage: Coverage, research: ResearchState, reason: str) -> None:
@@ -216,30 +214,46 @@ def company_section(ticker, section):
     require_control_view()
     if section not in SECTION_KEYS: abort(404)
     ctx = _ctx(ticker); company = ctx["company"]; coverage = ctx["coverage"]; extra = {}
-    if section == "expectations": extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
+    if section == "expectations":
+        extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
+        extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
     elif section == "numbers":
-        extra["financials"] = financial_rows(company.id, 10); extra["quality_issues"] = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").order_by(DataQualityIssue.detected_at.desc()).all()
+        extra["financials"] = annual_rows(company.id, 15)
+        extra["current_financial"] = current_row(company.id)
+        extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
+        extra["quality_issues"] = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").order_by(DataQualityIssue.detected_at.desc()).all()
     elif section == "valuation":
         extra["scenarios"] = {s.name.upper(): s for s in ctx["model"].scenarios}; extra["sensitivity"] = valuation_sensitivity(ctx["valuation"].get("base"), ctx["valuation"].get("current_price"))
-    elif section == "bear-case": extra["bear_items"] = BearCaseItem.query.filter_by(coverage_id=coverage.id).order_by(BearCaseItem.created_at.desc()).all()
-    elif section == "catalysts": extra["catalyst_rows"] = Catalyst.query.filter_by(coverage_id=coverage.id).order_by(Catalyst.expected_date.asc(), Catalyst.id.desc()).all()
+    elif section == "bear-case":
+        extra["bear_items"] = BearCaseItem.query.filter_by(coverage_id=coverage.id).order_by(BearCaseItem.created_at.desc()).all()
+    elif section == "catalysts":
+        extra["catalyst_rows"] = Catalyst.query.filter_by(coverage_id=coverage.id).order_by(Catalyst.expected_date.asc(), Catalyst.id.desc()).all()
     elif section == "financial-flows":
         periods = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY").order_by(FinancialPeriod.fiscal_year.desc()).all(); year = int(request.args.get("year") or (periods[0].fiscal_year if periods else 0)); period = next((p for p in periods if p.fiscal_year == year), None); flows = {}
         if period:
-            for row in FinancialFlow.query.filter_by(financial_period_id=period.id).order_by(FinancialFlow.id.desc()).all():
-                flows.setdefault(row.flow_type, row.payload)
+            for row in FinancialFlow.query.filter_by(financial_period_id=period.id).order_by(FinancialFlow.id.desc()).all(): flows.setdefault(row.flow_type, row.payload)
         extra.update({"periods": periods, "selected_year": year, "flows": flows})
-    elif section == "management": extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
+    elif section == "management":
+        extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
+        extra["management_engine"] = management_engine(company.id)
     elif section == "tape":
+        months = 6 if str(request.args.get("months") or "12") == "6" else 12
         extra["tape_events"] = Event.query.filter_by(company_id=company.id).order_by(Event.event_date.desc()).limit(30).all()
         extra["finra_summary"] = finra_stored_summary(company.id)
         extra["finra_api_ready"] = provider_status(g.user.id).get("finra_api", False)
+        extra["tape_series"] = tape_series(ctx["security"], months)
     elif section == "monitoring":
-        rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all(); histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}; extra.update({"monitor_rules": rules, "monitor_histories": histories})
+        rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all()
+        histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}
+        extra.update({"monitor_rules": rules, "monitor_histories": histories, "monitor_plan": monitoring_plan(company.id, ctx["valuation"], ctx["intelligence"], ctx["model"])})
     elif section == "journal":
-        extra["journal_rows"] = DecisionJournal.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionJournal.created_at.desc()).all(); extra["snapshots"] = Snapshot.query.filter_by(coverage_id=coverage.id).order_by(Snapshot.created_at.desc()).limit(20).all()
+        extra["journal_rows"] = DecisionJournal.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionJournal.created_at.desc()).all()
+        extra["snapshots"] = Snapshot.query.filter_by(coverage_id=coverage.id).order_by(Snapshot.created_at.desc()).limit(20).all()
+        extra["journal_prefill"] = journal_prefill(ctx["intelligence"], ctx["valuation"], ctx["model"])
     elif section == "audit":
-        extra["sources"] = Source.query.filter_by(company_id=company.id).order_by(Source.retrieved_at.desc()).all(); extra["provenance"] = Provenance.query.join(FinancialPeriod, Provenance.financial_period_id == FinancialPeriod.id).filter(FinancialPeriod.company_id == company.id).order_by(Provenance.created_at.desc()).limit(200).all(); extra["refresh_runs"] = RefreshRun.query.filter(or_(RefreshRun.company_id == company.id, RefreshRun.security_id == ctx["security"].id)).order_by(RefreshRun.started_at.desc()).limit(50).all()
+        extra["sources"] = Source.query.filter_by(company_id=company.id).order_by(Source.retrieved_at.desc()).all()
+        extra["provenance"] = Provenance.query.join(FinancialPeriod, Provenance.financial_period_id == FinancialPeriod.id).filter(FinancialPeriod.company_id == company.id).order_by(Provenance.created_at.desc()).limit(200).all()
+        extra["refresh_runs"] = RefreshRun.query.filter(or_(RefreshRun.company_id == company.id, RefreshRun.security_id == ctx["security"].id)).order_by(RefreshRun.started_at.desc()).limit(50).all()
     return render_template("company_section.html", section=section, **ctx, **extra)
 
 
