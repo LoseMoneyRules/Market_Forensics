@@ -45,6 +45,12 @@ def seed_control_workspace(app):
         return ids
 
 
+def login_control(client, user_id):
+    with client.session_transaction() as session:
+        session["user_id"] = user_id
+        session["view_as"] = "CONTROL"
+
+
 def test_016_income_flow_preserves_revenue_to_net_when_gross_profit_is_missing():
     flow = build_income_statement_flow({
         "period_label": "FY2025",
@@ -96,10 +102,7 @@ def test_016_monitoring_creates_one_alert_then_dedupes(tmp_path, monkeypatch):
 
 def test_016_locked_rule_requires_numeric_threshold_in_route(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch); user_id, _, _, _ = seed_control_workspace(app)
-    client = app.test_client()
-    with client.session_transaction() as session:
-        session["user_id"] = user_id
-        session["view_as"] = "CONTROL"
+    client = app.test_client(); login_control(client, user_id)
     response = client.post("/company/EXM/monitoring", data={
         "name": "Locked narrative only", "metric": "revenue_growth_pct", "operator": "NOTE",
         "threshold_text": "bad", "locked_pre_investment": "1",
@@ -111,16 +114,24 @@ def test_016_locked_rule_requires_numeric_threshold_in_route(tmp_path, monkeypat
 
 def test_016_snapshot_is_blocked_until_current_evidence_hashes_are_approved(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch); user_id, _, _, coverage_id = seed_control_workspace(app)
-    client = app.test_client()
-    with client.session_transaction() as session:
-        session["user_id"] = user_id
-        session["view_as"] = "CONTROL"
+    client = app.test_client(); login_control(client, user_id)
     response = client.post("/company/EXM/snapshot", follow_redirects=False)
     assert response.status_code == 302
     assert "/company/EXM/overview" in response.headers["Location"]
     with app.app_context():
         assert Snapshot.query.filter_by(coverage_id=coverage_id).count() == 0
         assert AuditEvent.query.filter_by(action="publication.blocked_readiness_016", object_id=str(coverage_id)).count() == 1
+
+
+def test_016_audit_surface_is_scoped_to_current_coverage(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch); user_id, company_id, security_id, coverage_id = seed_control_workspace(app)
+    client = app.test_client(); login_control(client, user_id)
+    response = client.get("/company/EXM/surface/016/audit")
+    assert response.status_code == 200
+    payload = response.get_json()["audit"]
+    assert payload["engine_version"] == "0.1.6"
+    assert payload["scope"] == {"company_id": company_id, "security_id": security_id, "coverage_id": coverage_id}
+    assert all(row.get("provider") != "" for row in payload["lineage"][:2])
 
 
 def test_016_release_assets_and_routes_are_registered(tmp_path, monkeypatch):
