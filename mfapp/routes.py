@@ -24,6 +24,8 @@ from .core_models import (
 )
 from .readiness import research_readiness
 from .decision_engine import build_research_intelligence
+from .decision_lenses import build_decision_lenses
+from .expectations_engine import price_implied_expectations
 from .discovery_engine import classify_coverage, search_universe
 from .research_synthesis import build_synthesis
 from .security import login_required, role_required
@@ -281,6 +283,15 @@ def company_section(ticker, section):
             coverage=coverage, security=ctx["security"], company=company, research=ctx["research"], risk=ctx["risk"],
             model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"], intelligence=ctx["intelligence"], readiness=ctx["readiness"],
         )
+        if section == "overview":
+            overview_management = management_engine(company.id)
+            overview_tape = tape_series(ctx["security"], 12)
+            extra["decision_lenses"] = build_decision_lenses(
+                coverage=coverage, company=company, research=ctx["research"], risk=ctx["risk"],
+                model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"],
+                intelligence=ctx["intelligence"], readiness=ctx["readiness"],
+                management=overview_management, tape=overview_tape,
+            )
         if section == "business":
             extra["triangulation_rows"] = Event.query.filter(
                 Event.company_id == company.id,
@@ -298,6 +309,9 @@ def company_section(ticker, section):
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 5)
         extra["scenario_forecasts"] = scenario_forecasts(company.id, ctx["model"], 5)
+        extra["implied_expectations"] = price_implied_expectations(
+            company.id, ctx["model"], ctx["market"].price if ctx["market"] else ctx["valuation"].get("current_price")
+        )
     elif section == "numbers":
         extra["financials"] = annual_rows(company.id, 15)
         extra["current_financial"] = current_row(company.id)
