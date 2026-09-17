@@ -110,9 +110,16 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     if app.config.get("AUTO_MIGRATE"):
         from .schema import bootstrap_schema
+        from .upgrade_012 import queue_existing_coverage_prefill
         with app.app_context():
-            # This runs at WSGI process startup, never on page GET. If it fails, the process
-            # does not become healthy and deployment therefore fails closed.
-            app.config["SCHEMA_BOOTSTRAP_RESULT"] = bootstrap_schema(migrate_legacy=True)
+            # Startup migrations never perform provider/network work. The 0.1.2 hook only
+            # queues local prefill jobs; the normal browser/cron worker executes them later.
+            # If schema bootstrap fails, the process does not become healthy and deploy fails closed.
+            schema_result = bootstrap_schema(migrate_legacy=True)
+            upgrade_result = queue_existing_coverage_prefill()
+            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {
+                "schema": schema_result,
+                "upgrade_0_1_2": upgrade_result,
+            }
 
     return app
