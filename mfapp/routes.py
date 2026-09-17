@@ -235,6 +235,19 @@ def company_section(ticker, section):
             coverage=coverage, security=ctx["security"], company=company, research=ctx["research"], risk=ctx["risk"],
             model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"], intelligence=ctx["intelligence"], readiness=ctx["readiness"],
         )
+        if section == "business":
+            extra["triangulation_rows"] = Event.query.filter(
+                Event.company_id == company.id,
+                Event.event_type.like("TRIANGULATION_%"),
+            ).order_by(Event.event_date.desc(), Event.id.desc()).limit(60).all()
+            peer_query = Company.query.filter(Company.id != company.id)
+            if company.industry:
+                peer_query = peer_query.filter(Company.industry == company.industry)
+            elif company.sector:
+                peer_query = peer_query.filter(Company.sector == company.sector)
+            else:
+                peer_query = peer_query.filter(db.text("1=0"))
+            extra["peer_candidates"] = peer_query.order_by(Company.display_name.asc()).limit(12).all()
     if section == "expectations":
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
