@@ -20,11 +20,11 @@ def create_app(test_config: dict | None = None) -> Flask:
     env = os.environ.get("MF_ENV", "development").lower()
     db_url = os.environ.get("MF_DATABASE_URL", "").strip()
     if not db_url:
-        db_url = "sqlite:///" + str(Path(app.instance_path) / "market_forensics_013.db")
+        db_url = "sqlite:///" + str(Path(app.instance_path) / "market_forensics_014.db")
     if db_url.startswith("sqlite:///instance/"):
         db_url = "sqlite:///" + str(Path(app.instance_path) / db_url.split("sqlite:///instance/", 1)[1])
     if env == "production" and db_url.startswith("sqlite"):
-        raise RuntimeError("Market Forensics 0.1.3 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
+        raise RuntimeError("Market Forensics 0.1.4 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
 
     app.config.update(
         SECRET_KEY=os.environ.get("MF_SECRET_KEY", "dev-only-change-me"),
@@ -37,7 +37,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.1.3",
+        VERSION="0.1.4",
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
