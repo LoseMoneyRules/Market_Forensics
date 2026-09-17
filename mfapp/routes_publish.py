@@ -1,16 +1,28 @@
 from __future__ import annotations
 
-from flask import abort, flash, g, redirect, render_template, request, url_for
+from flask import abort, flash, g, jsonify, redirect, render_template, request, url_for
 
 from .access import audit, effective_role, require_control_view
 from .core_models import Company, Coverage, InvestmentState, Job, Position, Publication, RefreshRun, Security, Snapshot
 from .data_providers import latest_snapshot, provider_status, set_secret
 from .extensions import db
-from .jobs import enqueue_job
+from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
+
+
+def _queue_status(user_id: int) -> dict:
+    due = Job.query.filter(
+        Job.user_id == user_id,
+        Job.status == "QUEUED",
+        Job.run_after <= utcnow(),
+    ).count()
+    queued = Job.query.filter_by(user_id=user_id, status="QUEUED").count()
+    running = Job.query.filter_by(user_id=user_id, status="RUNNING").count()
+    failed = Job.query.filter_by(user_id=user_id, status="FAILED").count()
+    return {"due": due, "queued": queued, "running": running, "failed": failed}
 
 
 @bp.post("/company/<ticker>/snapshot")
@@ -89,7 +101,7 @@ def queue_refresh(ticker, kind):
     require_control_view(); ctx = _ctx(ticker); mapping = {"market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE", "finra": "FINRA_IMPORT", "validate": "DEEP_VALIDATION", "management": "MANAGEMENT_SCAN"}; job_type = mapping.get(kind)
     if not job_type: abort(404)
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10 if kind == "market" else 50)
-    audit("job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(f"{job_type} queued as job #{job.id}.", "success")
+    audit("job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(f"{job_type} queued as job #{job.id}. Browser worker will process it while CONTROL is open.", "success")
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
 
@@ -98,15 +110,32 @@ def queue_refresh(ticker, kind):
 def queue_global_job(kind):
     require_control_view(); job_type = {"discovery": "DISCOVERY_SCAN", "bulk": "BULK_REFRESH"}.get(str(kind).lower())
     if not job_type: abort(404)
-    job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); flash(f"{job_type} queued as job #{job.id}.", "success")
+    job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); flash(f"{job_type} queued as job #{job.id}. Browser worker will process it while CONTROL is open.", "success")
     return redirect(request.referrer or url_for("web.settings"))
+
+
+@bp.get("/jobs/status")
+@role_required("CONTROL")
+def job_status():
+    require_control_view()
+    return jsonify(_queue_status(g.user.id))
+
+
+@bp.post("/jobs/pump")
+@role_required("CONTROL")
+def pump_jobs():
+    require_control_view()
+    before = _queue_status(g.user.id)
+    processed = run_jobs(limit=1) if before["due"] else []
+    after = _queue_status(g.user.id)
+    return jsonify({"processed": processed, **after})
 
 
 @bp.get("/settings")
 @login_required
 def settings():
-    require_control_view(); jobs = Job.query.order_by(Job.created_at.desc()).limit(50).all(); refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
-    return render_template("settings.html", providers=provider_status(g.user.id), jobs=jobs, refreshes=refreshes)
+    require_control_view(); jobs = Job.query.filter_by(user_id=g.user.id).order_by(Job.created_at.desc()).limit(50).all(); refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
+    return render_template("settings.html", providers=provider_status(g.user.id), jobs=jobs, refreshes=refreshes, queue_status=_queue_status(g.user.id))
 
 
 @bp.post("/settings/providers")
