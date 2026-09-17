@@ -1,4 +1,4 @@
-name: Market Forensics 0.1.0 tests
+name: Market Forensics release tests
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Syntax check
         run: python -m compileall -q app.py manage.py mfapp tests
-      - name: 0.1.0 test suite
+      - name: Release test suite
         env:
           MF_SECRET_KEY: test-secret-key
           MF_ENCRYPTION_KEY: ${{ secrets.MF_TEST_ENCRYPTION_KEY }}
