@@ -21,9 +21,9 @@ from .models import AuditEvent, User, UserPreference
 from .monitoring_engine import NUMERIC_OPERATORS, _compare, _metric_map, _next_filing_estimate, _num, _recent_alert
 from .services import can_view_publication
 
-EMAIL_PREF_KEY = "alert_email_017"
-SUBSCRIPTION_PREFIX = "alert_subscription_017_"
-CATALOG_PREFIX = "alert_catalog_017_"
+EMAIL_PREF_KEY = "alert_email"
+SUBSCRIPTION_PREFIX = "alert_subscription_"
+CATALOG_PREFIX = "alert_catalog_"
 SYSTEM_ALERTS = {
     "data_quality": "Data-quality failures",
     "filing": "Earnings / filing window",
