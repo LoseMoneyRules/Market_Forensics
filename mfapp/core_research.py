@@ -71,7 +71,7 @@ class ValuationModel(db.Model):
     method = db.Column(db.String(48), nullable=False, default="MANUAL_PER_SHARE")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     assumptions = db.Column(db.JSON, nullable=False, default=dict)
-    calculation_version = db.Column(db.String(32), nullable=False, default="0.1.0")
+    calculation_version = db.Column(db.String(32), nullable=False, default="0.2.0")
     updated_by = db.Column(db.Integer, db.ForeignKey("user.id"))
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
     coverage = db.relationship("Coverage", backref="valuation_models")
@@ -138,7 +138,7 @@ class FinancialFlow(db.Model):
     financial_period_id = db.Column(db.Integer, db.ForeignKey("mf_financial_period.id"), nullable=False, index=True)
     flow_type = db.Column(db.String(16), nullable=False)
     payload = db.Column(db.JSON, nullable=False, default=dict)
-    calculation_version = db.Column(db.String(32), nullable=False, default="0.1.0")
+    calculation_version = db.Column(db.String(32), nullable=False, default="0.2.0")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
 class MonitoringRule(db.Model):

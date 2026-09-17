@@ -19,7 +19,7 @@ class Snapshot(db.Model):
     version = db.Column(db.Integer, nullable=False)
     snapshot_type = db.Column(db.String(24), nullable=False, default="DECISION")
     payload = db.Column(db.JSON, nullable=False, default=dict)
-    calculation_version = db.Column(db.String(32), nullable=False, default="0.1.0")
+    calculation_version = db.Column(db.String(32), nullable=False, default="0.2.0")
     created_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
 
@@ -48,7 +48,7 @@ class CalculationRun(db.Model):
     coverage_id = db.Column(db.Integer, db.ForeignKey("mf_coverage.id"), index=True)
     financial_period_id = db.Column(db.Integer, db.ForeignKey("mf_financial_period.id"), index=True)
     calculation_type = db.Column(db.String(48), nullable=False, index=True)
-    calculation_version = db.Column(db.String(32), nullable=False, default="0.1.0")
+    calculation_version = db.Column(db.String(32), nullable=False, default="0.2.0")
     inputs = db.Column(db.JSON, nullable=False, default=dict)
     outputs = db.Column(db.JSON, nullable=False, default=dict)
     status = db.Column(db.String(16), nullable=False, default="DONE")

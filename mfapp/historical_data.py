@@ -9,7 +9,7 @@ from .core_models import HistoricalPrice, Security
 from .data_providers import get_secret
 from .extensions import db
 
-USER_AGENT = "MarketForensics/0.1.5"
+USER_AGENT = "MarketForensics/0.2.0"
 
 
 def _utcnow() -> datetime:
@@ -177,7 +177,7 @@ def _coverage_stats(rows: list[dict[str, Any]], requested_start: date, requested
 
 
 def fetch_history(ticker: str, user_id: int, lookback_years: int = 10) -> tuple[list[dict[str, Any]], list[str]]:
-    years = max(1, min(int(lookback_years), 20))
+    years = max(1, min(int(lookback_years), 40))
     end = date.today()
     start = end - timedelta(days=366 * years + 45)
     errors: list[str] = []

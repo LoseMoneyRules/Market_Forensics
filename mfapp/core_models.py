@@ -6,7 +6,7 @@ from .core_identity import Company, Security, Coverage, MarketSnapshot, Source, 
 from .core_research import ResearchState, ResearchVersion, Expectation, ValuationModel, ValuationScenario, BearCaseItem, Catalyst, ManagementAssessment, FinancialFlow, MonitoringRule, MonitoringHistory, RiskPlan, InvestmentState, Position, DecisionJournal
 from .core_operations import Event, Provenance, DataQualityIssue, Job, RefreshRun, Alert, HistoricalPrice, HistoricalTestRun, HistoricalTestSample
 from .core_publication import Snapshot, Publication, CalculationRun, SchemaMigration
-from .core_015 import ResearchGateApproval
+from .research_gates import ResearchGateApproval
 
 __all__ = [
     "Company", "Security", "Coverage", "MarketSnapshot", "Source", "FinancialPeriod",

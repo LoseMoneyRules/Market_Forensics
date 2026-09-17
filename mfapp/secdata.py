@@ -14,7 +14,7 @@ from .core_models import Company, DataQualityIssue, FinancialPeriod, NormalizedF
 
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
-CALCULATION_VERSION = "0.1.5"
+CALCULATION_VERSION = "0.2.0"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"],

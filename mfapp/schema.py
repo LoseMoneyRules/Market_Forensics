@@ -80,14 +80,14 @@ def _control_user_id() -> int | None:
 
 
 def bootstrap_schema(*, migrate_legacy: bool = True) -> dict[str, Any]:
-    """Create the 0.1.0 schema once per process startup, never per page request.
+    """Create/verify the current Market Forensics schema once per process startup, never per page request.
 
     Existing account/security tables are retained in place. New research tables use mf_*
     names so deployment can be atomic and the one-time converter can run without keeping
     two live cores synchronized.
     """
     db.create_all()
-    result = {"schema": "0.1.0", "legacy_migration": "skipped"}
+    result = {"schema": "0.2.0", "legacy_migration": "skipped"}
     if migrate_legacy:
         result["legacy_migration"] = migrate_legacy_004()
     return result

@@ -1,4 +1,47 @@
-{% extends "base.html" %}{% block title %}Discovery · Market Forensics{% endblock %}{% block content %}
-<section class="page"><div class="page-head split"><div><p class="eyebrow">RESEARCH</p><h1>Discovery</h1><p>Search the current universe without rebuilding company data.</p></div><form class="search-form" method="get"><input name="q" value="{{ q }}" placeholder="Ticker or note"><button class="button" type="submit">Search</button></form></div>
-<div class="card-grid">{% for row in rows %}<a class="security-card" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><div class="security-card-top"><strong>{{ row.security.ticker }}</strong><span>{{ row.coverage.research_state }}</span></div><h2>{{ row.company.display_name }}</h2><p>{{ row.coverage.owner_summary or 'No summary yet.' }}</p><div class="security-meta"><span>{% if row.market %}${{ '%.2f'|format(row.market.price|float) }}{% else %}No price{% endif %}</span><span>{{ row.readiness.done }}/{{ row.readiness.total }} ready</span></div></a>{% else %}<div class="empty-state"><h2>No results</h2></div>{% endfor %}</div></section>
+{% extends "base.html" %}
+{% block title %}Discovery · Market Forensics{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="page-head split">
+    <div><p class="eyebrow">DISCOVER</p><h1>Find the next research candidate</h1><p>Search outside current Coverage on demand, then use evidence lenses to prioritize companies already under study.</p></div>
+    <form class="search-form" method="get"><input name="q" value="{{ q }}" placeholder="Ticker or company name" autocomplete="off"><button class="button primary" type="submit">Search US equities</button></form>
+  </div>
+
+  {% if q %}
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">EXTERNAL UNIVERSE</p><h2>Search results for {{ q }}</h2></div><span class="status-chip">{{ external.provider }}</span></div>
+    <div class="discovery-results">
+      {% for item in external.results %}
+      <div class="discovery-result">
+        <div><strong>{{ item.ticker }}</strong><h3>{{ item.name }}</h3><p>{{ item.exchange }} · {{ item.source }}</p></div>
+        {% if item.in_coverage %}
+          <a class="button" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Open Research</a>
+        {% else %}
+          <form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button positive" type="submit">Promote to Research</button></form>
+        {% endif %}
+      </div>
+      {% else %}<div class="empty-state"><h2>No validated match</h2><p>Try a ticker or company-name fragment. Candidates are validated again before entering Coverage.</p></div>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">CURRENT UNIVERSE</p><h2>Evidence lenses</h2><p class="muted">These labels prioritize research; they are not recommendations.</p></div></div>
+    <div class="card-grid">
+      {% for row in rows %}
+      <a class="security-card" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}">
+        <div class="security-card-top"><strong>{{ row.security.ticker }}</strong><span>{{ row.intelligence.stance }}</span></div>
+        <h2>{{ row.company.display_name }}</h2>
+        <div class="discovery-tags">{% for label in row.discovery_labels %}<span class="status-chip">{{ label }}</span>{% endfor %}</div>
+        <div class="security-meta">
+          <span>{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}No price{% endif %}</span>
+          <span>{% if row.intelligence.base_gap_pct is not none %}Base gap {{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}Gap pending{% endif %}</span>
+          <span>{{ row.readiness.done }}/{{ row.readiness.total }} approved</span>
+          <span>{{ row.readiness.validation.state }}</span>
+        </div>
+      </a>
+      {% else %}<div class="empty-state"><h2>No Coverage yet</h2></div>{% endfor %}
+    </div>
+  </div>
+</section>
 {% endblock %}

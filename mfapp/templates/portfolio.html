@@ -1,3 +1,50 @@
-{% extends "base.html" %}{% block title %}Portfolio · Market Forensics{% endblock %}{% block content %}
-<section class="page"><div class="page-head"><p class="eyebrow">PRIVATE</p><h1>Portfolio</h1><p>Investment state is private and never enters published research.</p></div><div class="table-card"><table class="data-table numeric"><thead><tr><th>Security</th><th>State</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>P/L</th></tr></thead><tbody>{% for row in rows %}<tr><td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='position') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td><td>{{ row.investment.state if row.investment else 'NO_POSITION' }}</td><td>{{ '{:,.3f}'.format(row.position.shares|float) }}</td><td>${{ '{:,.2f}'.format(row.position.avg_cost|float) }}</td><td>{% if row.market %}${{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td><td>{% if row.market_value is not none %}${{ '{:,.2f}'.format(row.market_value) }}{% else %}—{% endif %}</td><td class="{{ 'ok-text' if row.pnl is not none and row.pnl >= 0 else 'danger-text' if row.pnl is not none else '' }}">{% if row.pnl is not none %}${{ '{:,.2f}'.format(row.pnl) }}{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="empty-cell">No positions stored.</td></tr>{% endfor %}</tbody></table></div></section>
+{% extends "base.html" %}
+{% block title %}Portfolio · Market Forensics{% endblock %}
+{% block content %}
+<section class="page">
+  <div class="page-head split">
+    <div><p class="eyebrow">PRIVATE CAPITAL</p><h1>Portfolio</h1><p>Research decides whether an idea deserves capital. Portfolio decides how much capital and how it is managed.</p></div>
+  </div>
+  <div class="kpi-grid">
+    <div class="kpi"><span>Market value</span><strong>&#36;{{ '{:,.0f}'.format(totals['market_value']) }}</strong></div>
+    <div class="kpi"><span>Total P/L</span><strong>{{ '+' if totals['pnl'] >= 0 else '' }}&#36;{{ '{:,.0f}'.format(totals['pnl']) }}</strong></div>
+    <div class="kpi"><span>Top position</span><strong>{{ '%.1f'|format(totals['top_weight_pct']) }}%</strong><small>Current concentration</small></div>
+    <div class="kpi"><span>Validated positions</span><strong>{{ totals['validated_positions'] }}/{{ totals['positions'] }}</strong><small>{{ '%.0f'|format(totals['validated_pct']) }}%</small></div>
+    <div class="kpi"><span>Concentration HHI</span><strong>{{ '%.3f'|format(totals['concentration_hhi']) }}</strong><small>0 diversified → 1 concentrated</small></div>
+  </div>
+  {% if totals.risk_breaches %}
+  <div class="notice amber"><strong>POSITION LIMIT BREACH.</strong> {% for b in totals.risk_breaches %}{{ b.ticker }} {{ '%.1f'|format(b.weight_pct) }}% vs max {{ '%.1f'|format(b.max_position_pct) }}%{% if not loop.last %} · {% endif %}{% endfor %}</div>
+  {% endif %}
+  {% if totals.correlations %}
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">PORTFOLIO RISK</p><h2>Highest pairwise correlations</h2><p class="muted">Based on overlapping daily split-adjusted returns in stored price history. Correlation is descriptive, not a position instruction.</p></div></div>
+    <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Pair</th><th>Correlation</th><th>Samples</th></tr></thead><tbody>{% for pair in totals.correlations[:10] %}<tr><td><strong>{{ pair.left }} / {{ pair.right }}</strong></td><td>{{ '%+.2f'|format(pair.correlation) }}</td><td>{{ pair.samples }}</td></tr>{% endfor %}</tbody></table></div>
+  </div>
+  {% endif %}
+
+  <div class="table-card scroll">
+    <table class="data-table numeric">
+      <thead><tr><th>Security</th><th>Position state</th><th>Validation</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>Weight</th><th>P/L</th><th>Base</th><th>Risk</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a class="ticker-link" href="{{ url_for('web.portfolio_security', ticker=row.security.ticker) }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td>
+        <td>{{ row.investment.state if row.investment else 'NO_POSITION' }}</td>
+        <td><span class="status-chip">{{ row.readiness.validation.state }}</span></td>
+        <td>{{ '{:,.3f}'.format(row.position.shares|float) }}</td>
+        <td>&#36;{{ '{:,.2f}'.format(row.position.avg_cost|float) }}</td>
+        <td>{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
+        <td>{% if row.market_value is not none %}&#36;{{ '{:,.0f}'.format(row.market_value) }}{% else %}—{% endif %}</td>
+        <td>{% if row.weight_pct is not none %}{{ '%.1f'|format(row.weight_pct) }}%{% else %}—{% endif %}</td>
+        <td class="{{ 'ok-text' if row.pnl is not none and row.pnl >= 0 else 'danger-text' if row.pnl is not none else '' }}">{% if row.pnl is not none %}{{ '+' if row.pnl >= 0 else '' }}&#36;{{ '{:,.0f}'.format(row.pnl) }}{% else %}—{% endif %}</td>
+        <td>{% if row.valuation.base is not none %}&#36;{{ '%.2f'|format(row.valuation.base) }}{% else %}—{% endif %}</td>
+        <td>{% if row.risk and row.risk.max_position_pct is not none %}max {{ '%.1f'|format(row.risk.max_position_pct|float) }}%{% else %}<span class="muted">not set</span>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="empty-cell">No private positions stored. Open a researched security from Coverage and add it from its Portfolio page after review.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endblock %}

@@ -1,6 +1,0 @@
-<nav class="company-tabs">
-  {% for key,label in company_sections %}
-  <a href="{{ url_for('web.' ~ ('valuation_013' if key=='valuation' else 'financial_flows_013' if key=='financial-flows' else 'historical_test_013' if key=='historical-test' else 'company_section'), ticker=security.ticker, section=key) if key not in ['valuation','financial-flows','historical-test'] else url_for('web.valuation_013' if key=='valuation' else 'web.financial_flows_013' if key=='financial-flows' else 'web.historical_test_013', ticker=security.ticker) }}" class="{% if section == key %}active{% endif %}">{{ label }}</a>
-  {% endfor %}
-</nav>
-{% include "_section_kpis_015.html" %}

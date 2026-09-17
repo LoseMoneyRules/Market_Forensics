@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import abort, flash, g, jsonify, redirect, render_template, request, url_for
+from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, url_for
 
 from .access import audit, effective_role, require_control_view
 from .core_models import Company, Coverage, InvestmentState, Job, Position, Publication, RefreshRun, Security, Snapshot
@@ -9,6 +9,8 @@ from .extensions import db
 from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
+from .portfolio_engine import portfolio_rows
+from .reporting import render_docx, render_pdf, research_report_data
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -106,16 +108,49 @@ def publications():
     require_control_view(); return render_template("publications.html", publications=Publication.query.order_by(Publication.published_at.desc()).all())
 
 
+@bp.get("/company/<ticker>/report/<fmt>")
+@role_required("CONTROL")
+def research_report(ticker, fmt):
+    require_control_view()
+    ctx = _ctx(ticker)
+    mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
+    data = research_report_data(ctx, mode=mode)
+    fmt = str(fmt or "").lower()
+    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.0"
+    if fmt == "docx":
+        stream = render_docx(data)
+        mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        suffix = "docx"
+    elif fmt == "pdf":
+        stream = render_pdf(data)
+        mimetype = "application/pdf"
+        suffix = "pdf"
+    else:
+        abort(404)
+    audit("research.report.export", "coverage", ctx["coverage"].id, {"ticker": ctx["security"].ticker, "format": fmt, "mode": mode})
+    db.session.commit()
+    return send_file(stream, mimetype=mimetype, as_attachment=True, download_name=f"{stem}.{suffix}", max_age=0)
+
+
 @bp.get("/portfolio")
 @login_required
 def portfolio():
-    require_control_view(); rows = []
-    for position in Position.query.filter_by(user_id=g.user.id).all():
-        security = db.session.get(Security, position.security_id); company = db.session.get(Company, security.company_id); coverage = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first(); market = latest_snapshot(security.id)
-        market_value = float(market.price * position.shares) if market else None; cost = float(position.avg_cost * position.shares)
-        rows.append({"position": position, "security": security, "company": company, "coverage": coverage, "market": market, "market_value": market_value,
-                     "pnl": market_value - cost if market_value is not None else None, "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first() if coverage else None})
-    return render_template("portfolio.html", rows=rows)
+    require_control_view()
+    rows, totals = portfolio_rows(g.user.id)
+    return render_template("portfolio.html", rows=rows, totals=totals)
+
+
+@bp.get("/portfolio/<ticker>")
+@login_required
+def portfolio_security(ticker):
+    require_control_view()
+    ctx = _ctx(ticker)
+    rows, totals = portfolio_rows(g.user.id)
+    row = next((item for item in rows if item["security"].id == ctx["security"].id), None)
+    portfolio_value = totals.get("market_value") or 0
+    position_value = (row or {}).get("market_value") if row else None
+    weight_pct = ((position_value / portfolio_value) * 100.0) if position_value is not None and portfolio_value else 0.0
+    return render_template("portfolio_security.html", portfolio_row=row, portfolio_totals=totals, portfolio_weight_pct=weight_pct, **ctx)
 
 
 @bp.post("/company/<ticker>/refresh/<kind>")
@@ -139,7 +174,7 @@ def queue_refresh(ticker, kind):
 @bp.post("/jobs/<kind>")
 @role_required("CONTROL")
 def queue_global_job(kind):
-    require_control_view(); job_type = {"discovery": "DISCOVERY_SCAN", "bulk": "BULK_REFRESH"}.get(str(kind).lower())
+    require_control_view(); job_type = {"discovery": "DISCOVERY_SCAN", "bulk": "BULK_REFRESH", "stale": "STALE_REFRESH"}.get(str(kind).lower())
     if not job_type: abort(404)
     job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.settings"))

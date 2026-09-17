@@ -8,8 +8,8 @@ from flask import Blueprint, abort, current_app, flash, g, redirect, render_temp
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
-from .current_financials import annual_rows, current_row, forecast_rows, history_with_current
-from .decision_support import company_brief, journal_prefill, management_engine, monitoring_plan, tape_series
+from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, scenario_forecasts
+from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_series
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
 from .jobs import enqueue_job
@@ -22,8 +22,10 @@ from .core_models import (
     Publication, RefreshRun, ResearchState, ResearchVersion, RiskPlan, Security,
     Snapshot, Source, ValuationModel,
 )
-from .readiness_015 import research_readiness
-from .research_intelligence import build_research_intelligence
+from .readiness import research_readiness
+from .decision_engine import build_research_intelligence
+from .discovery_engine import classify_coverage, search_universe
+from .research_synthesis import build_synthesis
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
 from .symbols import validate_ticker
@@ -87,7 +89,7 @@ def _research_readiness(coverage: Coverage) -> dict:
     return research_readiness(coverage)
 
 
-def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, market, valuation: dict) -> dict:
+def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, market, valuation: dict, readiness: dict | None = None) -> dict:
     rows = list(reversed(history_with_current(company.id, 8)))
     issues = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").count()
     latest_engine = dict((model.assumptions or {}).get("latest_engine_result") or {})
@@ -98,6 +100,7 @@ def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, m
         valuation_quality=str(latest_engine.get("quality") or ""),
         data_quality_issues=issues,
         finra_summary=finra_stored_summary(company.id),
+        readiness=readiness or _research_readiness(coverage),
     )
 
 
@@ -114,10 +117,11 @@ def _ctx(ticker: str) -> dict:
     market = latest_snapshot(security.id)
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     valuation = valuation_result(coverage)
-    intelligence = _intelligence(coverage, company, model, market, valuation)
+    readiness = _research_readiness(coverage)
+    intelligence = _intelligence(coverage, company, model, market, valuation, readiness)
     return {"coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
             "investment": investment, "model": model, "market": market, "position": position,
-            "valuation": valuation, "readiness": _research_readiness(coverage), "company_sections": SECTIONS,
+            "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
             "intelligence": intelligence, "brief": company_brief(company.id, valuation, intelligence, model)}
 
 
@@ -147,14 +151,19 @@ def dashboard():
         return render_template("published_index.html", publications=_published_for_role(role), role=role)
     require_control_view()
     rows = []
-    for coverage in Coverage.query.filter_by(user_id=g.user.id).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
+    for coverage in Coverage.query.filter(
+        Coverage.user_id == g.user.id,
+        Coverage.status != "ARCHIVED",
+    ).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
         security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
         market = latest_snapshot(security.id); valuation = valuation_result(coverage)
         model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+        readiness = _research_readiness(coverage)
+        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW"}
         rows.append({"coverage": coverage, "security": security, "company": company, "market": market,
                      "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
-                     "valuation": valuation, "readiness": _research_readiness(coverage),
-                     "intelligence": _intelligence(coverage, company, model, market, valuation) if model else {"action": "WAIT", "bias": "NEUTRAL", "confidence": "LOW"}})
+                     "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
+                     "discovery_labels": classify_coverage(intelligence, readiness)})
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
     action_counts = {key: sum(1 for row in rows if row["intelligence"].get("action") == key) for key in ("BUY", "SELL", "WAIT")}
@@ -164,14 +173,27 @@ def dashboard():
 @bp.get("/discovery")
 @login_required
 def discovery():
-    require_control_view(); q = str(request.args.get("q") or "").strip().upper()
-    query = Coverage.query.join(Security, Coverage.security_id == Security.id).filter(Coverage.user_id == g.user.id)
-    if q: query = query.filter(or_(db.func.upper(Security.ticker).like(f"%{q}%"), db.func.upper(Coverage.owner_summary).like(f"%{q}%")))
+    require_control_view()
+    q = str(request.args.get("q") or "").strip().upper()
+    external = search_universe(q, g.user.id) if q else {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
     rows = []
-    for coverage in query.order_by(Coverage.updated_at.desc()).all():
-        security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
-        rows.append({"coverage": coverage, "security": security, "company": company, "market": latest_snapshot(security.id), "readiness": _research_readiness(coverage)})
-    return render_template("discovery.html", rows=rows, q=q)
+    for coverage in Coverage.query.filter(
+        Coverage.user_id == g.user.id,
+        Coverage.status != "ARCHIVED",
+    ).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
+        security = db.session.get(Security, coverage.security_id)
+        company = db.session.get(Company, security.company_id)
+        market = latest_snapshot(security.id)
+        valuation = valuation_result(coverage)
+        model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+        readiness = _research_readiness(coverage)
+        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW"}
+        rows.append({
+            "coverage": coverage, "security": security, "company": company, "market": market,
+            "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
+            "discovery_labels": classify_coverage(intelligence, readiness),
+        })
+    return render_template("discovery.html", rows=rows, q=q, external=external)
 
 
 @bp.post("/coverage")
@@ -184,6 +206,14 @@ def add_coverage():
     if security:
         existing = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
         if existing:
+            if str(existing.status or "").upper() == "ARCHIVED":
+                existing.status = "MONITOR"
+                existing.research_state = existing.research_state if existing.research_state != "ARCHIVED" else "UNDER_REVIEW"
+                existing.updated_at = utcnow()
+                audit("coverage.restore", "coverage", existing.id, {"ticker": ticker})
+                db.session.commit()
+                flash(f"{ticker} restored to active Coverage.", "success")
+                return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
             flash("Ticker already exists in Coverage.", "error"); return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
     else:
         company = Company(legal_name=validation.name or ticker, display_name=validation.name or ticker); db.session.add(company); db.session.flush()
@@ -202,6 +232,38 @@ def add_coverage():
     return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
 
 
+@bp.post("/coverage/<ticker>/manage")
+@role_required("CONTROL")
+def manage_coverage(ticker):
+    """Manage list membership without deleting research/audit history."""
+    require_control_view()
+    coverage = _coverage(ticker)
+    action = str(request.form.get("action") or "save").lower()
+    if action == "archive":
+        coverage.status = "ARCHIVED"
+        coverage.research_state = "ARCHIVED"
+        audit("coverage.archive", "coverage", coverage.id, {"ticker": ticker.upper()})
+        db.session.commit()
+        flash(f"{ticker.upper()} removed from active Coverage. Research history is preserved.", "success")
+        return redirect(url_for("web.dashboard"))
+
+    raw_priority = request.form.get("priority")
+    if raw_priority not in (None, ""):
+        try:
+            coverage.priority = max(-999, min(999, int(raw_priority)))
+        except (TypeError, ValueError):
+            flash("Priority must be a whole number.", "error")
+            return redirect(request.referrer or url_for("web.dashboard"))
+    status = str(request.form.get("status") or coverage.status).upper()
+    if status in {"MONITOR", "RESEARCH", "READY"}:
+        coverage.status = status
+    coverage.updated_at = utcnow()
+    audit("coverage.manage", "coverage", coverage.id, {"ticker": ticker.upper(), "priority": coverage.priority, "status": coverage.status})
+    db.session.commit()
+    flash(f"{ticker.upper()} Coverage settings saved.", "success")
+    return redirect(request.referrer or url_for("web.dashboard"))
+
+
 @bp.get("/company/<ticker>")
 @login_required
 def company_default(ticker):
@@ -214,9 +276,28 @@ def company_section(ticker, section):
     require_control_view()
     if section not in SECTION_KEYS: abort(404)
     ctx = _ctx(ticker); company = ctx["company"]; coverage = ctx["coverage"]; extra = {}
+    if section in {"overview", "business"}:
+        extra["synthesis"] = build_synthesis(
+            coverage=coverage, security=ctx["security"], company=company, research=ctx["research"], risk=ctx["risk"],
+            model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"], intelligence=ctx["intelligence"], readiness=ctx["readiness"],
+        )
+        if section == "business":
+            extra["triangulation_rows"] = Event.query.filter(
+                Event.company_id == company.id,
+                Event.event_type.like("TRIANGULATION_%"),
+            ).order_by(Event.event_date.desc(), Event.id.desc()).limit(60).all()
+            peer_query = Company.query.filter(Company.id != company.id)
+            if company.industry:
+                peer_query = peer_query.filter(Company.industry == company.industry)
+            elif company.sector:
+                peer_query = peer_query.filter(Company.sector == company.sector)
+            else:
+                peer_query = peer_query.filter(db.text("1=0"))
+            extra["peer_candidates"] = peer_query.order_by(Company.display_name.asc()).limit(12).all()
     if section == "expectations":
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
-        extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
+        extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 5)
+        extra["scenario_forecasts"] = scenario_forecasts(company.id, ctx["model"], 5)
     elif section == "numbers":
         extra["financials"] = annual_rows(company.id, 15)
         extra["current_financial"] = current_row(company.id)
@@ -236,6 +317,7 @@ def company_section(ticker, section):
     elif section == "management":
         extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
         extra["management_engine"] = management_engine(company.id)
+        extra["management_accountability"] = management_accountability(company.id)
     elif section == "tape":
         months = 6 if str(request.args.get("months") or "12") == "6" else 12
         extra["tape_events"] = Event.query.filter_by(company_id=company.id).order_by(Event.event_date.desc()).limit(30).all()

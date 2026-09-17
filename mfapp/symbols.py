@@ -37,7 +37,7 @@ def validate_ticker(value: str) -> SymbolValidation:
         response = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{provider_symbol}",
             params={"range": "5d", "interval": "1d", "events": "div,splits"},
-            headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.1.0"},
+            headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.2.0"},
             timeout=8,
         )
         if response.status_code == 200:

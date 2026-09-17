@@ -4,7 +4,7 @@ from math import isfinite
 from statistics import median
 from typing import Any
 
-ENGINE_VERSION = "0.1.3"
+ENGINE_VERSION = "0.2.0"
 
 TYPE_PRIORS = {
     "Generic": {"pe": (12.0, 18.0, 24.0), "ev_sales": (0.8, 1.5, 2.4), "fcf_yield": (0.080, 0.055, 0.040)},

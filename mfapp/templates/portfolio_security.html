@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ security.ticker }} · Portfolio · Market Forensics{% endblock %}
+{% block content %}
+<section class="page company-page">
+  <div class="company-head">
+    <div>
+      <div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>Private portfolio workspace</span></div>
+      <h1>{{ company.display_name }}</h1>
+      <div class="company-states">
+        <span>Research <strong>{{ coverage.research_state }}</strong></span>
+        <span>Validation <strong>{{ readiness.validation.state }}</strong></span>
+        <span>Research action <strong>{{ intelligence.action }}</strong></span>
+      </div>
+    </div>
+    <div class="company-actions"><a class="button" href="{{ url_for('web.company_section', ticker=security.ticker, section='overview') }}">Open Research</a><a class="button" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>
+  </div>
+  <div class="kpi-grid">
+    <div class="kpi"><span>Current price</span><strong>{% if market %}&#36;{{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</strong></div>
+    <div class="kpi"><span>Bear</span><strong>{% if valuation.bear is not none %}&#36;{{ '%.2f'|format(valuation.bear) }}{% else %}—{% endif %}</strong></div>
+    <div class="kpi accent"><span>Base</span><strong>{% if valuation.base is not none %}&#36;{{ '%.2f'|format(valuation.base) }}{% else %}—{% endif %}</strong></div>
+    <div class="kpi"><span>Bull</span><strong>{% if valuation.bull is not none %}&#36;{{ '%.2f'|format(valuation.bull) }}{% else %}—{% endif %}</strong></div>
+    <div class="kpi"><span>Portfolio weight</span><strong>{{ '%.1f'|format(portfolio_weight_pct) }}%</strong><small>Current marked weight</small></div>
+  </div>
+  {% if readiness.validation.state != 'VALIDATED' %}
+  <div class="notice amber"><strong>RESEARCH / VALIDATION SEPARATION.</strong> Portfolio remains usable, but this research file is {{ readiness.validation.state }}. Position sizing does not change the research conclusion.</div>
+  {% endif %}
+  <div class="two-col">
+    <form class="panel stack" method="post" action="{{ url_for('web.save_position', ticker=security.ticker) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="panel-head"><div><p class="eyebrow">POSITION</p><h2>Capital currently deployed</h2></div><button class="button primary" type="submit">Save position</button></div>
+      <div class="form-grid two"><label>Shares<input name="shares" inputmode="decimal" value="{{ position.shares if position else 0 }}"></label><label>Average cost<input name="avg_cost" inputmode="decimal" value="{{ position.avg_cost if position else 0 }}"></label></div>
+      <label>Investment state<select name="investment_state">{% for v in ['NO_POSITION','WATCHLIST','EXISTING_LONG','EXISTING_SHORT','LONG_UNDER_REVIEW','SHORT_UNDER_REVIEW','EXITING'] %}<option {% if investment.state==v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+      <label>Portfolio action<input name="action" value="{{ investment.action }}"></label>
+      <label>Review reason<textarea name="review_reason" rows="3">{{ investment.review_reason }}</textarea></label>
+      <label>Private position notes<textarea name="notes" rows="4">{{ position.notes if position else '' }}</textarea></label>
+    </form>
+    <form class="panel stack" method="post" action="{{ url_for('web.save_risk', ticker=security.ticker) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="panel-head"><div><p class="eyebrow">MONEY RISK</p><h2>Sizing & capital rules</h2></div><button class="button primary" type="submit">Save risk plan</button></div>
+      <p class="muted">This is private portfolio management. Thesis invalidation is controlled in Research → Monitoring.</p>
+      <div class="form-grid two"><label>Max loss %<input name="max_loss_pct" inputmode="decimal" value="{{ risk.max_loss_pct or '' }}"></label><label>Max position %<input name="max_position_pct" inputmode="decimal" value="{{ risk.max_position_pct or '' }}"></label></div>
+      <label>Entry conditions<textarea name="entry_conditions" rows="3">{{ risk.entry_conditions }}</textarea></label>
+      <label>Add conditions<textarea name="add_conditions" rows="3">{{ risk.add_conditions }}</textarea></label>
+      <label>Trim conditions<textarea name="trim_conditions" rows="3">{{ risk.trim_conditions }}</textarea></label>
+      <label>Exit conditions<textarea name="exit_conditions" rows="3">{{ risk.exit_conditions }}</textarea></label>
+      <label>Private risk notes<textarea name="notes" rows="4">{{ risk.notes }}</textarea></label>
+    </form>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">RESEARCH INVALIDATION</p><h2>Read-only portfolio reference</h2></div><span class="status-chip">{{ 'LOCKED' if risk.invalidation_locked_at else 'UNLOCKED' }}</span></div>
+    <p>{{ risk.thesis_invalidation or 'No thesis invalidation committed in Research yet.' }}</p>
+  </div>
+</section>
+{% endblock %}

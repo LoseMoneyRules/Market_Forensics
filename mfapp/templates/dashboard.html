@@ -1,13 +1,65 @@
-{% extends "base.html" %}{% block title %}Coverage · Market Forensics{% endblock %}{% block content %}
+{% extends "base.html" %}
+{% block title %}Coverage · Market Forensics{% endblock %}
+{% block content %}
 <section class="page">
-  <div class="page-head split"><div><p class="eyebrow">RESEARCH WORKSPACE</p><h1>Coverage</h1><p>Start from the engine's evidence read, then change assumptions or narrative only where the evidence gives you a reason.</p></div>
-  <form class="add-symbol" method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="ticker" placeholder="Ticker" maxlength="16" required><button class="button positive" type="submit">Add security</button></form></div>
-  <div class="kpi-grid compact"><div class="kpi"><span>Coverage</span><strong>{{ rows|length }}</strong></div><div class="kpi"><span>Buy reads</span><strong class="ok-text">{{ action_counts.BUY }}</strong></div><div class="kpi"><span>Sell reads</span><strong class="danger-text">{{ action_counts.SELL }}</strong></div><div class="kpi"><span>Wait / data review</span><strong>{{ action_counts.WAIT }}</strong></div></div>
+  <div class="page-head split">
+    <div><p class="eyebrow">RESEARCH COMMAND CENTER</p><h1>Coverage</h1><p>Prioritize evidence, finish the research process, validate the model, then manage capital separately in Portfolio.</p></div>
+    <form class="add-symbol" method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="ticker" placeholder="Ticker" maxlength="16" required><button class="button positive" type="submit">Add security</button></form>
+  </div>
+
+  <div class="command-actions">
+    <a class="button" href="{{ url_for('web.discovery') }}">Discover</a>
+    <form method="post" action="{{ url_for('web.queue_global_job', kind='stale') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Refresh stale</button></form>
+    <form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Refresh all</button></form>
+    <a class="button" href="{{ url_for('web.portfolio') }}">Portfolio</a>
+  </div>
+
+  {% set ns = namespace(ready=0, validated=0, review=0) %}
+  {% for row in rows %}
+    {% if row.readiness.ready_to_validate %}{% set ns.ready = ns.ready + 1 %}{% endif %}
+    {% if row.readiness.validation.state == 'VALIDATED' %}{% set ns.validated = ns.validated + 1 %}{% endif %}
+    {% if row.intelligence.stance == 'DATA REVIEW' %}{% set ns.review = ns.review + 1 %}{% endif %}
+  {% endfor %}
+  <div class="kpi-grid compact">
+    <div class="kpi"><span>Coverage</span><strong>{{ rows|length }}</strong></div>
+    <div class="kpi"><span>Ready to validate</span><strong>{{ ns.ready }}</strong></div>
+    <div class="kpi"><span>Validated</span><strong>{{ ns.validated }}</strong></div>
+    <div class="kpi"><span>Data review</span><strong>{{ ns.review }}</strong></div>
+    <div class="kpi"><span>Queued jobs</span><strong>{{ queued_jobs }}</strong></div>
+  </div>
+
   {% if rows %}
-  <div class="table-card"><table class="data-table"><thead><tr><th>Security</th><th>Engine read</th><th>Bias</th><th>Price</th><th>Base value</th><th>Base gap</th><th>Readiness</th><th>Updated</th></tr></thead><tbody>
-  {% for row in rows %}<tr><td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td><td><span class="action-chip {{ row.intelligence.action|lower }}">{{ row.intelligence.action }}</span></td><td>{{ row.intelligence.bias }} · {{ row.intelligence.confidence }}</td><td>{% if row.market %}${{ '%.2f'|format(row.market.price|float) }}{% else %}<span class="muted">—</span>{% endif %}</td><td>{% if row.valuation.base is not none %}${{ '%.2f'|format(row.valuation.base) }}{% else %}<span class="muted">—</span>{% endif %}</td><td>{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td><td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div></td><td>{{ row.coverage.updated_at.strftime('%b %d') }}</td></tr>{% endfor %}
-  </tbody></table></div>
-  {% else %}<div class="empty-state"><h2>No coverage yet</h2><p>Add a validated ticker to create the first research file.</p></div>{% endif %}
-  {% if alerts %}<div class="panel"><div class="panel-head"><h2>Alerts</h2></div>{% for alert in alerts %}<div class="list-row"><div><strong>{{ alert.title }}</strong><p>{{ alert.body }}</p></div><span class="status-chip">{{ alert.severity }}</span></div>{% endfor %}</div>{% endif %}
+  <div class="table-card scroll"><table class="data-table coverage-table">
+    <thead><tr><th>Security</th><th>Research action</th><th>Stance</th><th>Bias / Confidence</th><th>Price</th><th>Bear</th><th>Base</th><th>Bull</th><th>Base gap</th><th>Process</th><th>Validate</th><th>Lens</th><th>Manage</th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td>
+        <td><span class="action-chip {{ row.intelligence.action|lower }}">{{ row.intelligence.action }}</span></td>
+        <td><strong>{{ row.intelligence.stance }}</strong></td>
+        <td>{{ row.intelligence.bias }} · {{ row.intelligence.confidence }}</td>
+        <td>{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
+        <td>{% if row.valuation.bear is not none %}&#36;{{ '%.2f'|format(row.valuation.bear) }}{% else %}—{% endif %}</td>
+        <td>{% if row.valuation.base is not none %}<strong>&#36;{{ '%.2f'|format(row.valuation.base) }}</strong>{% else %}—{% endif %}</td>
+        <td>{% if row.valuation.bull is not none %}&#36;{{ '%.2f'|format(row.valuation.bull) }}{% else %}—{% endif %}</td>
+        <td>{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td>
+        <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
+        <td><span class="status-chip">{{ row.readiness.validation.state }}</span></td>
+        <td><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
+        <td>
+          <form class="coverage-manage-inline" method="post" action="{{ url_for('web.manage_coverage', ticker=row.security.ticker) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input class="priority-input" name="priority" inputmode="numeric" value="{{ row.coverage.priority }}" aria-label="Priority">
+            <button class="button micro" type="submit" name="action" value="save">Save</button>
+            <button class="button micro danger" type="submit" name="action" value="archive" onclick="return confirm('Remove {{ row.security.ticker }} from active Coverage? Research history will be preserved.')">Remove</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<div class="empty-state"><h2>No coverage yet</h2><p>Add a validated ticker or use Discovery to create the first research file.</p></div>{% endif %}
+
+  {% if alerts %}<div class="panel"><div class="panel-head"><h2>Exceptions</h2></div>{% for alert in alerts %}<div class="list-row"><div><strong>{{ alert.title }}</strong><p>{{ alert.body }}</p></div><span class="status-chip">{{ alert.severity }}</span></div>{% endfor %}</div>{% endif %}
 </section>
 {% endblock %}
