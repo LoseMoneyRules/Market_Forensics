@@ -24,7 +24,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     if db_url.startswith("sqlite:///instance/"):
         db_url = "sqlite:///" + str(Path(app.instance_path) / db_url.split("sqlite:///instance/", 1)[1])
     if env == "production" and db_url.startswith("sqlite"):
-        raise RuntimeError("Market Forensics 0.1.1 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
+        raise RuntimeError("Market Forensics 0.1.2 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
 
     app.config.update(
         SECRET_KEY=os.environ.get("MF_SECRET_KEY", "dev-only-change-me"),
@@ -37,7 +37,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.1.1",
+        VERSION="0.1.2",
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
@@ -50,9 +50,10 @@ def create_app(test_config: dict | None = None) -> Flask:
     csrf.init_app(app)
     limiter.init_app(app)
 
-    # Register model metadata. 0.1.1 intentionally does not import the legacy V3 runtime.
+    # Register model metadata. 0.1.2 intentionally does not import the legacy V3 runtime.
     from . import models as account_models  # noqa: F401
     from . import core_models  # noqa: F401
+    from .formatting import format_money, format_number, get_number_format
     from .models import User
     from .trace import bp as trace_bp, install_trace
 
@@ -62,11 +63,13 @@ def create_app(test_config: dict | None = None) -> Flask:
     def load_user():
         g.user = None
         g.view_role = None
+        g.number_format = "AUTO"
         uid = session.get("user_id")
         if uid:
             user = db.session.get(User, uid)
             if user and user.is_active:
                 g.user = user
+                g.number_format = get_number_format(user.id)
                 real_role = str(user.role or "FRIEND").upper()
                 if real_role == "CONTROL":
                     requested = str(session.get("view_as", "CONTROL")).upper()
@@ -77,6 +80,14 @@ def create_app(test_config: dict | None = None) -> Flask:
             else:
                 session.clear()
 
+    @app.template_filter("mf_num")
+    def mf_num(value, decimals=1):
+        return format_number(value, getattr(g, "number_format", "AUTO"), decimals)
+
+    @app.template_filter("mf_money")
+    def mf_money(value, decimals=1):
+        return format_money(value, getattr(g, "number_format", "AUTO"), decimals)
+
     @app.context_processor
     def inject_product_context():
         real_role = str(getattr(getattr(g, "user", None), "role", "") or "").upper()
@@ -84,6 +95,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             "mf_version": app.config["VERSION"],
             "effective_role": getattr(g, "view_role", None),
             "real_role": real_role,
+            "number_format": getattr(g, "number_format", "AUTO"),
             "site_name": app.config["SITE_NAME"],
             "logo_url": app.config.get("LOGO_URL", ""),
         }
@@ -98,9 +110,16 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     if app.config.get("AUTO_MIGRATE"):
         from .schema import bootstrap_schema
+        from .upgrade_012 import queue_existing_coverage_prefill
         with app.app_context():
-            # This runs at WSGI process startup, never on page GET. If it fails, the process
-            # does not become healthy and deployment therefore fails closed.
-            app.config["SCHEMA_BOOTSTRAP_RESULT"] = bootstrap_schema(migrate_legacy=True)
+            # Startup migrations never perform provider/network work. The 0.1.2 hook only
+            # queues local prefill jobs; the normal browser/cron worker executes them later.
+            # If schema bootstrap fails, the process does not become healthy and deploy fails closed.
+            schema_result = bootstrap_schema(migrate_legacy=True)
+            upgrade_result = queue_existing_coverage_prefill()
+            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {
+                "schema": schema_result,
+                "upgrade_0_1_2": upgrade_result,
+            }
 
     return app

@@ -9,6 +9,7 @@ from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
 from .extensions import db
+from .finra import stored_summary as finra_stored_summary
 from .jobs import enqueue_job
 from .data_providers import latest_snapshot, provider_status
 from .models import AuditEvent, Invite, User
@@ -166,7 +167,9 @@ def add_coverage():
     enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
     if provider_status(g.user.id).get("sec"):
         enqueue_job("SEC_INGEST", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=40)
-    flash(f"{ticker} added to Coverage. Refresh jobs queued.", "success")
+    else:
+        enqueue_job("RESEARCH_PREFILL", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=50)
+    flash(f"{ticker} added to Coverage. Market, evidence and auto-draft jobs queued where available.", "success")
     return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
 
 
@@ -195,7 +198,10 @@ def company_section(ticker, section):
             for row in FinancialFlow.query.filter_by(financial_period_id=period.id, calculation_version="0.1.0").all(): flows[row.flow_type] = row.payload
         extra.update({"periods": periods, "selected_year": year, "flows": flows})
     elif section == "management": extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
-    elif section == "tape": extra["tape_events"] = Event.query.filter_by(company_id=company.id).order_by(Event.event_date.desc()).limit(20).all()
+    elif section == "tape":
+        extra["tape_events"] = Event.query.filter_by(company_id=company.id).order_by(Event.event_date.desc()).limit(30).all()
+        extra["finra_summary"] = finra_stored_summary(company.id)
+        extra["finra_api_ready"] = provider_status(g.user.id).get("finra_api", False)
     elif section == "monitoring":
         rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all(); histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}; extra.update({"monitor_rules": rules, "monitor_histories": histories})
     elif section == "journal":

@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import csv
-import io
 import time
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-import requests
-
+from .autofill import prefill_coverage
 from .calculations import CALCULATION_VERSION, build_cash_flow, build_income_statement_flow, calculate_valuation, financial_metrics
 from .core_models import (
     Alert, CalculationRun, Company, Coverage, DataQualityIssue, Event, FinancialFlow,
@@ -18,6 +15,7 @@ from .core_models import (
 )
 from .data_providers import latest_snapshot, provider_status, refresh_security_quote
 from .extensions import db
+from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
@@ -42,12 +40,7 @@ def _active_job_query(job_type: str, *, user_id: int, company_id: int | None = N
 
 def enqueue_job(job_type: str, *, user_id: int, company_id: int | None = None, security_id: int | None = None,
                 payload: dict[str, Any] | None = None, priority: int = 100, run_after: datetime | None = None) -> Job:
-    """Queue one logical job only once while an equivalent job is QUEUED/RUNNING.
-
-    Targeted work is deduplicated by user + job type + security (or company when no
-    security exists). Global work is deduplicated by user + job type. This avoids
-    duplicate clicks without preventing the same refresh type for different tickers.
-    """
+    """Queue one logical job only once while an equivalent job is QUEUED/RUNNING."""
     kind = str(job_type).upper()
     existing = _active_job_query(kind, user_id=user_id, company_id=company_id, security_id=security_id).order_by(Job.id.asc()).first()
     if existing is not None:
@@ -123,7 +116,8 @@ def recalculate_company(company_id: int, coverage_id: int | None = None) -> dict
     previous = None; metrics_out = []; calculated = 0
     for period in periods:
         n = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
-        if not n: continue
+        if not n:
+            continue
         row = _flow_row(period, n)
         enriched = row | {"receivables": n.receivables, "inventory": n.inventory, "payables": n.payables, "cash": n.cash, "debt": n.debt}
         metrics_out.append({"fiscal_year": period.fiscal_year, "metrics": financial_metrics(enriched, previous)})
@@ -155,25 +149,6 @@ def recalculate_company(company_id: int, coverage_id: int | None = None) -> dict
     return {"periods": calculated, "metrics": metrics_out[-5:], "valuation": valuation}
 
 
-def _finra(ticker: str, lookback_days: int = 35) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []; today = date.today()
-    for offset in range(max(1, min(lookback_days, 90)), -1, -1):
-        day = today - timedelta(days=offset)
-        if day.weekday() >= 5: continue
-        try:
-            r = requests.get(f"https://cdn.finra.org/equity/regsho/daily/CNMSshvol{day:%Y%m%d}.txt", timeout=15)
-            if r.status_code != 200: continue
-            for row in csv.DictReader(io.StringIO(r.text), delimiter="|"):
-                if str(row.get("Symbol") or "").upper() != ticker.upper(): continue
-                short = float(row.get("ShortVolume") or 0); exempt = float(row.get("ShortExemptVolume") or 0); total = float(row.get("TotalVolume") or 0)
-                rows.append({"trade_date": day.isoformat(), "short_volume": short, "short_exempt_volume": exempt,
-                             "total_reported_volume": total, "short_pct": ((short + exempt) / total) if total else None,
-                             "market": row.get("Market") or ""})
-        except Exception:
-            continue
-    return rows
-
-
 def _issue(company_id: int, period_id: int, code: str, message: str) -> None:
     row = DataQualityIssue.query.filter_by(company_id=company_id, object_type="financial_period", object_id=str(period_id), code=code, status="OPEN").first()
     if row is None:
@@ -202,7 +177,8 @@ def _deep_validation(company_id: int, coverage_id: int | None) -> dict[str, Any]
             scale = max(Decimal("1"), abs(expected), abs(actual))
             if abs(expected - actual) > scale * Decimal("0.015"):
                 _issue(company_id, period.id, code, f"FY{period.fiscal_year}: {code} failed reconciliation."); issues += 1
-    db.session.commit(); return {"checked_periods": checked, "issues": issues, "recalculation": recalc}
+    db.session.commit()
+    return {"checked_periods": checked, "issues": issues, "recalculation": recalc}
 
 
 def _management_scan(company: Company, security: Security, user_id: int, limit: int = 24) -> dict[str, Any]:
@@ -212,9 +188,11 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
     forms = recent.get("form") or []; accns = recent.get("accessionNumber") or []; filed = recent.get("filingDate") or []; docs = recent.get("primaryDocument") or []
     stored = 0
     for i, form in enumerate(forms[:max(1, min(limit, 100))]):
-        if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}: continue
+        if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}:
+            continue
         accn = str(accns[i] if i < len(accns) else "")
-        if not accn or Source.query.filter_by(company_id=company.id, provider="SEC", accession_no=accn).first(): continue
+        if not accn or Source.query.filter_by(company_id=company.id, provider="SEC", accession_no=accn).first():
+            continue
         doc = str(docs[i] if i < len(docs) else ""); filing_date = str(filed[i] if i < len(filed) else "")
         accession_path = accn.replace("-", "")
         url = f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/{accession_path}/{doc}" if doc else ""
@@ -224,7 +202,8 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
         db.session.add(Event(company_id=company.id, source_id=source.id, event_type=f"SEC_{form.replace(' ','_').replace('-','_')}", title=source.title,
                              event_date=source.published_at or utcnow(), payload={"form": form, "accession_no": accn, "url": url}))
         stored += 1
-    db.session.commit(); return {"filings_stored": stored, "cik": meta["cik"], "forms_scanned": min(len(forms), limit)}
+    db.session.commit()
+    return {"filings_stored": stored, "cik": meta["cik"], "forms_scanned": min(len(forms), limit)}
 
 
 def _discovery(user_id: int) -> dict[str, Any]:
@@ -232,7 +211,8 @@ def _discovery(user_id: int) -> dict[str, Any]:
     ranked = []
     for coverage in Coverage.query.filter_by(user_id=user_id).all():
         security = db.session.get(Security, coverage.security_id)
-        if not security: continue
+        if not security:
+            continue
         ready = readiness(coverage); val = valuation_result(coverage)
         price, base = val.get("current_price"), val.get("base")
         gap = ((float(base) / float(price) - 1) * 100) if base is not None and price not in (None, 0) else None
@@ -246,48 +226,99 @@ def _bulk(user_id: int) -> dict[str, Any]:
     sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
     for coverage in Coverage.query.filter_by(user_id=user_id).all():
         security = db.session.get(Security, coverage.security_id)
-        if not security: continue
+        if not security:
+            continue
         specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70)]
-        if sec_ready: specs.insert(1, ("SEC_INGEST", 40))
+        if sec_ready:
+            specs.insert(1, ("SEC_INGEST", 40))
         for kind, priority in specs:
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id,
                               payload={"coverage_id": coverage.id}, priority=priority)
-            if getattr(job, "_mf_reused", False): reused += 1
-            else: queued += 1
+            if getattr(job, "_mf_reused", False):
+                reused += 1
+            else:
+                queued += 1
     return {"jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
+
+
+def _store_finra_bundle(security: Security, bundle: dict[str, Any]) -> dict[str, Any]:
+    result = {"daily_rows": 0, "short_interest_rows": 0, "threshold_rows": 0, "api_configured": bool(bundle.get("api_configured")), "errors": bundle.get("errors") or []}
+    daily = list(bundle.get("daily_short_volume") or [])
+    if daily:
+        source = Source(company_id=security.company_id, provider="FINRA", source_type="REGSHO_DAILY_SHORT_VOLUME",
+                        title=f"{security.ticker} FINRA daily short-sale volume", url=FINRA_DAILY_CDN + "/", retrieved_at=utcnow(), meta={"rows": len(daily)})
+        db.session.add(source); db.session.flush()
+        db.session.add(Event(company_id=security.company_id, source_id=source.id, event_type="FINRA_SHORT_VOLUME_SERIES",
+                             title=f"{security.ticker} FINRA daily short-volume refresh", event_date=utcnow(), payload={"rows": daily[-60:]}))
+        result["daily_rows"] = len(daily)
+    interest = list(bundle.get("short_interest") or [])
+    if interest:
+        source = Source(company_id=security.company_id, provider="FINRA", source_type="CONSOLIDATED_SHORT_INTEREST",
+                        title=f"{security.ticker} FINRA consolidated short interest", url="https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest", retrieved_at=utcnow(), meta={"rows": len(interest)})
+        db.session.add(source); db.session.flush()
+        db.session.add(Event(company_id=security.company_id, source_id=source.id, event_type="FINRA_SHORT_INTEREST_SERIES",
+                             title=f"{security.ticker} FINRA short-interest refresh", event_date=utcnow(), payload={"rows": interest[-36:]}))
+        result["short_interest_rows"] = len(interest)
+    threshold = list(bundle.get("threshold_history") or [])
+    if threshold:
+        source = Source(company_id=security.company_id, provider="FINRA", source_type="THRESHOLD_HISTORY",
+                        title=f"{security.ticker} FINRA threshold history", url="https://api.finra.org/data/group/otcMarket/name/thresholdList", retrieved_at=utcnow(), meta={"rows": len(threshold)})
+        db.session.add(source); db.session.flush()
+        db.session.add(Event(company_id=security.company_id, source_id=source.id, event_type="FINRA_THRESHOLD_HISTORY",
+                             title=f"{security.ticker} FINRA threshold-list refresh", event_date=utcnow(), payload={"rows": threshold[-120:]}))
+        result["threshold_rows"] = len(threshold)
+    db.session.commit()
+    return result
 
 
 def _execute(job: Job) -> dict[str, Any]:
     kind = job.job_type.upper(); security = db.session.get(Security, job.security_id) if job.security_id else None
+    coverage_id = int((job.payload or {}).get("coverage_id") or 0) or None
     if kind == "MARKET_REFRESH":
-        if not security: raise RuntimeError("Security not found")
+        if not security:
+            raise RuntimeError("Security not found")
         result = refresh_security_quote(security, job.user_id)
-        if not result.ok: raise RuntimeError(result.message or "Market refresh failed")
+        if not result.ok:
+            raise RuntimeError(result.message or "Market refresh failed")
         return {"provider": result.provider, "price": result.price, "as_of": result.as_of.isoformat() if result.as_of else None}
     if kind == "SEC_INGEST":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
-        if not security or not company: raise RuntimeError("Company/security not found")
+        if not security or not company:
+            raise RuntimeError("Company/security not found")
         result = refresh_company_fundamentals(company, security, job.user_id)
-        result["recalculation"] = recalculate_company(company.id, int((job.payload or {}).get("coverage_id") or 0) or None); return result
+        result["recalculation"] = recalculate_company(company.id, coverage_id)
+        if coverage_id:
+            result["autofill"] = prefill_coverage(coverage_id, job.user_id)
+        return result
     if kind == "RECALCULATE":
-        if not job.company_id: raise RuntimeError("company_id is required")
-        return recalculate_company(job.company_id, int((job.payload or {}).get("coverage_id") or 0) or None)
+        if not job.company_id:
+            raise RuntimeError("company_id is required")
+        result = recalculate_company(job.company_id, coverage_id)
+        if coverage_id:
+            result["autofill"] = prefill_coverage(coverage_id, job.user_id)
+        return result
+    if kind == "RESEARCH_PREFILL":
+        if not coverage_id:
+            raise RuntimeError("coverage_id is required")
+        return prefill_coverage(coverage_id, job.user_id)
     if kind == "FINRA_IMPORT":
-        if not security: raise RuntimeError("Security not found")
-        rows = _finra(security.ticker, int((job.payload or {}).get("lookback_days") or 35))
-        source = Source(company_id=security.company_id, provider="FINRA", source_type="REGSHO_DAILY_SHORT_VOLUME", title=f"{security.ticker} FINRA daily short volume",
-                        url="https://cdn.finra.org/equity/regsho/daily/", retrieved_at=utcnow(), meta={"rows": len(rows)})
-        db.session.add(source); db.session.flush(); db.session.add(Event(company_id=security.company_id, source_id=source.id, event_type="FINRA_SHORT_VOLUME_SERIES",
-            title=f"{security.ticker} FINRA short-volume refresh", event_date=utcnow(), payload={"rows": rows[-30:]})); db.session.commit(); return {"rows": len(rows), "source_id": source.id}
+        if not security:
+            raise RuntimeError("Security not found")
+        bundle = refresh_finra_bundle(security.ticker, job.user_id, int((job.payload or {}).get("lookback_days") or 35))
+        return _store_finra_bundle(security, bundle)
     if kind == "DEEP_VALIDATION":
-        if not job.company_id: raise RuntimeError("company_id is required")
-        return _deep_validation(job.company_id, int((job.payload or {}).get("coverage_id") or 0) or None)
+        if not job.company_id:
+            raise RuntimeError("company_id is required")
+        return _deep_validation(job.company_id, coverage_id)
     if kind == "MANAGEMENT_SCAN":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
-        if not security or not company: raise RuntimeError("Company/security not found")
+        if not security or not company:
+            raise RuntimeError("Company/security not found")
         return _management_scan(company, security, job.user_id, int((job.payload or {}).get("limit") or 24))
-    if kind == "DISCOVERY_SCAN": return _discovery(job.user_id)
-    if kind == "BULK_REFRESH": return _bulk(job.user_id)
+    if kind == "DISCOVERY_SCAN":
+        return _discovery(job.user_id)
+    if kind == "BULK_REFRESH":
+        return _bulk(job.user_id)
     raise RuntimeError(f"Unknown job type: {kind}")
 
 
@@ -304,10 +335,12 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
         if getattr(getattr(bind, "dialect", None), "name", "") in {"mysql", "mariadb", "postgresql"}:
             query = query.with_for_update(skip_locked=True)
         job = query.first()
-        if job is None: break
+        if job is None:
+            break
         job.status = "RUNNING"; job.locked_at = utcnow(); job.started_at = utcnow(); job.attempts += 1; db.session.commit()
         refresh = RefreshRun(company_id=job.company_id, security_id=job.security_id, job_id=job.id, refresh_type=job.job_type, status="RUNNING", started_at=job.started_at)
-        calc = CalculationRun(coverage_id=int((job.payload or {}).get("coverage_id") or 0) or None, calculation_type=job.job_type, calculation_version=CALCULATION_VERSION,
+        calc = CalculationRun(coverage_id=coverage_id if (coverage_id := int((job.payload or {}).get("coverage_id") or 0) or None) else None,
+                              calculation_type=job.job_type, calculation_version=CALCULATION_VERSION,
                               inputs={"job_id": job.id, "payload": job.payload or {}}, status="RUNNING", started_at=job.started_at)
         db.session.add_all([refresh, calc]); db.session.commit(); started = time.perf_counter()
         try:
@@ -317,7 +350,8 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
             error_id = uuid.uuid4().hex[:12]; finished = utcnow(); job.error_message = f"{type(exc).__name__}: {exc}"[:4000]; job.finished_at = finished
             if job.attempts < job.max_attempts:
                 job.status = "QUEUED"; job.run_after = utcnow() + timedelta(minutes=min(60, 5 * job.attempts)); job.locked_at = None
-            else: job.status = "FAILED"
+            else:
+                job.status = "FAILED"
             refresh.status = "FAILED"; refresh.error_id = error_id; refresh.summary = {"error": job.error_message}; refresh.finished_at = finished
             calc.status = "FAILED"; calc.error_id = error_id; calc.outputs = {"error": job.error_message}; calc.finished_at = finished
         elapsed = (time.perf_counter() - started) * 1000; calc.elapsed_ms = Decimal(str(round(elapsed, 3))); db.session.commit()

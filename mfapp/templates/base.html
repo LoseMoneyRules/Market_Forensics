@@ -10,6 +10,7 @@
   <title>{% block title %}Market Forensics{% endblock %}</title>
   <link rel="icon" href="{{ url_for('static', filename='img/mark.svg') }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/v012.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 {% if g.user %}
@@ -19,7 +20,16 @@
     <span><strong>Market Forensics</strong><small>{{ mf_version }}</small></span>
   </a>
   <div class="top-actions">
-    {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}<span class="status-chip" id="mf-worker-chip" title="CONTROL browser worker">Worker · checking</span>{% endif %}
+    {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}
+    <form class="number-format-form" method="post" action="{{ url_for('web.save_display_settings') }}" title="Financial table number display">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <span>Numbers</span>
+      <select name="number_format" onchange="this.form.submit()" aria-label="Number display">
+        {% for mode in ['AUTO','FULL','K','M','B','T'] %}<option value="{{ mode }}" {% if number_format == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}
+      </select>
+    </form>
+    <span class="status-chip" id="mf-worker-chip" title="CONTROL browser worker">Worker · checking</span>
+    {% endif %}
     {% if real_role == 'CONTROL' %}
     <nav class="view-switch" aria-label="Preview access level">
       <span>View as</span>

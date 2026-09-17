@@ -4,8 +4,9 @@ from flask import abort, flash, g, jsonify, redirect, render_template, request, 
 
 from .access import audit, effective_role, require_control_view
 from .core_models import Company, Coverage, InvestmentState, Job, Position, Publication, RefreshRun, Security, Snapshot
-from .data_providers import latest_snapshot, provider_status, set_secret
+from .data_providers import latest_snapshot, provider_overview, provider_status, set_secret
 from .extensions import db
+from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
@@ -31,7 +32,7 @@ def _job_flash(job: Job) -> str:
 @role_required("CONTROL")
 def snapshot_company(ticker):
     require_control_view(); ctx = _ctx(ticker); snapshot = create_snapshot(ctx["coverage"], g.user.id, snapshot_type="DECISION")
-    audit("snapshot.create", "snapshot", snapshot.id, {"coverage_id": ctx["coverage"].id}); db.session.commit(); flash(f"Snapshot v{snapshot.version} created.", "success")
+    audit("snapshot.create", "snapshot", snapshot.id, {"coverage_id": ctx["coverage"].id}); db.session.commit(); flash(f"Snapshot v{snapshot.version} created. Review it before publishing.", "success")
     return redirect(url_for("web.preview_snapshot", ticker=ticker.upper(), snapshot_id=snapshot.id))
 
 
@@ -100,9 +101,17 @@ def portfolio():
 @bp.post("/company/<ticker>/refresh/<kind>")
 @role_required("CONTROL")
 def queue_refresh(ticker, kind):
-    require_control_view(); ctx = _ctx(ticker); mapping = {"market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE", "finra": "FINRA_IMPORT", "validate": "DEEP_VALIDATION", "management": "MANAGEMENT_SCAN"}; job_type = mapping.get(kind)
+    require_control_view(); ctx = _ctx(ticker)
+    mapping = {
+        "market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE",
+        "prefill": "RESEARCH_PREFILL", "finra": "FINRA_IMPORT", "validate": "DEEP_VALIDATION",
+        "management": "MANAGEMENT_SCAN",
+    }
+    job_type = mapping.get(kind)
     if not job_type: abort(404)
-    job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10 if kind == "market" else 50)
+    priorities = {"market": 10, "sec": 30, "recalculate": 45, "prefill": 50, "finra": 60, "validate": 70, "management": 80}
+    job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
+                      payload={"coverage_id": ctx["coverage"].id}, priority=priorities.get(kind, 50))
     audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
@@ -136,21 +145,46 @@ def pump_jobs():
 @bp.get("/settings")
 @login_required
 def settings():
-    require_control_view(); jobs = Job.query.filter_by(user_id=g.user.id).order_by(Job.created_at.desc()).limit(50).all(); refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
-    return render_template("settings.html", providers=provider_status(g.user.id), jobs=jobs, refreshes=refreshes, queue_status=_queue_status(g.user.id))
+    require_control_view()
+    jobs = Job.query.filter_by(user_id=g.user.id).order_by(Job.created_at.desc()).limit(50).all()
+    refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
+    return render_template(
+        "settings.html",
+        providers=provider_status(g.user.id),
+        provider_catalog=provider_overview(g.user.id),
+        jobs=jobs,
+        refreshes=refreshes,
+        queue_status=_queue_status(g.user.id),
+        number_formats=NUMBER_FORMATS,
+        number_format=get_number_format(g.user.id),
+    )
 
 
 @bp.post("/settings/providers")
 @role_required("CONTROL")
 def save_provider_settings():
     require_control_view()
-    for name in ("alpaca_key", "alpaca_secret", "tiingo_token", "alpha_vantage_key", "massive_key", "sec_user_agent"):
-        if request.form.get(f"remove_{name}") == "1": set_secret(g.user.id, name, "")
+    for name in (
+        "alpaca_key", "alpaca_secret", "tiingo_token", "alpha_vantage_key", "massive_key",
+        "sec_user_agent", "finra_client_id", "finra_client_secret",
+    ):
+        if request.form.get(f"remove_{name}") == "1":
+            set_secret(g.user.id, name, "")
         else:
             value = str(request.form.get(name) or "").strip()
             if value: set_secret(g.user.id, name, value)
     audit("settings.providers", "user", g.user.id, {"configured": provider_status(g.user.id)}); db.session.commit(); flash("Provider settings saved. Credentials remain encrypted server-side.", "success")
     return redirect(url_for("web.settings"))
+
+
+@bp.post("/settings/display")
+@role_required("CONTROL")
+def save_display_settings():
+    require_control_view()
+    mode = set_number_format(g.user.id, str(request.form.get("number_format") or "AUTO"))
+    audit("settings.display", "user", g.user.id, {"number_format": mode}); db.session.commit()
+    flash(f"Number display set to {mode}.", "success")
+    return redirect(request.referrer or url_for("web.settings"))
 
 
 @bp.get("/control")
