@@ -11,8 +11,6 @@ from .core_models import (
     Alert,
     Coverage,
     DataQualityIssue,
-    FinancialPeriod,
-    MarketSnapshot,
     MonitoringHistory,
     MonitoringRule,
     Publication,
@@ -54,6 +52,13 @@ def _clean_ints(values) -> list[int]:
 
 def _clean_system(values) -> list[str]:
     return sorted({str(value) for value in (values or []) if str(value) in SYSTEM_ALERTS})
+
+
+def _active_rule_ids(coverage_id: int) -> set[int]:
+    return {
+        row.id
+        for row in MonitoringRule.query.filter_by(coverage_id=coverage_id, is_active=True).all()
+    }
 
 
 def alert_email(user_id: int) -> str:
@@ -106,12 +111,24 @@ def save_alert_subscription(
     in_app_enabled: bool,
     actor_user_id: int,
 ) -> dict[str, Any]:
-    catalog = alert_catalog(coverage_id)
-    clean_rules = sorted(set(_clean_ints(rule_ids)).intersection(catalog["rule_ids"]))
-    clean_system = sorted(set(_clean_system(system_alerts)).intersection(catalog["system_alerts"]))
+    coverage = db.session.get(Coverage, coverage_id)
+    if not coverage:
+        raise ValueError("Coverage not found.")
+
+    requested_rules = set(_clean_ints(rule_ids))
+    requested_system = set(_clean_system(system_alerts))
+    if user_id == coverage.user_id:
+        # CONTROL can subscribe to private rules without exposing them to members.
+        allowed_rules = _active_rule_ids(coverage_id)
+        allowed_system = set(SYSTEM_ALERTS)
+    else:
+        catalog = alert_catalog(coverage_id)
+        allowed_rules = set(catalog["rule_ids"])
+        allowed_system = set(catalog["system_alerts"])
+
     value = {
-        "rule_ids": clean_rules,
-        "system_alerts": clean_system,
+        "rule_ids": sorted(requested_rules.intersection(allowed_rules)),
+        "system_alerts": sorted(requested_system.intersection(allowed_system)),
         "email_enabled": bool(email_enabled),
         "in_app_enabled": bool(in_app_enabled),
     }
@@ -138,13 +155,9 @@ def alert_catalog(coverage_id: int) -> dict[str, Any]:
         return {"rule_ids": [], "system_alerts": []}
     row = UserPreference.query.filter_by(user_id=coverage.user_id, key=_catalog_key(coverage_id)).first()
     value = dict(row.value or {}) if row and isinstance(row.value, dict) else {}
-    active_rule_ids = {
-        r.id for r in MonitoringRule.query.filter_by(coverage_id=coverage_id, is_active=True).all()
-    }
-    # Built-in engine alerts are available by default. Custom rules stay private until CONTROL exposes them.
     systems = value.get("system_alerts") if "system_alerts" in value else list(SYSTEM_ALERTS)
     return {
-        "rule_ids": sorted(set(_clean_ints(value.get("rule_ids"))).intersection(active_rule_ids)),
+        "rule_ids": sorted(set(_clean_ints(value.get("rule_ids"))).intersection(_active_rule_ids(coverage_id))),
         "system_alerts": _clean_system(systems),
     }
 
@@ -159,11 +172,8 @@ def save_alert_catalog(
     coverage = db.session.get(Coverage, coverage_id)
     if not coverage or coverage.user_id != actor_user_id:
         raise PermissionError("Only the CONTROL owner can define the alert catalog.")
-    active_rule_ids = {
-        r.id for r in MonitoringRule.query.filter_by(coverage_id=coverage_id, is_active=True).all()
-    }
     value = {
-        "rule_ids": sorted(set(_clean_ints(rule_ids)).intersection(active_rule_ids)),
+        "rule_ids": sorted(set(_clean_ints(rule_ids)).intersection(_active_rule_ids(coverage_id))),
         "system_alerts": _clean_system(system_alerts),
     }
     row = UserPreference.query.filter_by(user_id=coverage.user_id, key=_catalog_key(coverage_id)).first()
@@ -187,7 +197,9 @@ def _publication_access(user: User, coverage: Coverage) -> bool:
     if str(user.role or "").upper() == "CONTROL" and coverage.user_id == user.id:
         return True
     role = str(user.role or "FRIEND").upper()
-    rows = Publication.query.filter_by(coverage_id=coverage.id).filter(Publication.revoked_at.is_(None)).order_by(Publication.published_at.desc()).all()
+    rows = Publication.query.filter_by(coverage_id=coverage.id).filter(
+        Publication.revoked_at.is_(None)
+    ).order_by(Publication.published_at.desc()).all()
     return any(can_view_publication(row, role) for row in rows)
 
 
@@ -198,10 +210,16 @@ def subscription_catalog_for_user(user_id: int, coverage_id: int) -> dict[str, A
         raise PermissionError("Published research access is required for these alerts.")
     catalog = alert_catalog(coverage_id)
     subscription = alert_subscription(user_id, coverage_id)
+    if user_id == coverage.user_id:
+        visible_rule_ids = _active_rule_ids(coverage_id)
+        visible_system = list(SYSTEM_ALERTS)
+    else:
+        visible_rule_ids = set(catalog["rule_ids"])
+        visible_system = catalog["system_alerts"]
     rules = MonitoringRule.query.filter(
         MonitoringRule.coverage_id == coverage_id,
         MonitoringRule.is_active.is_(True),
-        MonitoringRule.id.in_(catalog["rule_ids"] or [-1]),
+        MonitoringRule.id.in_(visible_rule_ids or [-1]),
     ).order_by(MonitoringRule.id.asc()).all()
     return {
         "coverage_id": coverage_id,
@@ -214,6 +232,7 @@ def subscription_catalog_for_user(user_id: int, coverage_id: int) -> dict[str, A
                 "severity": row.severity,
                 "trigger": _rule_trigger(row),
                 "selected": row.id in subscription["rule_ids"],
+                "member_available": row.id in catalog["rule_ids"],
             }
             for row in rules
         ],
@@ -222,8 +241,9 @@ def subscription_catalog_for_user(user_id: int, coverage_id: int) -> dict[str, A
                 "key": key,
                 "label": SYSTEM_ALERTS[key],
                 "selected": key in subscription["system_alerts"],
+                "member_available": key in catalog["system_alerts"],
             }
-            for key in catalog["system_alerts"]
+            for key in visible_system
         ],
         "smtp_ready": _smtp_ready(),
     }
@@ -378,11 +398,11 @@ def _emit_trigger(
         subscription = alert_subscription(user.id, coverage.id)
         selected = _trigger_selected(subscription, rule_id, trigger_kind)
         is_owner = user.id == coverage.user_id
-        # CONTROL always retains an auditable in-app trigger record; members receive only opted-in catalog alerts.
         if not is_owner and not selected:
             continue
         offered = (rule_id in catalog["rule_ids"]) if rule_id is not None else (trigger_kind in catalog["system_alerts"])
-        email_enabled = bool(selected and offered and subscription["email_enabled"])
+        # CONTROL subscriptions are independent of the member-facing catalog.
+        email_enabled = bool(selected and subscription["email_enabled"] and (is_owner or offered))
         in_app_enabled = bool(subscription["in_app_enabled"] if selected else is_owner)
         out.append(_emit_recipient(
             user=user,
