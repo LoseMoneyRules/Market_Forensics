@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Trace · Market Forensics{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <div class="eyebrow">CONTROL · DIAGNOSTICS</div>
+    <h1>0.0.4 Trace</h1>
+    <p>Request timing and unhandled exceptions only. Cookies, headers, form values and query strings are not recorded.</p>
+  </div>
+  <div class="version-chip">{{ trace_build }}</div>
+</section>
+
+<section class="panel compact-panel">
+  <div class="panel-head">
+    <div><div class="panel-label">TRACE STATUS</div><h2>Production request log</h2></div>
+    <form method="post" action="{{ url_for('trace.clear') }}" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="secondary" type="submit">Clear log</button>
+    </form>
+  </div>
+  <p class="micro left">File: {{ trace_path }}</p>
+  <p class="micro left">If a browser shows a 500 but there is no matching REQUEST_START or UNHANDLED_EXCEPTION here, the failure happened before Flask handled the request (for example Passenger/WSGI level).</p>
+</section>
+
+<section class="panel">
+  <div class="panel-label">LATEST EVENTS</div>
+  {% if events %}
+    <div class="table-wrap">
+      <table class="data-table full-table">
+        <thead><tr><th>UTC</th><th>Kind</th><th>Trace</th><th>PID</th><th>Request</th><th>Status / Time</th><th>Details</th></tr></thead>
+        <tbody>
+        {% for e in events %}
+          <tr>
+            <td><small>{{ e.get('ts','') }}</small></td>
+            <td><strong>{{ e.get('kind','') }}</strong></td>
+            <td><code>{{ e.get('trace_id') or '—' }}</code></td>
+            <td>{{ e.get('pid','—') }}</td>
+            <td><strong>{{ e.get('method','') }}</strong> {{ e.get('path','') }}<small>{{ e.get('endpoint') or '' }}</small></td>
+            <td>{% if e.get('status') is not none %}{{ e.get('status') }}{% else %}—{% endif %}<small>{% if e.get('elapsed_ms') is not none %}{{ e.get('elapsed_ms') }} ms{% endif %}</small></td>
+            <td>
+              {% if e.get('exception_type') %}<strong>{{ e.get('exception_type') }}</strong>: {{ e.get('message','') }}{% elif e.get('build') %}{{ e.get('build') }}{% elif e.get('role') %}role={{ e.get('role') }}{% elif e.get('message') %}{{ e.get('message') }}{% else %}—{% endif %}
+              {% if e.get('traceback') %}<details><summary>Traceback</summary><pre style="white-space:pre-wrap;overflow:auto;max-width:900px">{{ e.get('traceback') }}</pre></details>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state"><h3>No trace events yet</h3><p>Navigate through the app and reproduce the first-load error, then return here.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

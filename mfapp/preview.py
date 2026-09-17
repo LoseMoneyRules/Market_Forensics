@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from flask import Blueprint, abort, g, make_response, redirect, request, session, url_for
 
+from .access import audit
 from .extensions import db
-from .models import AuditEvent
 from .security import login_required
 
 bp = Blueprint("preview", __name__)
@@ -20,13 +20,7 @@ def _control() -> None:
 def _set(role: str):
     session["view_as"] = role
     session.modified = True
-    db.session.add(AuditEvent(
-        actor_user_id=g.user.id,
-        action="control.preview_role",
-        object_type="user",
-        object_id=str(g.user.id),
-        meta={"view_as": role, "release": "0.0.4"},
-    ))
+    audit("control.preview_role", "user", g.user.id, {"view_as": role, "release": "0.1.0"})
     db.session.commit()
 
 
@@ -49,9 +43,8 @@ def set_preview(role):
 @bp.get("/control-mode")
 @login_required
 def control_mode():
-    """Permanent fail-safe: a real CONTROL can always leave a simulated view."""
     _control()
     _set("CONTROL")
-    response = make_response(redirect(url_for("full312.workspace")))
+    response = make_response(redirect(url_for("web.dashboard")))
     response.headers["Cache-Control"] = "no-store"
     return response

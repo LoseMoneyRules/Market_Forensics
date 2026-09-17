@@ -1,66 +1,13 @@
-{% extends "base.html" %}
-{% block content %}
-{% if public_mode %}
-<section class="page-head">
-  <div><div class="eyebrow">{{ effective_role }} ACCESS</div><h1>Research coverage</h1><p>Published Market Forensics research. What you see here is separated from private CONTROL work and personal portfolio data.</p></div>
-  <div class="version-chip">v{{ mf_version }}</div>
+{% extends "base.html" %}{% block title %}Coverage · Market Forensics{% endblock %}{% block content %}
+<section class="page">
+  <div class="page-head split"><div><p class="eyebrow">CONTROL WORKSPACE</p><h1>Coverage</h1><p>Research state and investment state stay separate by design.</p></div>
+  <form class="add-symbol" method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="ticker" placeholder="Ticker" maxlength="16" required><button class="button primary" type="submit">Add security</button></form></div>
+  <div class="kpi-grid compact"><div class="kpi"><span>Coverage</span><strong>{{ rows|length }}</strong></div><div class="kpi"><span>Queued / running jobs</span><strong>{{ queued_jobs }}</strong></div><div class="kpi"><span>Unread alerts</span><strong>{{ alerts|length }}</strong></div><div class="kpi"><span>System</span><strong class="ok-text">Web-native</strong></div></div>
+  {% if rows %}
+  <div class="table-card"><table class="data-table"><thead><tr><th>Security</th><th>Research</th><th>Investment</th><th>Price</th><th>Base value</th><th>Readiness</th><th>Updated</th></tr></thead><tbody>
+  {% for row in rows %}<tr><td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td><td><span class="status-chip">{{ row.coverage.research_state }}</span></td><td>{{ row.investment.state if row.investment else 'NO_POSITION' }}</td><td>{% if row.market %}${{ '%.2f'|format(row.market.price|float) }}{% else %}<span class="muted">—</span>{% endif %}</td><td>{% if row.valuation.base is not none %}${{ '%.2f'|format(row.valuation.base) }}{% else %}<span class="muted">—</span>{% endif %}</td><td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div></td><td>{{ row.coverage.updated_at.strftime('%b %d') }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty-state"><h2>No coverage yet</h2><p>Add a validated ticker to create the first research file.</p></div>{% endif %}
+  {% if alerts %}<div class="panel"><div class="panel-head"><h2>Alerts</h2></div>{% for alert in alerts %}<div class="list-row"><div><strong>{{ alert.title }}</strong><p>{{ alert.body }}</p></div><span class="status-chip">{{ alert.severity }}</span></div>{% endfor %}</div>{% endif %}
 </section>
-<section class="metric-row">
-  <div class="metric"><span>Published files</span><strong>{{ publications|length }}</strong></div>
-  <div class="metric"><span>Access</span><strong>{{ effective_role }}</strong></div>
-  <div class="metric"><span>Security</span><strong>2FA</strong></div>
-</section>
-<section>
-  <div class="section-title"><div><div class="section-kicker">COVERAGE</div><h2>Current research</h2></div><span>Immutable published snapshots</span></div>
-  {% if publications %}
-  <div class="company-grid">
-    {% for p in publications %}
-    <a class="company-card" href="{{ url_for('web.company', ticker=p.company.ticker) }}">
-      <div class="company-top"><div><span class="ticker">{{ p.company.ticker }}</span><span class="company-name">{{ p.company.name }}</span></div><span class="state-chip">{{ p.payload.get('decision','RESEARCH') }}</span></div>
-      <p>{{ p.company.summary }}</p>
-      <div class="lens-strip"><span>{{ p.payload.get('business_label','—') }}</span><span>{{ p.payload.get('value_label','—') }}</span><span>{{ p.payload.get('path_label','—') }}</span></div>
-      <div class="card-foot"><span>{{ p.visibility }}+</span><span>v{{ p.version }} · {{ p.model_version }}</span></div>
-    </a>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="empty"><h3>No research is published for this access level yet.</h3><p>Published coverage will appear here when CONTROL releases a versioned snapshot.</p></div>
-  {% endif %}
-</section>
-{% else %}
-<section class="page-head">
-  <div><div class="eyebrow">CONTROL · PRIVATE</div><h1>Decision cockpit</h1><p>Start with the decision, then challenge it with evidence. Portfolio, research state and published research remain separate.</p></div>
-  <div class="version-chip">v{{ mf_version }}</div>
-</section>
-<section class="metric-row four">
-  <div class="metric"><span>Research universe</span><strong>{{ companies|length }}</strong><small>companies</small></div>
-  <div class="metric"><span>Published</span><strong>{{ published_count }}</strong><small>current snapshots</small></div>
-  <div class="metric"><span>Portfolio</span><strong>{{ position_count }}</strong><small>positions</small></div>
-  <div class="metric"><span>Monitoring</span><strong>{{ monitor_count }}</strong><small>active KPIs</small></div>
-</section>
-<section class="quick-actions">
-  <a class="action-card" href="{{ url_for('web.discover') }}"><span>01</span><div><strong>Discover</strong><small>Add or review names worth deeper work.</small></div></a>
-  <a class="action-card" href="{{ url_for('web.decision_queue') }}"><span>02</span><div><strong>Decision Queue</strong><small>Everything that needs a decision.</small></div></a>
-  <a class="action-card" href="{{ url_for('web.portfolio') }}"><span>03</span><div><strong>Portfolio</strong><small>Holdings exist independently of research.</small></div></a>
-</section>
-<section>
-  <div class="section-title"><div><div class="section-kicker">ACTIVE WORK</div><h2>Decision Queue</h2></div><a class="text-link" href="{{ url_for('web.decision_queue') }}">Open full queue →</a></div>
-  {% if queue %}
-  <div class="queue-list">
-    {% for row in queue %}
-    <a class="queue-row" href="{{ url_for('web.decide', ticker=row.company.ticker) }}">
-      <div class="queue-name"><strong>{{ row.company.ticker }}</strong><span>{{ row.company.name }}</span></div>
-      <div class="queue-price"><small>PRICE</small><strong>{% if row.snapshot %}${{ '%.2f'|format(row.snapshot.price) }}{% else %}—{% endif %}</strong></div>
-      <div><small>DECISION</small><span class="decision-chip decision-{{ row.decision.decision|lower|replace(' ','-')|replace('/','-') }}">{{ row.decision.decision }}</span></div>
-      <div><small>VALUE</small><strong>{{ row.decision.value }}</strong></div>
-      <div><small>READINESS</small><strong>{{ row.decision.readiness_count }}/{{ row.decision.readiness_total }}</strong></div>
-      <div class="queue-arrow">→</div>
-    </a>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="empty"><h3>Your research universe is empty.</h3><p>Add the first ticker from Discover. The symbol is validated before anything is saved.</p><a class="primary button-link" href="{{ url_for('web.discover') }}">Open Discover</a></div>
-  {% endif %}
-</section>
-{% endif %}
 {% endblock %}

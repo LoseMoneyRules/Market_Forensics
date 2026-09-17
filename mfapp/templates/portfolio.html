@@ -1,21 +1,3 @@
-{% extends "base.html" %}
-{% block title %}Portfolio · Market Forensics{% endblock %}
-{% block content %}
-<section class="page-head"><div><div class="eyebrow">PORTFOLIO · CONTROL ONLY</div><h1>Real holdings ledger</h1><p>Positions can exist before research. Research does not create positions, and published research never exposes your personal holdings or exact sizing.</p></div><div class="version-chip">{{ rows|length }} POSITIONS</div></section>
-<section class="split-layout portfolio-layout">
-  <article class="panel sticky-panel">
-    <div class="panel-label">ADD / UPDATE POSITION</div><h2>Position</h2>
-    <form method="post" action="{{ url_for('web.save_position') }}" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Ticker<input name="ticker" placeholder="NKE" required></label><label>Shares <span class="optional">negative = short</span><input type="number" step="0.000001" name="shares" required></label><label>Average cost<input type="number" step="0.0001" min="0" name="avg_cost" required></label><label>Notes<textarea name="notes" rows="4"></textarea></label><button class="primary" type="submit">Save position</button></form>
-    <div class="info-box"><strong>Portfolio first is allowed.</strong><span>If the ticker is not yet researched, Market Forensics creates a research shell after validating the symbol.</span></div>
-  </article>
-  <section class="wide-column">
-    {% if rows %}<div class="portfolio-stack">{% for row in rows %}<article class="position-card">
-      <div class="position-head"><div><strong>{{ row.company.ticker }}</strong><span>{{ row.company.name }}</span></div><span class="decision-chip">{{ row.decision.position_action }}</span></div>
-      <div class="position-metrics"><div><small>SHARES</small><strong>{{ row.position.shares }}</strong></div><div><small>AVG COST</small><strong>${{ '%.2f'|format(row.position.avg_cost) }}</strong></div><div><small>PRICE</small><strong>{% if row.snapshot %}${{ '%.2f'|format(row.snapshot.price) }}{% else %}—{% endif %}</strong></div><div><small>MARKET VALUE</small><strong>{% if row.market_value is not none %}${{ '{:,.0f}'.format(row.market_value) }}{% else %}—{% endif %}</strong></div><div><small>UNREALIZED</small><strong>{% if row.pnl is not none %}${{ '{:+,.0f}'.format(row.pnl) }}{% else %}—{% endif %}</strong></div></div>
-      {% if row.position.notes %}<p>{{ row.position.notes }}</p>{% endif %}
-      <div class="lens-strip"><span>{{ row.decision.business }}</span><span>{{ row.decision.value }}</span><span>{{ row.decision.risk }}</span></div>
-      <div class="card-actions"><a class="primary button-link" href="{{ url_for('web.decide', ticker=row.company.ticker) }}">Open Decide</a><a class="secondary button-link" href="{{ url_for('web.monitor', ticker=row.company.ticker) }}">Monitor</a></div>
-    </article>{% endfor %}</div>{% else %}<div class="empty"><h3>No positions recorded.</h3><p>Add a real holding here. It will appear in the Decision Queue even if research has not started.</p></div>{% endif %}
-  </section>
-</section>
+{% extends "base.html" %}{% block title %}Portfolio · Market Forensics{% endblock %}{% block content %}
+<section class="page"><div class="page-head"><p class="eyebrow">PRIVATE</p><h1>Portfolio</h1><p>Investment state is private and never enters published research.</p></div><div class="table-card"><table class="data-table numeric"><thead><tr><th>Security</th><th>State</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>P/L</th></tr></thead><tbody>{% for row in rows %}<tr><td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='position') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td><td>{{ row.investment.state if row.investment else 'NO_POSITION' }}</td><td>{{ '{:,.3f}'.format(row.position.shares|float) }}</td><td>${{ '{:,.2f}'.format(row.position.avg_cost|float) }}</td><td>{% if row.market %}${{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td><td>{% if row.market_value is not none %}${{ '{:,.2f}'.format(row.market_value) }}{% else %}—{% endif %}</td><td class="{{ 'ok-text' if row.pnl is not none and row.pnl >= 0 else 'danger-text' if row.pnl is not none else '' }}">{% if row.pnl is not none %}${{ '{:,.2f}'.format(row.pnl) }}{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="7" class="empty-cell">No positions stored.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}

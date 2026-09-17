@@ -1,5 +1,2 @@
 -r requirements.txt
 pytest>=8,<9
-streamlit>=1.63,<2
-plotly>=6,<7
-matplotlib>=3.9,<4

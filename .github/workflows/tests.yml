@@ -1,44 +1,29 @@
-name: Market Forensics tests
+name: Market Forensics 0.1.0 tests
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: 'pip'
-      - name: Install full test runtime
+      - name: Install lightweight runtime and tests
         run: pip install -r requirements-dev.txt
-      - name: Materialize verified V3.1.12 FULL
-        run: python tools/materialize_v312.py
-      - name: Verify exact engine
-        run: python tools/verify_v312.py
-      - name: Original V3.1.12 self test
-        run: python .v312_reference/SELF_TEST.py
       - name: Syntax check
-        run: python -m compileall -q app.py manage.py mfapp market_forensics tests tools
-      - name: Web beta tests
+        run: python -m compileall -q app.py manage.py mfapp tests
+      - name: 0.1.0 test suite
+        env:
+          MF_SECRET_KEY: test-secret-key
+          MF_ENCRYPTION_KEY: ${{ secrets.MF_TEST_ENCRYPTION_KEY }}
         run: |
-          export MF_SECRET_KEY="test-secret-key"
-          export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+          if [ -z "${MF_ENCRYPTION_KEY:-}" ]; then export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"; fi
           pytest -q
-      - name: Hosted dependency bundle smoke test
-        run: |
-          set -euo pipefail
-          rm -rf _vendor
-          python -m pip install --disable-pip-version-check --no-compile --target _vendor -r requirements-vendor.txt
-          python -S - <<'PY'
-          import sys
-          sys.path.insert(0, '_vendor')
-          import numpy, pandas, docx, reportlab, PIL
-          print('Hosted dependency bundle PASS', numpy.__version__, pandas.__version__)
-          PY
