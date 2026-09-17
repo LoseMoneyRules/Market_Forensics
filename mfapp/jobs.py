@@ -20,16 +20,92 @@ from .data_providers import latest_snapshot, provider_status, refresh_security_q
 from .extensions import db
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 
+ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _active_job_query(job_type: str, *, user_id: int, company_id: int | None = None, security_id: int | None = None):
+    query = Job.query.filter(
+        Job.user_id == user_id,
+        Job.job_type == str(job_type).upper(),
+        Job.status.in_(ACTIVE_JOB_STATUSES),
+    )
+    if security_id is not None:
+        return query.filter(Job.security_id == security_id)
+    if company_id is not None:
+        return query.filter(Job.security_id.is_(None), Job.company_id == company_id)
+    return query.filter(Job.security_id.is_(None), Job.company_id.is_(None))
+
+
 def enqueue_job(job_type: str, *, user_id: int, company_id: int | None = None, security_id: int | None = None,
                 payload: dict[str, Any] | None = None, priority: int = 100, run_after: datetime | None = None) -> Job:
-    job = Job(job_type=str(job_type).upper(), status="QUEUED", priority=priority, user_id=user_id,
+    """Queue one logical job only once while an equivalent job is QUEUED/RUNNING.
+
+    Targeted work is deduplicated by user + job type + security (or company when no
+    security exists). Global work is deduplicated by user + job type. This avoids
+    duplicate clicks without preventing the same refresh type for different tickers.
+    """
+    kind = str(job_type).upper()
+    existing = _active_job_query(kind, user_id=user_id, company_id=company_id, security_id=security_id).order_by(Job.id.asc()).first()
+    if existing is not None:
+        existing._mf_reused = True
+        return existing
+    job = Job(job_type=kind, status="QUEUED", priority=priority, user_id=user_id,
               company_id=company_id, security_id=security_id, payload=payload or {}, run_after=run_after or utcnow())
-    db.session.add(job); db.session.commit(); return job
+    job._mf_reused = False
+    db.session.add(job)
+    db.session.commit()
+    return job
+
+
+def compact_queue(user_id: int | None = None) -> int:
+    """Supersede duplicate active jobs left by older releases or repeated requests."""
+    query = Job.query.filter(Job.status.in_(ACTIVE_JOB_STATUSES))
+    if user_id is not None:
+        query = query.filter(Job.user_id == user_id)
+    rows = query.order_by(Job.user_id.asc(), Job.id.asc()).all()
+    kept: dict[tuple, Job] = {}
+    superseded = 0
+    for job in rows:
+        target = ("security", job.security_id) if job.security_id is not None else (("company", job.company_id) if job.company_id is not None else ("global", None))
+        key = (job.user_id, job.job_type, target)
+        current = kept.get(key)
+        if current is None:
+            kept[key] = job
+            continue
+        if current.status == "QUEUED" and job.status == "RUNNING":
+            current.status = "SUPERSEDED"
+            current.finished_at = utcnow()
+            current.result = {"reason": "duplicate_active_job", "kept_job_id": job.id}
+            kept[key] = job
+            superseded += 1
+        elif job.status == "QUEUED":
+            job.status = "SUPERSEDED"
+            job.finished_at = utcnow()
+            job.result = {"reason": "duplicate_active_job", "kept_job_id": current.id}
+            superseded += 1
+    if superseded:
+        db.session.commit()
+    return superseded
+
+
+def recover_stale_running_jobs(user_id: int | None = None, stale_after_minutes: int = 30) -> int:
+    cutoff = utcnow() - timedelta(minutes=max(5, int(stale_after_minutes)))
+    query = Job.query.filter(Job.status == "RUNNING", Job.locked_at.is_not(None), Job.locked_at < cutoff)
+    if user_id is not None:
+        query = query.filter(Job.user_id == user_id)
+    rows = query.all()
+    for job in rows:
+        job.status = "QUEUED"
+        job.locked_at = None
+        job.started_at = None
+        job.run_after = utcnow()
+    if rows:
+        db.session.commit()
+    return len(rows)
 
 
 def _flow_row(period: FinancialPeriod, n: NormalizedFinancial) -> dict[str, Any]:
@@ -167,17 +243,18 @@ def _discovery(user_id: int) -> dict[str, Any]:
 
 
 def _bulk(user_id: int) -> dict[str, Any]:
-    sec_ready = provider_status(user_id).get("sec", False); queued = 0
+    sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
     for coverage in Coverage.query.filter_by(user_id=user_id).all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
         specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70)]
         if sec_ready: specs.insert(1, ("SEC_INGEST", 40))
         for kind, priority in specs:
-            if Job.query.filter_by(job_type=kind, user_id=user_id, security_id=security.id, status="QUEUED").first(): continue
-            db.session.add(Job(job_type=kind, status="QUEUED", priority=priority, user_id=user_id, company_id=security.company_id,
-                               security_id=security.id, payload={"coverage_id": coverage.id}, run_after=utcnow())); queued += 1
-    db.session.commit(); return {"jobs_queued": queued, "sec_enabled": sec_ready}
+            job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id,
+                              payload={"coverage_id": coverage.id}, priority=priority)
+            if getattr(job, "_mf_reused", False): reused += 1
+            else: queued += 1
+    return {"jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
 
 
 def _execute(job: Job) -> dict[str, Any]:
@@ -214,10 +291,19 @@ def _execute(job: Job) -> dict[str, Any]:
     raise RuntimeError(f"Unknown job type: {kind}")
 
 
-def run_jobs(limit: int = 5) -> list[dict[str, Any]]:
+def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]:
+    recover_stale_running_jobs(user_id=user_id)
+    compact_queue(user_id=user_id)
     results = []
     for _ in range(max(1, min(int(limit), 50))):
-        job = Job.query.filter(Job.status == "QUEUED", Job.run_after <= utcnow()).order_by(Job.priority.asc(), Job.id.asc()).first()
+        query = Job.query.filter(Job.status == "QUEUED", Job.run_after <= utcnow())
+        if user_id is not None:
+            query = query.filter(Job.user_id == user_id)
+        query = query.order_by(Job.priority.asc(), Job.id.asc())
+        bind = db.session.get_bind()
+        if getattr(getattr(bind, "dialect", None), "name", "") in {"mysql", "mariadb", "postgresql"}:
+            query = query.with_for_update(skip_locked=True)
+        job = query.first()
         if job is None: break
         job.status = "RUNNING"; job.locked_at = utcnow(); job.started_at = utcnow(); job.attempts += 1; db.session.commit()
         refresh = RefreshRun(company_id=job.company_id, security_id=job.security_id, job_id=job.id, refresh_type=job.job_type, status="RUNNING", started_at=job.started_at)
@@ -230,10 +316,11 @@ def run_jobs(limit: int = 5) -> list[dict[str, Any]]:
         except Exception as exc:
             error_id = uuid.uuid4().hex[:12]; finished = utcnow(); job.error_message = f"{type(exc).__name__}: {exc}"[:4000]; job.finished_at = finished
             if job.attempts < job.max_attempts:
-                job.status = "QUEUED"; job.run_after = utcnow() + timedelta(minutes=min(60, 5 * job.attempts))
+                job.status = "QUEUED"; job.run_after = utcnow() + timedelta(minutes=min(60, 5 * job.attempts)); job.locked_at = None
             else: job.status = "FAILED"
             refresh.status = "FAILED"; refresh.error_id = error_id; refresh.summary = {"error": job.error_message}; refresh.finished_at = finished
             calc.status = "FAILED"; calc.error_id = error_id; calc.outputs = {"error": job.error_message}; calc.finished_at = finished
         elapsed = (time.perf_counter() - started) * 1000; calc.elapsed_ms = Decimal(str(round(elapsed, 3))); db.session.commit()
-        results.append({"job_id": job.id, "status": job.status, "elapsed_ms": round(elapsed, 1), "error": job.error_message})
+        results.append({"job_id": job.id, "status": job.status, "attempts": job.attempts, "max_attempts": job.max_attempts,
+                        "elapsed_ms": round(elapsed, 1), "error": job.error_message})
     return results

@@ -42,24 +42,32 @@ def decrypt_secret(value: str) -> str:
         raise RuntimeError("Unable to decrypt protected secret") from exc
 
 
+def _login_redirect():
+    next_path = request.full_path if request.query_string else request.path
+    return redirect(url_for("auth.login", next=next_path))
+
+
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not getattr(g, "user", None):
-            return redirect(url_for("web.login", next=request.path))
+            return _login_redirect()
         return view(*args, **kwargs)
     return wrapped
 
 
 def role_required(*roles):
     roles = {r.upper() for r in roles}
+
     def deco(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
             if not getattr(g, "user", None):
-                return redirect(url_for("web.login", next=request.path))
-            if g.user.role not in roles:
+                return _login_redirect()
+            if str(g.user.role or "").upper() not in roles:
                 abort(403)
             return view(*args, **kwargs)
+
         return wrapped
+
     return deco

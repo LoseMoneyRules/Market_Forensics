@@ -39,6 +39,10 @@ jobs:
       - name: Build production payload
         run: |
           set -euo pipefail
+          MF_RELEASE_VERSION="$(tr -d '\r\n' < VERSION)"
+          test -n "$MF_RELEASE_VERSION"
+          echo "MF_RELEASE_VERSION=$MF_RELEASE_VERSION" >> "$GITHUB_ENV"
+          echo "Preparing Market Forensics $MF_RELEASE_VERSION"
           rm -rf .release-payload .production-backup .empty-cleanup
           mkdir -p .release-payload .production-backup .empty-cleanup
           cp app.py manage.py requirements.txt VERSION .release-payload/
@@ -93,15 +97,19 @@ jobs:
           LFTP
           test -f .production-backup/app.py
           test -d .production-backup/mfapp
+          MF_ROLLBACK_VERSION="$(tr -d '\r\n' < .production-backup/VERSION)"
+          test -n "$MF_ROLLBACK_VERSION"
+          echo "MF_ROLLBACK_VERSION=$MF_ROLLBACK_VERSION" >> "$GITHUB_ENV"
+          echo "Rollback target: $MF_ROLLBACK_VERSION"
 
-      - name: Upload 0.1.0 candidate and restart Passenger
+      - name: Upload release candidate and restart Passenger
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
           FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
           FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          printf 'restart candidate %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
+          printf 'restart candidate %s %s\n' "$MF_RELEASE_VERSION" "${GITHUB_SHA}" > /tmp/restart.txt
           timeout --signal=TERM 10m lftp <<LFTP
           set cmd:fail-exit yes
           set ssl:verify-certificate yes
@@ -130,14 +138,14 @@ jobs:
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health || true)"
             if printf '%s' "$body" | grep -q '"status":"ok"' \
-              && printf '%s' "$body" | grep -q '"version":"0.1.0"' \
+              && printf '%s' "$body" | grep -q "\"version\":\"${MF_RELEASE_VERSION}\"" \
               && printf '%s' "$body" | grep -q '"architecture":"web-native"'; then
               echo "$body"
               exit 0
             fi
             sleep 6
           done
-          echo "0.1.0 candidate health check failed."
+          echo "$MF_RELEASE_VERSION candidate health check failed."
           exit 1
 
       - name: Roll back runtime if candidate health failed
@@ -148,7 +156,7 @@ jobs:
           FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          printf 'restart rollback %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
+          printf 'restart rollback %s %s\n' "$MF_ROLLBACK_VERSION" "${GITHUB_SHA}" > /tmp/restart.txt
           timeout --signal=TERM 10m lftp <<LFTP
           set cmd:fail-exit yes
           set ssl:verify-certificate yes
@@ -171,7 +179,7 @@ jobs:
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health || true)"
             if printf '%s' "$body" | grep -q '"status":"ok"' \
-              && printf '%s' "$body" | grep -q '"version":"0.0.4"'; then
+              && printf '%s' "$body" | grep -q "\"version\":\"${MF_ROLLBACK_VERSION}\""; then
               echo "Rollback healthy: $body"
               exit 0
             fi
@@ -183,7 +191,7 @@ jobs:
       - name: Fail deployment after rollback
         if: steps.health.outcome == 'failure'
         run: |
-          echo "0.1.0 was rolled back because the production health check failed."
+          echo "$MF_RELEASE_VERSION was rolled back to $MF_ROLLBACK_VERSION because the production health check failed."
           exit 1
 
       - name: Remove obsolete root files
@@ -243,7 +251,7 @@ jobs:
         run: |
           set -u
           echo "Cleaning legacy directory: _vendor"
-          timeout --signal=TERM 4m lftp <<LFTP || echo "::warning::_vendor cleanup did not finish in this pass; production remains on 0.1.0."
+          timeout --signal=TERM 4m lftp <<LFTP || echo "::warning::_vendor cleanup did not finish in this pass; production remains on $MF_RELEASE_VERSION."
           set cmd:fail-exit no
           set ssl:verify-certificate yes
           set ftp:ssl-force yes
@@ -284,12 +292,12 @@ jobs:
           fi
           echo "Legacy hosted files are clean."
 
-      - name: Confirm 0.1.0 remains healthy after cleanup
+      - name: Confirm release remains healthy after cleanup
         if: always() && steps.health.outcome == 'success'
         run: |
           set -euo pipefail
           body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health)"
           printf '%s' "$body" | grep -q '"status":"ok"'
-          printf '%s' "$body" | grep -q '"version":"0.1.0"'
+          printf '%s' "$body" | grep -q "\"version\":\"${MF_RELEASE_VERSION}\""
           printf '%s' "$body" | grep -q '"architecture":"web-native"'
           echo "$body"

@@ -5,6 +5,7 @@ from cryptography.fernet import Fernet
 from mfapp import create_app
 from mfapp.core_models import Company, Coverage, Job, MarketSnapshot, ResearchState, Security, ValuationModel
 from mfapp.extensions import db
+from mfapp.jobs import enqueue_job
 from mfapp.models import User
 from mfapp.security import encrypt_secret, hash_password
 from mfapp.services import ensure_workspace
@@ -55,6 +56,17 @@ def counts():
     }
 
 
+def test_anonymous_private_routes_redirect_to_auth_login(tmp_path, monkeypatch):
+    app = build_app(tmp_path, monkeypatch)
+    client = app.test_client()
+    for path in ("/", "/settings", "/portfolio", "/company/NKE/overview"):
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code in (302, 303)
+        assert "/login" in response.headers["Location"]
+        assert "next=" in response.headers["Location"]
+        assert "Something went wrong" not in response.get_data(as_text=True)
+
+
 def test_primary_get_routes_render_without_mutating_research_state(tmp_path, monkeypatch):
     app = build_app(tmp_path, monkeypatch)
     user_id = seed_control(app)
@@ -68,10 +80,31 @@ def test_primary_get_routes_render_without_mutating_research_state(tmp_path, mon
         assert counts() == before
 
 
+def test_control_browser_worker_pumps_one_due_job(tmp_path, monkeypatch):
+    app = build_app(tmp_path, monkeypatch)
+    user_id = seed_control(app)
+    client = app.test_client(); login_session(client, user_id)
+    with app.app_context():
+        job = enqueue_job("DISCOVERY_SCAN", user_id=user_id, priority=1)
+        job_id = job.id
+    status = client.get("/jobs/status")
+    assert status.status_code == 200
+    assert status.get_json()["due"] == 1
+    response = client.post("/jobs/pump")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["processed"]
+    assert payload["processed"][0]["job_id"] == job_id
+    assert payload["processed"][0]["status"] == "DONE"
+    assert payload["queued"] == 0
+    with app.app_context():
+        assert db.session.get(Job, job_id).status == "DONE"
+
+
 def test_health_is_public_and_identifies_web_native_release(tmp_path, monkeypatch):
     app = build_app(tmp_path, monkeypatch)
     response = app.test_client().get("/health")
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["version"] == "0.1.0"
+    assert payload["version"] == "0.1.1"
     assert payload["architecture"] == "web-native"

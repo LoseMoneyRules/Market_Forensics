@@ -24,7 +24,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     if db_url.startswith("sqlite:///instance/"):
         db_url = "sqlite:///" + str(Path(app.instance_path) / db_url.split("sqlite:///instance/", 1)[1])
     if env == "production" and db_url.startswith("sqlite"):
-        raise RuntimeError("Market Forensics 0.1.0 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
+        raise RuntimeError("Market Forensics 0.1.1 production requires MariaDB via MF_DATABASE_URL; SQLite is not a supported production core.")
 
     app.config.update(
         SECRET_KEY=os.environ.get("MF_SECRET_KEY", "dev-only-change-me"),
@@ -37,7 +37,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.1.0",
+        VERSION="0.1.1",
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
@@ -50,7 +50,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     csrf.init_app(app)
     limiter.init_app(app)
 
-    # Register model metadata. 0.1.0 intentionally does not import the legacy V3 runtime.
+    # Register model metadata. 0.1.1 intentionally does not import the legacy V3 runtime.
     from . import models as account_models  # noqa: F401
     from . import core_models  # noqa: F401
     from .models import User

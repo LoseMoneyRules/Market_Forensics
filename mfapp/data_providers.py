@@ -70,7 +70,7 @@ def provider_status(user_id: int) -> dict[str, bool]:
         "alpha_vantage": bool(get_secret(user_id, "alpha_vantage_key")),
         "massive": bool(get_secret(user_id, "massive_key")),
         "sec": bool(get_secret(user_id, "sec_user_agent")),
-        "finra": bool(get_secret(user_id, "finra_token")),
+        "finra": True,
     }
 
 
@@ -101,7 +101,7 @@ def _tiingo(ticker: str, user_id: int) -> QuoteResult:
     if not token:
         return QuoteResult(False, "Tiingo", message="not configured")
     try:
-        r = requests.get(f"https://api.tiingo.com/iex/{ticker}", params={"token": token}, headers={"User-Agent": "MarketForensics/0.1.0"}, timeout=8)
+        r = requests.get(f"https://api.tiingo.com/iex/{ticker}", params={"token": token}, headers={"User-Agent": "MarketForensics/0.1.1"}, timeout=8)
         if r.status_code != 200:
             return QuoteResult(False, "Tiingo", message=f"HTTP {r.status_code}")
         raw = r.json() or []
@@ -137,7 +137,7 @@ def _public_chart(ticker: str) -> QuoteResult:
         r = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
             params={"range": "5d", "interval": "1d", "events": "div,splits"},
-            headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.1.0"}, timeout=8,
+            headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.1.1"}, timeout=8,
         )
         if r.status_code != 200:
             return QuoteResult(False, "Public market chart", message=f"HTTP {r.status_code}")
