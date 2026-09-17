@@ -28,6 +28,7 @@ from .decision_lenses import build_decision_lenses
 from .expectations_engine import price_implied_expectations
 from .discovery_engine import classify_coverage, search_universe
 from .research_synthesis import build_synthesis
+from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
 from .symbols import validate_ticker
@@ -293,6 +294,7 @@ def company_section(ticker, section):
                 management=overview_management, tape=overview_tape,
             )
         if section == "business":
+            extra["auto_triangulation"] = automatic_triangulation(company.id, g.user.id)
             extra["triangulation_rows"] = Event.query.filter(
                 Event.company_id == company.id,
                 Event.event_type.like("TRIANGULATION_%"),
