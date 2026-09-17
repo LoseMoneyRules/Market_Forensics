@@ -68,10 +68,20 @@ def test_robust_blend_downweights_method_outlier():
 
 
 def test_sec_point_in_time_history_excludes_future_filing():
-    companyfacts = {"facts": {"us-gaap": {"RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
-        {"fy": 2023, "fp": "FY", "form": "10-K", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-02-01", "accn": "old", "val": 100},
-        {"fy": 2023, "fp": "FY", "form": "10-K/A", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-06-01", "accn": "future", "val": 150},
-    ]}}}}}}
+    companyfacts = {
+        "facts": {
+            "us-gaap": {
+                "RevenueFromContractWithCustomerExcludingAssessedTax": {
+                    "units": {
+                        "USD": [
+                            {"fy": 2023, "fp": "FY", "form": "10-K", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-02-01", "accn": "old", "val": 100},
+                            {"fy": 2023, "fp": "FY", "form": "10-K/A", "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-06-01", "accn": "future", "val": 150},
+                        ]
+                    }
+                }
+            }
+        }
+    }
     feb = annual_history_asof(companyfacts, datetime.fromisoformat("2024-02-15").date())
     july = annual_history_asof(companyfacts, datetime.fromisoformat("2024-07-01").date())
     assert feb[-1]["revenue"] == 100
