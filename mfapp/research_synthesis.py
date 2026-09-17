@@ -184,6 +184,70 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
         next_steps.append("Continue monitoring; change the thesis only when evidence changes.")
 
     price_verified = bool(market and str(getattr(market, "quality", "")).upper() not in {"", "FALLBACK", "ERROR"})
+
+    gate_map = {str(g.get("key")): g for g in readiness.get("gates", [])}
+    lens_specs = [
+        ("Business", "business"),
+        ("Numbers", "numbers"),
+        ("Expectations", "expectations"),
+        ("Valuation", "valuation"),
+        ("Bear Case", "bear-case"),
+        ("Catalysts", "catalysts"),
+        ("Financial Flows", "financial-flows"),
+        ("Management", "management"),
+        ("Tape / Flows", "tape"),
+        ("Monitoring", "monitoring"),
+        ("Sources / Audit", "audit"),
+    ]
+    lenses = []
+    for label, key in lens_specs:
+        gate = gate_map.get(key) or {}
+        if gate.get("approved"):
+            state = "APPROVED"
+        elif gate.get("evidence_ready"):
+            state = "REVIEW"
+        else:
+            state = "MISSING"
+        lenses.append({"label": label, "key": key, "state": state})
+
+    why_now = []
+    if base_gap is not None and abs(base_gap) >= 15:
+        why_now.append(f"Valuation dislocation is material at {base_gap:+.1f}% vs Base.")
+    if catalysts:
+        dated = next((row for row in catalysts if row.expected_date), None)
+        if dated:
+            why_now.append(f"Open catalyst: {dated.title} around {dated.expected_date.isoformat()}.")
+    if positives:
+        why_now.append(f"{len(positives)} weighted supporting evidence signal(s) are active.")
+    if not why_now:
+        why_now.append("No forcing event is strong enough yet; keep the company in evidence-driven monitoring.")
+
+    why_not_yet = []
+    if pending:
+        why_not_yet.append("Research gates still pending: " + ", ".join(pending[:5]) + ("…" if len(pending) > 5 else ""))
+    if intelligence.get("warnings"):
+        why_not_yet.extend(str(x) for x in intelligence.get("warnings", [])[:2])
+    if negatives:
+        why_not_yet.append(f"{len(negatives)} opposing/watch evidence signal(s) remain unresolved.")
+    if not why_not_yet:
+        why_not_yet.append("No major process blocker is visible; use Validate before treating the research file as decision-ready.")
+
+    what_changes = list(next_steps[:3])
+    if expectation_diffs:
+        top = expectation_diffs[0]
+        what_changes.append(f"Resolve the largest expectation gap: {top['label']} ({top['delta_pct']:+.1f}%).")
+    if not what_changes:
+        what_changes.append("A new filing, catalyst outcome, or threshold breach should change the read—not price movement alone.")
+
+    what_kills = []
+    if risk and getattr(risk, "thesis_invalidation", "").strip():
+        what_kills.append(risk.thesis_invalidation.strip())
+    for item in bear_items:
+        if item.invalidates and item.title:
+            what_kills.append(item.title)
+    if not what_kills:
+        what_kills.append("No explicit thesis-kill condition is locked yet.")
+
     return {
         "framework": "PRICE → FAIR VALUE → WHY → WHEN",
         "price": price,
@@ -203,6 +267,11 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
         "horizon_years": horizon,
         "target_year": target_year,
         "next": next_steps,
+        "lenses": lenses,
+        "why_now": why_now[:4],
+        "why_not_yet": why_not_yet[:4],
+        "what_changes": what_changes[:4],
+        "what_kills": what_kills[:4],
         "research_action": intelligence.get("action") or "WAIT",
         "confidence": intelligence.get("confidence") or "LOW",
         "readiness": {"done": readiness.get("done", 0), "total": readiness.get("total", 0)},
