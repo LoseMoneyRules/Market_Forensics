@@ -16,18 +16,28 @@ def test_financial_metrics_are_pure_and_auditable():
     assert round(metrics["gross_margin_pct"], 1) == 40.0
     assert round(metrics["operating_margin_pct"], 1) == 12.0
     assert round(metrics["net_debt"], 1) == 150.0
-    assert metrics["calculation_version"] == "0.1.3"
+    assert round(metrics["fcf_to_net_income"], 2) == 1.25
+    assert metrics["calculation_version"] == "0.1.5"
 
 
 def test_negative_flow_is_not_rendered_as_fake_positive_width():
     flow = build_income_statement_flow({"fiscal_year": 2026, "revenue": 100, "gross_profit": 40, "operating_income": -10, "pretax_income": -15, "income_tax": -2, "net_income": -13})
     assert all(edge["value"] >= 0 for edge in flow["edges"])
-    assert any(edge["value"] < 0 for edge in flow["signed_exceptions"])
+    assert any(edge.get("signed_value", edge["value"]) < 0 for edge in flow["signed_exceptions"])
 
 
 def test_cash_flow_preserves_signed_exceptions():
     flow = build_cash_flow({"fiscal_year": 2026, "cfo": -20, "capex": 5, "buybacks": 0, "dividends": 2})
-    assert any(edge["value"] < 0 for edge in flow["signed_exceptions"])
+    assert any(edge.get("signed_value", edge["value"]) < 0 for edge in flow["signed_exceptions"])
+
+
+def test_reconciled_income_and_cash_flow_bridges_are_explicit():
+    income = build_income_statement_flow({"fiscal_year": 2026, "revenue": 100, "gross_profit": 40, "operating_income": 15, "pretax_income": 12, "income_tax": 2, "net_income": 10})
+    assert income["reconciliations"]
+    assert all(row["ok"] for row in income["reconciliations"])
+    cash = build_cash_flow({"fiscal_year": 2026, "cfo": 20, "capex": 5, "fcf": 15, "buybacks": 4, "dividends": 3})
+    assert cash["reconciliations"][0]["ok"] is True
+    assert any(edge["target"] == "Retained / Debt / M&A / Other" for edge in cash["edges"])
 
 
 def test_valuation_sensitivity_is_explicit_and_price_aware():

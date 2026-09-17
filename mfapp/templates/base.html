@@ -5,53 +5,40 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0b1f33">
   {% if g.user %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
-  <meta name="mf-real-role" content="{{ real_role or '' }}">
-  <meta name="mf-effective-role" content="{{ effective_role or '' }}">
+  <meta name="mf-real-role" content="{{ real_role or '' }}"><meta name="mf-effective-role" content="{{ effective_role or '' }}">
   <title>{% block title %}Market Forensics{% endblock %}</title>
   <script>try{document.documentElement.dataset.theme=localStorage.getItem('mf-theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
-  <link rel="icon" href="{{ url_for('static', filename='img/mark.svg') }}" type="image/svg+xml">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/v012.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/v013.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/v014.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='img/mark.svg', v=mf_version) }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v=mf_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/v012.css', v=mf_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/v013.css', v=mf_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/v014.css', v=mf_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/v015.css', v=mf_version) }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 {% if g.user %}
 <header class="topbar">
-  <a class="brand" href="{{ url_for('web.dashboard') }}">
-    <img src="{{ logo_url or url_for('static', filename='img/mark.svg') }}" alt="" class="brand-mark">
-    <span><strong>Market Forensics</strong></span>
-  </a>
+  <button id="mf-mobile-menu" class="mobile-menu-button" type="button" aria-label="Open navigation">☰</button>
+  <a class="brand" href="{{ url_for('web.dashboard') }}"><img src="{{ logo_url or url_for('static', filename='img/mark.svg', v=mf_version) }}" alt="" class="brand-mark"><span><strong>Market Forensics</strong></span></a>
+  <button id="mf-mobile-tools" class="mobile-tools-button" type="button" aria-label="Open controls">•••</button>
   <div class="top-actions">
     {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}
     <form class="number-format-form" method="post" action="{{ url_for('web.save_display_settings') }}" title="Financial table number display">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <span>Numbers</span>
-      <select name="number_format" onchange="this.form.submit()" aria-label="Number display">
-        {% for mode in ['AUTO','FULL','K','M','B','T'] %}<option value="{{ mode }}" {% if number_format == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}
-      </select>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><span>Numbers</span>
+      <select name="number_format" onchange="this.form.submit()" aria-label="Number display">{% for mode in ['AUTO','FULL','K','M','B','T'] %}<option value="{{ mode }}" {% if number_format == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}</select>
     </form>
     <span class="status-chip" id="mf-worker-chip" title="CONTROL browser worker">Worker · checking</span>
     {% endif %}
     <button class="theme-toggle" id="mf-theme-toggle" type="button" aria-label="Toggle light and dark mode">Dark</button>
     {% if real_role == 'CONTROL' %}
-    <nav class="view-switch" aria-label="Preview access level">
-      <span>View as</span>
-      <a href="{{ url_for('preview.set_preview', role='FRIEND') }}" class="{% if effective_role == 'FRIEND' %}active{% endif %}">FRIEND</a>
-      <a href="{{ url_for('preview.set_preview', role='INSIDER') }}" class="{% if effective_role == 'INSIDER' %}active{% endif %}">INSIDER</a>
-      <a href="{{ url_for('preview.control_mode') }}" class="{% if effective_role == 'CONTROL' %}active{% endif %}">CONTROL</a>
-    </nav>
+    <nav class="view-switch" aria-label="Preview access level"><span>View as</span><a href="{{ url_for('preview.set_preview', role='FRIEND') }}" class="{% if effective_role == 'FRIEND' %}active{% endif %}">FRIEND</a><a href="{{ url_for('preview.set_preview', role='INSIDER') }}" class="{% if effective_role == 'INSIDER' %}active{% endif %}">INSIDER</a><a href="{{ url_for('preview.control_mode') }}" class="{% if effective_role == 'CONTROL' %}active{% endif %}">CONTROL</a></nav>
     {% endif %}
     <span class="role-pill">{{ effective_role }}</span>
-    <form method="post" action="{{ url_for('auth.logout') }}" class="inline-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="text-button" type="submit">Sign out</button>
-    </form>
+    <form method="post" action="{{ url_for('auth.logout') }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button" type="submit">Sign out</button></form>
   </div>
 </header>
-{% if real_role == 'CONTROL' and effective_role != 'CONTROL' %}
-<div class="preview-banner"><strong>Preview mode · {{ effective_role }}</strong><span>Published research only.</span><a href="{{ url_for('preview.control_mode') }}">Exit preview</a></div>
-{% endif %}
+<div id="mf-mobile-backdrop" class="mobile-backdrop"></div>
+{% if real_role == 'CONTROL' and effective_role != 'CONTROL' %}<div class="preview-banner"><strong>Preview mode · {{ effective_role }}</strong><span>Published research only.</span><a href="{{ url_for('preview.control_mode') }}">Exit preview</a></div>{% endif %}
 <nav class="navrail">
   {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}
     <div class="nav-section">RESEARCH</div>
@@ -62,10 +49,7 @@
     <div class="nav-section nav-gap">SYSTEM</div>
     <a href="{{ url_for('web.settings') }}" class="navitem {% if request.endpoint == 'web.settings' %}active{% endif %}">Settings / Data</a>
     <a href="{{ url_for('web.control') }}" class="navitem {% if request.endpoint == 'web.control' %}active{% endif %}">Control</a>
-  {% else %}
-    <div class="nav-section">RESEARCH</div>
-    <a href="{{ url_for('web.dashboard') }}" class="navitem active">Published Research</a>
-  {% endif %}
+  {% else %}<div class="nav-section">RESEARCH</div><a href="{{ url_for('web.dashboard') }}" class="navitem active">Published Research</a>{% endif %}
   <div class="nav-footer">Lose Money Rules</div>
 </nav>
 {% endif %}
@@ -74,28 +58,15 @@
   {% if intelligence is defined and security is defined and intelligence %}
   <section class="research-intelligence-strip" aria-label="Automatic research read">
     <div class="research-action {{ intelligence.action|lower }}"><span>Research action</span><strong>{{ intelligence.action }}</strong></div>
-    <div class="research-strip-metric"><span>Bias</span><strong>{{ intelligence.bias }}</strong></div>
-    <div class="research-strip-metric"><span>Confidence</span><strong>{{ intelligence.confidence }}</strong></div>
+    <div class="research-strip-metric"><span>Bias</span><strong>{{ intelligence.bias }}</strong></div><div class="research-strip-metric"><span>Confidence</span><strong>{{ intelligence.confidence }}</strong></div>
     <div class="research-strip-metric"><span>Base gap</span><strong>{% if intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(intelligence.base_gap_pct) }}%{% else %}—{% endif %}</strong></div>
-    <div class="research-strip-summary">
-      {% for signal in intelligence.top_signals[:3] %}<span class="signal-dot {{ signal.tone }}">{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}
-      {% for warning in intelligence.warnings[:1] %}<span class="signal-dot watch">{{ warning }}</span>{% endfor %}
-    </div>
+    <div class="research-strip-summary">{% for signal in intelligence.top_signals[:3] %}<span class="signal-dot {{ signal.tone }}">{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}{% for warning in intelligence.warnings[:1] %}<span class="signal-dot watch">{{ warning }}</span>{% endfor %}</div>
   </section>
   {% endif %}
   {% block content %}{% endblock %}
 </main>
-{% if g.user %}
-<nav class="mobile-nav">
-  {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}
-    <a href="{{ url_for('web.dashboard') }}">Coverage</a><a href="{{ url_for('web.discovery') }}">Discover</a><a href="{{ url_for('web.portfolio') }}">Portfolio</a><a href="{{ url_for('web.settings') }}">Data</a>
-  {% else %}
-    <a href="{{ url_for('web.dashboard') }}">Research</a>{% if real_role == 'CONTROL' %}<a href="{{ url_for('preview.control_mode') }}">CONTROL</a>{% endif %}
-  {% endif %}
-</nav>
-{% endif %}
-<script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
-<script src="{{ url_for('static', filename='js/theme.js') }}" defer></script>
+{% if g.user %}<nav class="mobile-nav">{% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}<a href="{{ url_for('web.dashboard') }}">Coverage</a><a href="{{ url_for('web.discovery') }}">Discover</a><a href="{{ url_for('web.portfolio') }}">Portfolio</a><a href="{{ url_for('web.settings') }}">Data</a>{% else %}<a href="{{ url_for('web.dashboard') }}">Research</a>{% if real_role == 'CONTROL' %}<a href="{{ url_for('preview.control_mode') }}">CONTROL</a>{% endif %}{% endif %}</nav>{% endif %}
+<script src="{{ url_for('static', filename='js/app.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/theme.js', v=mf_version) }}" defer></script><script src="{{ url_for('static', filename='js/v015.js', v=mf_version) }}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
