@@ -5,6 +5,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from docx import Document
+from PIL import Image as PILImage, ImageDraw, ImageFont
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 from reportlab.lib import colors
@@ -12,7 +13,7 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
 
 from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessment, Source
 
@@ -116,6 +117,44 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full") -> dict[str
     }
 
 
+def _valuation_chart_png(data: dict[str, Any]) -> BytesIO:
+    values = [
+        ("Market", data.get("market_price"), "#7f8a94"),
+        ("Bear", data.get("bear"), "#a13b3b"),
+        ("Base", data.get("base"), "#3a6f99"),
+        ("Bull", data.get("bull"), "#1f7a54"),
+    ]
+    numeric = [float(v) for _, v, _ in values if v is not None]
+    out = BytesIO()
+    image = PILImage.new("RGB", (1000, 230), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    if not numeric:
+        draw.text((30, 90), "Valuation scenarios unavailable", fill="#52606d", font=font)
+        image.save(out, format="PNG")
+        out.seek(0)
+        return out
+    low, high = min(numeric), max(numeric)
+    span = max(high - low, max(abs(high), 1.0) * .08)
+    low -= span * .08
+    high += span * .08
+    x0, x1, y = 75, 935, 115
+    draw.line((x0, y, x1, y), fill="#c8d1da", width=3)
+    for label, value, color in values:
+        if value is None:
+            continue
+        v = float(value)
+        x = int(x0 + (v - low) / (high - low) * (x1 - x0))
+        draw.line((x, y - 42, x, y + 42), fill=color, width=5)
+        draw.text((max(10, x - 30), y - 72), label, fill=color, font=font)
+        draw.text((max(10, x - 32), y + 52), "$" + format(v, ",.2f"), fill="#0b1f33", font=font)
+    draw.text((x0, 190), "Range $" + format(low, ",.2f"), fill="#6d7a86", font=font)
+    draw.text((x1 - 95, 190), "$" + format(high, ",.2f"), fill="#6d7a86", font=font)
+    image.save(out, format="PNG")
+    out.seek(0)
+    return out
+
+
 def _docx_add_heading(doc: Document, text: str, level: int = 1) -> None:
     p = doc.add_heading(text, level=level)
     p.paragraph_format.space_before = Pt(8)
@@ -145,6 +184,9 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
     values = [_money(data["market_price"]),_money(data["bear"]),_money(data["base"]),_money(data["bull"]),_pct(data["base_gap_pct"]),data["validation_state"]]
     for i,v in enumerate(headers): table.cell(0,i).text=v
     for i,v in enumerate(values): table.cell(1,i).text=v
+
+    chart = _valuation_chart_png(data)
+    doc.add_picture(chart, width=Inches(6.75))
 
     _docx_add_heading(doc, "Investment research brief", 1)
     for label,key in [("Thesis","thesis"),("Counter-evidence","counter_evidence"),("Market view","variant_market"),("Our variant","variant_us")]:
@@ -203,6 +245,8 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     t=Table(grid,colWidths=[1.05*inch]*6)
     t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#b8c4ce")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5)]))
     story += [t,Spacer(1,8)]
+    chart = _valuation_chart_png(data)
+    story += [RLImage(chart, width=6.6*inch, height=1.52*inch), Spacer(1,6)]
 
     def section(title: str, body: str):
         story.append(Paragraph(escape(title),styles["MFH2"]))
