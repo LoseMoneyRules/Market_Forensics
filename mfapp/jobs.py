@@ -19,6 +19,7 @@ from .extensions import db
 from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
 from .historical_engine import run_historical_test
 from .management_promises import extract_promises, html_to_text, store_promises
+from .market_discovery import market_scan
 from .positioning import refresh_positioning_bundle
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 
@@ -174,16 +175,31 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
 
 
 def _discovery(user_id: int) -> dict[str, Any]:
+    """Market-wide lightweight scan plus deep-context ranking for existing Coverage."""
     from .services import readiness, valuation_result
+    scan = market_scan(user_id)
     ranked = []
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
-        if not security: continue
-        ready = readiness(coverage); val = valuation_result(coverage); price, base = val.get("current_price"), val.get("base")
+        if not security:
+            continue
+        ready = readiness(coverage)
+        val = valuation_result(coverage)
+        price, base = val.get("current_price"), val.get("base")
         gap = ((float(base) / float(price) - 1) * 100) if base is not None and price not in (None, 0) else None
-        score = ready["done"] * 5 + (min(abs(gap), 50) if gap is not None else 0); ranked.append({"ticker": security.ticker, "readiness": f"{ready['done']}/{ready['total']}", "base_gap_pct": gap, "score": round(score, 2)})
-    ranked.sort(key=lambda row: row["score"], reverse=True); return {"coverage_scanned": len(ranked), "ranked": ranked[:25]}
-
+        score = ready["done"] * 5 + (min(abs(gap), 50) if gap is not None else 0)
+        ranked.append({
+            "ticker": security.ticker,
+            "readiness": f"{ready['done']}/{ready['total']}",
+            "base_gap_pct": gap,
+            "score": round(score, 2),
+        })
+    ranked.sort(key=lambda row: row["score"], reverse=True)
+    return {
+        "coverage_scanned": len(ranked),
+        "ranked": ranked[:25],
+        "market_scan": scan,
+    }
 
 def _bulk(user_id: int) -> dict[str, Any]:
     sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
