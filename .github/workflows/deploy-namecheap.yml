@@ -13,7 +13,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     environment: production
     steps:
       - name: Checkout main
@@ -39,8 +39,8 @@ jobs:
       - name: Build production payload
         run: |
           set -euo pipefail
-          rm -rf .release-payload
-          mkdir -p .release-payload
+          rm -rf .release-payload .production-backup
+          mkdir -p .release-payload .production-backup
           cp app.py manage.py requirements.txt VERSION .release-payload/
           cp -a mfapp .release-payload/
           find .release-payload -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -66,14 +66,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq lftp
 
-      - name: Clean legacy runtime and upload 0.1.0
+      - name: Backup current production runtime
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
           FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
           FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          printf 'restart %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
           timeout --signal=TERM 10m lftp <<LFTP
           set cmd:fail-exit yes
           set ssl:verify-certificate yes
@@ -82,22 +81,39 @@ jobs:
           set net:max-retries 3
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          mirror --verbose \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
+            ./mfapp ./.production-backup/mfapp
+          get ./app.py -o ./.production-backup/app.py
+          get ./manage.py -o ./.production-backup/manage.py
+          get ./requirements.txt -o ./.production-backup/requirements.txt
+          get ./VERSION -o ./.production-backup/VERSION
+          bye
+          LFTP
+          test -f .production-backup/app.py
+          test -d .production-backup/mfapp
 
-          # Remove the 0.0.4/V3 hosted runtime. Persistent hosting state is not touched.
-          rm -rf ./market_forensics
-          rm -rf ./mfengine
-          rm -rf ./docs
-          rm -rf ./_vendor
-          rm -f ./requirements-dev.txt
-          rm -f ./requirements-vendor.txt
-          rm -f ./README.md
-
-          # mfapp is authoritative: --delete removes obsolete modules/templates/static files.
+      - name: Upload 0.1.0 candidate and restart Passenger
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf 'restart candidate %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
+          timeout --signal=TERM 10m lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 3
+          set net:timeout 30
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --delete --verbose \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./.release-payload/mfapp ./mfapp
-
           put -O . .release-payload/app.py
           put -O . .release-payload/manage.py
           put -O . .release-payload/requirements.txt
@@ -106,7 +122,9 @@ jobs:
           bye
           LFTP
 
-      - name: Production health check
+      - name: Candidate production health check
+        id: health
+        continue-on-error: true
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -119,5 +137,87 @@ jobs:
             fi
             sleep 6
           done
-          echo "Health check failed. Migration/startup/version mismatch is fail-closed."
+          echo "0.1.0 candidate health check failed."
           exit 1
+
+      - name: Roll back runtime if candidate health failed
+        if: steps.health.outcome == 'failure'
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf 'restart rollback %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
+          timeout --signal=TERM 10m lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 3
+          set net:timeout 30
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          mirror --reverse --delete --verbose \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
+            ./.production-backup/mfapp ./mfapp
+          put -O . .production-backup/app.py
+          put -O . .production-backup/manage.py
+          put -O . .production-backup/requirements.txt
+          put -O . .production-backup/VERSION
+          put /tmp/restart.txt -o tmp/restart.txt
+          bye
+          LFTP
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health || true)"
+            if printf '%s' "$body" | grep -q '"status":"ok"' \
+              && printf '%s' "$body" | grep -q '"version":"0.0.4"'; then
+              echo "Rollback healthy: $body"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "Rollback health check failed. Manual recovery required."
+          exit 1
+
+      - name: Fail deployment after rollback
+        if: steps.health.outcome == 'failure'
+        run: |
+          echo "0.1.0 was rolled back because the production health check failed."
+          exit 1
+
+      - name: Remove obsolete 0.0.4 and V3 hosted files
+        if: steps.health.outcome == 'success'
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM 10m lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 3
+          set net:timeout 30
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          rm -rf ./market_forensics
+          rm -rf ./mfengine
+          rm -rf ./docs
+          rm -rf ./_vendor
+          rm -f ./requirements-dev.txt
+          rm -f ./requirements-vendor.txt
+          rm -f ./README.md
+          bye
+          LFTP
+
+      - name: Confirm 0.1.0 remains healthy after cleanup
+        if: steps.health.outcome == 'success'
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health)"
+          printf '%s' "$body" | grep -q '"status":"ok"'
+          printf '%s' "$body" | grep -q '"version":"0.1.0"'
+          printf '%s' "$body" | grep -q '"architecture":"web-native"'
+          echo "$body"
