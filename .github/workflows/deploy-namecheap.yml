@@ -39,8 +39,8 @@ jobs:
       - name: Build production payload
         run: |
           set -euo pipefail
-          rm -rf .release-payload .production-backup
-          mkdir -p .release-payload .production-backup
+          rm -rf .release-payload .production-backup .empty-cleanup
+          mkdir -p .release-payload .production-backup .empty-cleanup
           cp app.py manage.py requirements.txt VERSION .release-payload/
           cp -a mfapp .release-payload/
           find .release-payload -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -186,34 +186,106 @@ jobs:
           echo "0.1.0 was rolled back because the production health check failed."
           exit 1
 
-      - name: Remove obsolete 0.0.4 and V3 hosted files
+      - name: Remove obsolete root files
         if: steps.health.outcome == 'success'
+        continue-on-error: true
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
           FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
           FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
-          set -euo pipefail
-          timeout --signal=TERM 10m lftp <<LFTP
-          set cmd:fail-exit yes
+          set -u
+          timeout --signal=TERM 45s lftp <<LFTP || true
+          set cmd:fail-exit no
           set ssl:verify-certificate yes
           set ftp:ssl-force yes
           set ftp:ssl-protect-data yes
-          set net:max-retries 3
-          set net:timeout 30
+          set net:max-retries 1
+          set net:timeout 15
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
-          rm -rf ./market_forensics
-          rm -rf ./mfengine
-          rm -rf ./docs
-          rm -rf ./_vendor
           rm -f ./requirements-dev.txt
           rm -f ./requirements-vendor.txt
           rm -f ./README.md
           bye
           LFTP
 
-      - name: Confirm 0.1.0 remains healthy after cleanup
+      - name: Remove obsolete application trees
         if: steps.health.outcome == 'success'
+        continue-on-error: true
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -u
+          for target in market_forensics mfengine docs; do
+            echo "Cleaning legacy directory: $target"
+            timeout --signal=TERM 90s lftp <<LFTP || echo "::warning::Cleanup for $target did not finish in this pass."
+          set cmd:fail-exit no
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 1
+          set net:timeout 15
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          rm -rf ./$target
+          bye
+          LFTP
+          done
+
+      - name: Remove obsolete vendor tree
+        if: steps.health.outcome == 'success'
+        continue-on-error: true
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -u
+          echo "Cleaning legacy directory: _vendor"
+          timeout --signal=TERM 4m lftp <<LFTP || echo "::warning::_vendor cleanup did not finish in this pass; production remains on 0.1.0."
+          set cmd:fail-exit no
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 1
+          set net:timeout 15
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          mirror --reverse --delete --delete-first --parallel=8 ./.empty-cleanup ./_vendor
+          rmdir ./_vendor
+          bye
+          LFTP
+
+      - name: Inspect legacy cleanup
+        id: cleanup_check
+        if: steps.health.outcome == 'success'
+        continue-on-error: true
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM 45s lftp <<LFTP > /tmp/remote-root.txt
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 1
+          set net:timeout 15
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          cls -1 .
+          bye
+          LFTP
+          cat /tmp/remote-root.txt
+          if grep -E '^(market_forensics|mfengine|docs|_vendor|requirements-dev\.txt|requirements-vendor\.txt|README\.md)/?$' /tmp/remote-root.txt; then
+            echo "::warning::One or more obsolete paths remain. A later deploy will retry cleanup without blocking production health."
+            exit 1
+          fi
+          echo "Legacy hosted files are clean."
+
+      - name: Confirm 0.1.0 remains healthy after cleanup
+        if: always() && steps.health.outcome == 'success'
         run: |
           set -euo pipefail
           body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health)"
