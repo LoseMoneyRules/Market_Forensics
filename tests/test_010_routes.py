@@ -83,4 +83,4 @@ def test_control_browser_worker_pumps_one_due_job(tmp_path, monkeypatch):
 
 def test_health_is_public_and_identifies_web_native_release(tmp_path, monkeypatch):
     app = build_app(tmp_path, monkeypatch); response = app.test_client().get("/health"); assert response.status_code == 200
-    payload = response.get_json(); assert payload["version"] == "0.1.5"; assert payload["architecture"] == "web-native"
+    payload = response.get_json(); assert payload["version"] == "0.1.6"; assert payload["architecture"] == "web-native"
