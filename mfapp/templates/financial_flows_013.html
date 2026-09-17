@@ -11,3 +11,4 @@
   {% if not flows %}<div class="panel"><p class="muted">No calculated flow is stored for FY{{ selected_year }} yet. Recalculate after SEC data is available.</p></div>{% endif %}
 </section>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/flows.js') }}" defer></script>{% endblock %}
