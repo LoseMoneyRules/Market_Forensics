@@ -22,7 +22,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     env = os.environ.get("MF_ENV", "development").lower()
     db_url = os.environ.get("MF_DATABASE_URL", "").strip()
     if not db_url:
-        db_url = "sqlite:///" + str(Path(app.instance_path) / "market_forensics_015.db")
+        db_url = "sqlite:///" + str(Path(app.instance_path) / "market_forensics_dev.db")
     if db_url.startswith("sqlite:///instance/"):
         db_url = "sqlite:///" + str(Path(app.instance_path) / db_url.split("sqlite:///instance/", 1)[1])
     if env == "production" and db_url.startswith("sqlite"):
@@ -39,7 +39,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.1.7",
+        VERSION="0.2.0",
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
@@ -94,25 +94,16 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     from .auth import bp as auth_bp
     from .routes import bp as web_bp
-    from . import routes_013 as release_routes_013  # noqa: F401
-    from . import routes_015 as release_routes_015  # noqa: F401
-    from . import routes_016 as release_routes_016  # noqa: F401
-    from . import routes_017 as release_routes_017  # noqa: F401
-    from .alerts_0171 import install_account_email_policy
-    install_account_email_policy()
+    from . import research_routes  # noqa: F401
+    from . import workspace_routes  # noqa: F401
+    from . import support_routes  # noqa: F401
+    from . import alert_routes  # noqa: F401
     from .preview import bp as preview_bp
     app.register_blueprint(auth_bp); app.register_blueprint(web_bp); app.register_blueprint(preview_bp); app.register_blueprint(trace_bp)
 
     if app.config.get("AUTO_MIGRATE"):
         from .schema import bootstrap_schema
-        from .upgrade_012 import queue_existing_coverage_prefill as queue_012
-        from .upgrade_013 import queue_existing_coverage_prefill as queue_013
-        from .upgrade_014 import queue_existing_coverage_prefill as queue_014
-        from .upgrade_015 import queue_existing_coverage_refresh as queue_015
         with app.app_context():
             schema_result = bootstrap_schema(migrate_legacy=True)
-            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {
-                "schema": schema_result, "upgrade_0_1_2": queue_012(), "upgrade_0_1_3": queue_013(),
-                "upgrade_0_1_4": queue_014(), "upgrade_0_1_5": queue_015(),
-            }
+            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {"schema": schema_result, "release": "0.2.0"}
     return app
