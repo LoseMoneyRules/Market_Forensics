@@ -1,9 +1,52 @@
 {% extends "base.html" %}{% block title %}Settings / Data · Market Forensics{% endblock %}{% block content %}
-<section class="page"><div class="page-head"><p class="eyebrow">SYSTEM</p><h1>Settings / Data</h1><p>Provider credentials are encrypted server-side. CONTROL also runs a browser worker while the app is open; cPanel cron remains the unattended fallback.</p></div>
-<div class="two-col"><form class="panel stack" method="post" action="{{ url_for('web.save_provider_settings') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Data providers</h2><button class="button primary" type="submit">Save</button></div>
-{% for name,label in [('alpaca_key','Alpaca key'),('alpaca_secret','Alpaca secret'),('tiingo_token','Tiingo token'),('alpha_vantage_key','Alpha Vantage key'),('massive_key','Massive key'),('sec_user_agent','SEC User-Agent')] %}<div class="secret-row"><label>{{ label }}<input name="{{ name }}" {% if 'secret' in name or 'token' in name or 'key' in name %}type="password"{% endif %} placeholder="Enter only to replace"></label><label class="checkbox compact"><input type="checkbox" name="remove_{{ name }}" value="1"> Remove</label></div>{% endfor %}
-<div class="provider-status">{% for provider,ok in providers.items() %}<span class="status-chip {{ 'ready' if ok else '' }}">{{ provider|upper }} · {{ 'PUBLIC' if provider == 'finra' else ('READY' if ok else 'NOT SET') }}</span>{% endfor %}</div><p class="muted">FINRA Reg SHO daily short-sale volume is read from FINRA's public files; no FINRA token is required for this feed.</p></form>
-<div class="panel"><div class="panel-head"><h2>Job execution</h2></div><p>Recommended unattended cPanel cron:</p><code class="code-block">python manage.py run-jobs --limit 5</code><p class="muted">Browser worker: {{ queue_status.running }} running · {{ queue_status.queued }} queued · {{ queue_status.failed }} failed. GET pages never execute heavy jobs.</p><div class="button-row"><form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Run discovery scan</button></form><form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Queue bulk refresh</button></form></div></div></div>
-<div class="panel"><div class="panel-head"><h2>Recent jobs</h2></div><div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Attempts</th><th>Created</th><th>Error</th></tr></thead><tbody>{% for job in jobs %}<tr data-job-id="{{ job.id }}"><td>#{{ job.id }}</td><td>{{ job.job_type }}</td><td><span class="status-chip" data-job-status>{{ job.status }}</span></td><td data-job-attempts>{{ job.attempts }}/{{ job.max_attempts }}</td><td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td data-job-error>{{ job.error_message[:120] if job.error_message else '—' }}</td></tr>{% else %}<tr><td colspan="6" class="empty-cell">No jobs yet.</td></tr>{% endfor %}</tbody></table></div></div>
-<div class="panel"><div class="panel-head"><h2>Refresh runs</h2></div>{% for run in refreshes %}<div class="list-row"><div><strong>{{ run.refresh_type }}</strong><p>{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}{% if run.finished_at %} → {{ run.finished_at.strftime('%H:%M') }}{% endif %}</p></div><span class="status-chip">{{ run.status }}</span></div>{% else %}<p class="muted">No refresh history.</p>{% endfor %}</div></section>
+<section class="page">
+  <div class="page-head"><p class="eyebrow">SYSTEM</p><h1>Settings / Data</h1><p>One clean data layer: credentials stay encrypted server-side, provider capabilities are explicit, and CONTROL can see exactly what is available.</p></div>
+
+  <div class="panel">
+    <div class="panel-head"><div><p class="eyebrow">DATA COVERAGE</p><h2>Provider capabilities</h2></div><span class="status-chip ready">AUDITABLE</span></div>
+    <div class="provider-grid">
+      {% for p in provider_catalog %}
+      <div class="provider-card">
+        <div class="provider-card-head"><strong>{{ p.name }}</strong><span class="status-chip {{ 'ready' if p.state in ['READY','PUBLIC'] else '' }}">{{ p.state }}</span></div>
+        <span>{{ p.category }}</span><p>{{ p.capabilities }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="two-col">
+    <form class="panel stack" method="post" action="{{ url_for('web.save_provider_settings') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="panel-head"><div><p class="eyebrow">PRIVATE CREDENTIALS</p><h2>Data providers</h2></div><button class="button primary" type="submit">Save</button></div>
+      {% for name,label in [
+        ('alpaca_key','Alpaca key'),('alpaca_secret','Alpaca secret'),
+        ('sec_user_agent','SEC User-Agent'),
+        ('finra_client_id','FINRA Public API Client ID'),('finra_client_secret','FINRA Public API Client Secret'),
+        ('tiingo_token','Tiingo token'),('alpha_vantage_key','Alpha Vantage key'),('massive_key','Massive key')
+      ] %}
+      <div class="secret-row"><label>{{ label }}<input name="{{ name }}" {% if 'secret' in name or 'token' in name or 'key' in name %}type="password"{% endif %} placeholder="Enter only to replace"></label><label class="checkbox compact"><input type="checkbox" name="remove_{{ name }}" value="1"> Remove</label></div>
+      {% endfor %}
+      <div class="provider-status">
+        {% for provider,ok in providers.items() %}
+          <span class="status-chip {{ 'ready' if ok else '' }}">{{ provider|upper|replace('_',' ') }} · {{ 'PUBLIC' if provider == 'finra' else ('READY' if ok else 'NOT SET') }}</span>
+        {% endfor %}
+      </div>
+      <div class="notice teal"><strong>FINRA:</strong> daily Reg SHO volume needs no credential. The optional Public API Client ID + Client Secret unlock consolidated short interest, days-to-cover and threshold history.</div>
+    </form>
+
+    <div>
+      <form class="panel stack" method="post" action="{{ url_for('web.save_display_settings') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="panel-head"><div><p class="eyebrow">DISPLAY</p><h2>Financial numbers</h2></div><button class="button" type="submit">Apply</button></div>
+        <label>Display format<select name="number_format">{% for mode in number_formats %}<option value="{{ mode }}" {% if number_format == mode %}selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
+        <p class="muted"><strong>AUTO</strong> chooses K/M/B/T by magnitude. <strong>FULL</strong> keeps the complete number. K, M, B and T force a consistent unit across financial tables. Per-share prices always remain full precision.</p>
+      </form>
+
+      <div class="panel"><div class="panel-head"><h2>Job execution</h2></div><p>CONTROL runs a browser worker while the app is open. Recommended unattended cPanel cron:</p><code class="code-block">python manage.py run-jobs --limit 5</code><p class="muted">{{ queue_status.running }} running · {{ queue_status.queued }} queued · {{ queue_status.failed }} failed. Duplicate logical jobs are not added.</p><div class="button-row"><form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Run discovery scan</button></form><form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Queue full refresh</button></form></div></div>
+    </div>
+  </div>
+
+  <div class="panel"><div class="panel-head"><h2>Recent jobs</h2></div><div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Attempts</th><th>Created</th><th>Error</th></tr></thead><tbody>{% for job in jobs %}<tr data-job-id="{{ job.id }}"><td>#{{ job.id }}</td><td>{{ job.job_type }}</td><td><span class="status-chip" data-job-status>{{ job.status }}</span></td><td data-job-attempts>{{ job.attempts }}/{{ job.max_attempts }}</td><td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td data-job-error>{{ job.error_message[:120] if job.error_message else '—' }}</td></tr>{% else %}<tr><td colspan="6" class="empty-cell">No jobs yet.</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="panel"><div class="panel-head"><h2>Refresh runs</h2></div>{% for run in refreshes %}<div class="list-row"><div><strong>{{ run.refresh_type }}</strong><p>{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}{% if run.finished_at %} → {{ run.finished_at.strftime('%H:%M') }}{% endif %}</p></div><span class="status-chip">{{ run.status }}</span></div>{% else %}<p class="muted">No refresh history.</p>{% endfor %}</div>
+</section>
 {% endblock %}
