@@ -13,10 +13,12 @@ from .core_models import (
     Expectation,
     FinancialPeriod,
     HistoricalPrice,
+    MarketSnapshot,
     Provenance,
     RefreshRun,
     Security,
     Source,
+    ValuationModel,
 )
 from .current_financials import current_row
 from .extensions import db
@@ -108,7 +110,6 @@ def valuation_price_history(security_id: int, days: int = 730) -> list[dict[str,
         HistoricalPrice.security_id == security_id,
         HistoricalPrice.trade_date >= cutoff,
     ).order_by(HistoricalPrice.trade_date.asc(), HistoricalPrice.id.asc()).all()
-    # Keep one observation per date/provider preference and downsample only when the cache is unusually dense.
     by_day: dict[date, Any] = {}
     for row in rows:
         by_day[row.trade_date] = row
@@ -209,10 +210,12 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
     }
 
 
-def audit_2_summary(company_id: int, security_id: int) -> dict[str, Any]:
+def audit_2_summary(company_id: int, security_id: int, coverage_id: int | None = None) -> dict[str, Any]:
+    """Return evidence/calculation lineage only for the current company/security/research coverage."""
     now = utcnow()
     sources = Source.query.filter_by(company_id=company_id).order_by(Source.retrieved_at.desc()).all()
     periods = FinancialPeriod.query.filter_by(company_id=company_id).order_by(FinancialPeriod.end_date.desc()).all()
+    period_ids = [row.id for row in periods]
     provenance = Provenance.query.join(FinancialPeriod, Provenance.financial_period_id == FinancialPeriod.id).filter(
         FinancialPeriod.company_id == company_id
     ).order_by(Provenance.created_at.desc()).all()
@@ -227,6 +230,15 @@ def audit_2_summary(company_id: int, security_id: int) -> dict[str, Any]:
         limit = 3 if source.provider.upper() not in {"SEC"} else 120
         if age_days is not None and age_days > limit:
             stale_sources.append({"id": source.id, "provider": source.provider, "title": source.title, "age_days": round(age_days, 1), "retrieved_at": _iso(source.retrieved_at)})
+
+    market = MarketSnapshot.query.filter_by(security_id=security_id).order_by(MarketSnapshot.as_of.desc(), MarketSnapshot.id.desc()).first()
+    if market and market.as_of:
+        market_age_hours = (now - market.as_of).total_seconds() / 3600.0
+        if market_age_hours > 24:
+            stale_sources.append({
+                "id": f"market:{market.id}", "provider": market.provider, "title": "Current market price",
+                "age_days": round(market_age_hours / 24.0, 1), "retrieved_at": _iso(market.created_at),
+            })
 
     missing_provenance = []
     latest_periods = periods[:8]
@@ -243,6 +255,27 @@ def audit_2_summary(company_id: int, security_id: int) -> dict[str, Any]:
     ]
 
     lineage = []
+    if market:
+        lineage.append({
+            "field": "current_price", "provider": market.provider, "source": "Market snapshot", "accession": None,
+            "period": _iso(market.as_of), "retrieved_at": _iso(market.created_at), "freshness_at": _iso(market.as_of),
+            "transformation": market.quality or "OBSERVED", "calculation_version": "source observation",
+            "manual_override": False, "restated": False, "notes": f"{market.currency} {market.price}",
+        })
+
+    valuation_model = None
+    if coverage_id is not None:
+        valuation_model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).order_by(ValuationModel.updated_at.desc()).first()
+    if valuation_model:
+        lineage.append({
+            "field": "bear_base_bull_expected_value", "provider": "INTERNAL",
+            "source": valuation_model.name or "Valuation model", "accession": None, "period": "current research horizon",
+            "retrieved_at": _iso(valuation_model.updated_at), "freshness_at": _iso(valuation_model.updated_at),
+            "transformation": valuation_model.method, "calculation_version": valuation_model.calculation_version or ENGINE_VERSION,
+            "manual_override": False, "restated": False,
+            "notes": "Scenario outputs use the active stored assumptions and current verified market context.",
+        })
+
     for p in provenance[:200]:
         source = db.session.get(Source, p.source_id) if p.source_id else None
         period = db.session.get(FinancialPeriod, p.financial_period_id) if p.financial_period_id else None
@@ -261,14 +294,18 @@ def audit_2_summary(company_id: int, security_id: int) -> dict[str, Any]:
             "notes": p.notes,
         })
 
-    latest_calc = CalculationRun.query.order_by(CalculationRun.started_at.desc()).limit(30).all()
+    calc_query = CalculationRun.query
+    if coverage_id is not None:
+        clauses = [CalculationRun.coverage_id == coverage_id]
+        if period_ids:
+            clauses.append(CalculationRun.financial_period_id.in_(period_ids))
+        calc_query = calc_query.filter(db.or_(*clauses))
+    elif period_ids:
+        calc_query = calc_query.filter(CalculationRun.financial_period_id.in_(period_ids))
+    latest_calc = calc_query.order_by(CalculationRun.started_at.desc()).limit(50).all()
     calc_lineage = [{
-        "type": row.calculation_type,
-        "version": row.calculation_version,
-        "status": row.status,
-        "started_at": _iso(row.started_at),
-        "finished_at": _iso(row.finished_at),
-        "error_id": row.error_id,
+        "type": row.calculation_type, "version": row.calculation_version, "status": row.status,
+        "started_at": _iso(row.started_at), "finished_at": _iso(row.finished_at), "error_id": row.error_id,
     } for row in latest_calc]
 
     warnings = []
@@ -280,14 +317,11 @@ def audit_2_summary(company_id: int, security_id: int) -> dict[str, Any]:
 
     return {
         "engine_version": ENGINE_VERSION,
-        "source_count": len(sources),
-        "provenance_count": len(provenance),
-        "stale_sources": stale_sources[:30],
-        "source_disagreement": source_disagreement[:30],
-        "missing_provenance": missing_provenance[:50],
-        "lineage": lineage,
-        "calculation_lineage": calc_lineage,
-        "warnings": warnings,
+        "scope": {"company_id": company_id, "security_id": security_id, "coverage_id": coverage_id},
+        "source_count": len(sources), "provenance_count": len(provenance),
+        "stale_sources": stale_sources[:30], "source_disagreement": source_disagreement[:30],
+        "missing_provenance": missing_provenance[:50], "lineage": lineage,
+        "calculation_lineage": calc_lineage, "warnings": warnings,
     }
 
 
