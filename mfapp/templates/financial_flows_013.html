@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ security.ticker }} · Financial Flows · Market Forensics{% endblock %}
+{% block content %}
+<section class="page company-page">
+  <div class="company-head"><div><div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>Research · Financial Flows</span></div><h1>{{ company.display_name }}</h1></div><form method="get"><select name="year" onchange="this.form.submit()">{% for p in periods %}<option value="{{ p.fiscal_year }}" {% if selected_year==p.fiscal_year %}selected{% endif %}>FY{{ p.fiscal_year }}</option>{% endfor %}</select></form></div>
+  {% set section='financial-flows' %}{% include "_company_tabs_013.html" %}
+  <div class="action-bar"><div><h2>Financial Flows</h2><p>Filing-aware stored flows. Calculation build identifiers stay in the audit trail instead of cluttering the research page.</p></div><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='recalculate') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Recalculate</button></form></div>
+  <div class="flow-tabs"><button class="flow-tab active" data-flow-target="income-flow">Income Statement</button><button class="flow-tab" data-flow-target="cash-flow">Cash Flow</button></div>
+  <div id="income-flow" class="flow-panel active"><div class="flow-canvas" data-flow='{{ (flows.get("INCOME_STATEMENT") or {})|tojson|forceescape }}'></div></div>
+  <div id="cash-flow" class="flow-panel"><div class="flow-canvas" data-flow='{{ (flows.get("CASH_FLOW") or {})|tojson|forceescape }}'></div></div>
+  {% if not flows %}<div class="panel"><p class="muted">No calculated flow is stored for FY{{ selected_year }} yet. Recalculate after SEC data is available.</p></div>{% endif %}
+</section>
+{% endblock %}
