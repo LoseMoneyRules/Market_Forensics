@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, url_for
+from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, url_for
 
 from .access import audit, effective_role, require_control_view
 from .core_models import Company, Coverage, InvestmentState, Job, Position, Publication, RefreshRun, Security, Snapshot
@@ -10,7 +10,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
-from .reporting import render_docx, render_pdf, research_report_data
+from .reporting import get_report_branding, render_docx, render_pdf, research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -114,7 +114,8 @@ def research_report(ticker, fmt):
     require_control_view()
     ctx = _ctx(ticker)
     mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
-    data = research_report_data(ctx, mode=mode)
+    branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
+    data = research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
     stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.0"
     if fmt == "docx":
@@ -212,6 +213,7 @@ def settings():
         queue_status=_queue_status(g.user.id),
         number_formats=NUMBER_FORMATS,
         number_format=get_number_format(g.user.id),
+        report_branding=get_report_branding(g.user.id, current_app.config.get("LOGO_URL", "")),
     )
 
 
@@ -240,6 +242,26 @@ def save_display_settings():
     audit("settings.display", "user", g.user.id, {"number_format": mode}); db.session.commit()
     flash(f"Number display set to {mode}.", "success")
     return redirect(request.referrer or url_for("web.settings"))
+
+
+@bp.post("/settings/report-branding")
+@role_required("CONTROL")
+def save_report_branding():
+    require_control_view()
+    try:
+        value = set_report_branding(
+            g.user.id,
+            title=str(request.form.get("title") or "Market Forensics").strip(),
+            prepared_by=str(request.form.get("prepared_by") or "").strip(),
+            footer=str(request.form.get("footer") or "Lose Money Rules").strip(),
+            logo_url=str(request.form.get("logo_url") or "").strip(),
+        )
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("web.settings"))
+    audit("settings.report_branding", "user", g.user.id, {"title": value.get("title"), "logo": bool(value.get("logo_url"))})
+    flash("Report branding saved.", "success")
+    return redirect(url_for("web.settings"))
 
 
 @bp.get("/control")
