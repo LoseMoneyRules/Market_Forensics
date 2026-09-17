@@ -12,6 +12,7 @@ from .extensions import db
 from .jobs import enqueue_job
 from .routes import SECTIONS, _ctx, bp
 from .security import role_required
+from .research_synthesis import valuation_price_history
 from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, n
 
 
@@ -82,6 +83,7 @@ def _current_model_context(ctx: dict) -> dict:
         "reference_price_source": reference_price_source,
         "reference_price_stale": reference_price_stale,
         "quote_candidates": ((ctx["market"].payload or {}).get("candidates") or []) if ctx.get("market") else [],
+        "price_history": valuation_price_history(ctx["security"].id, 730),
     }
 
 
