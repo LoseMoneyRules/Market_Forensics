@@ -1,4 +1,17 @@
-{% if section == 'expectations' %}
+{% if section == 'historical-test' %}
+  {% if latest_run %}
+    {% set distinct_anchors = samples|map(attribute='anchor_date')|unique|list if samples is defined else [] %}
+    {% set run_seconds = (latest_run.finished_at - latest_run.created_at).total_seconds() if latest_run.finished_at and latest_run.created_at else none %}
+    <div class="current-strip research-section-kpis historical-run-kpis">
+      <div class="current-kpi"><span>Run started</span><strong>{{ latest_run.created_at.strftime('%Y-%m-%d') }}</strong><small>{{ latest_run.created_at.strftime('%H:%M:%S') }}</small></div>
+      <div class="current-kpi"><span>Run completed</span><strong>{{ latest_run.finished_at.strftime('%Y-%m-%d') if latest_run.finished_at else 'Running' }}</strong><small>{{ latest_run.finished_at.strftime('%H:%M:%S') if latest_run.finished_at else '—' }}</small></div>
+      <div class="current-kpi"><span>Runtime</span><strong>{% if run_seconds is not none %}{{ '%.1f'|format(run_seconds) }}s{% else %}—{% endif %}</strong><small>Execution time, not replay date</small></div>
+      <div class="current-kpi"><span>Requested history</span><strong>{{ latest_run.lookback_years }}Y</strong><small>Walk-forward window</small></div>
+      <div class="current-kpi"><span>Distinct replay dates</span><strong>{{ distinct_anchors|length }}</strong><small>Duplicate anchors hidden from display</small></div>
+      <div class="current-kpi"><span>Scored samples</span><strong>{{ latest_run.sample_size }}</strong><small>{{ latest_run.status }}</small></div>
+    </div>
+  {% endif %}
+{% elif section == 'expectations' %}
   {% set cur = brief.current_financial if brief else none %}
   {% set metrics = cur.metrics if cur else {} %}
   {% set f1 = forecast_rows[0] if forecast_rows is defined and forecast_rows else none %}
