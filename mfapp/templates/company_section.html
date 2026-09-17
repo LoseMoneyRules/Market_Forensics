@@ -197,7 +197,26 @@
     <div class="two-col"><div class="panel"><h2>Catalyst ledger</h2>{% for x in catalyst_rows %}<div class="list-row"><div><strong>{{ x.title }}</strong><p>{{ x.expected_date or 'No date' }} · {{ x.direction }} · {{ x.evidence }}</p></div><span class="status-chip">{{ x.catalyst_type }}</span></div>{% else %}<p class="muted">No sourced event catalysts.</p>{% endfor %}</div><form class="panel stack" method="post" action="{{ url_for('web.add_catalyst', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>Add catalyst</h2><label>Title<input name="title" required></label><div class="form-grid two"><label>Type<input name="catalyst_type"></label><label>Date<input type="date" name="expected_date"></label></div><label>Direction<select name="direction"><option>POSITIVE</option><option selected>MIXED</option><option>NEGATIVE</option></select></label><label>Evidence<textarea name="evidence"></textarea></label><button class="button primary">Add</button></form></div>
 
   {% elif section == 'management' %}
+    <div class="action-bar"><div><h2>Management accountability</h2><p>Execution, capital allocation and promises vs filed actuals. No personality scoring.</p></div><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='management') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Scan SEC guidance</button></form></div>
     <div class="panel"><div class="panel-head"><div><p class="eyebrow">MANAGEMENT ENGINE</p><h2>Execution confidence from evidence</h2></div><span class="status-chip">{{ management_engine.coverage_pct }}% evidence coverage</span></div><div class="management-score"><div class="management-score-main"><strong>{{ '%.0f'|format(management_engine.score) if management_engine.score is not none else '—' }}</strong><span>{{ management_engine.label }}</span><small>Not a personality/integrity judgment</small></div><div>{% for c in management_engine.components %}<div class="management-component"><strong>{{ c.label }}</strong><b>{{ '%.0f'|format(c.score) if c.score is not none else '—' }}</b><span>{{ c.detail }}</span></div>{% endfor %}</div></div></div>
+    <div class="two-col management-promises">
+      <div class="panel">
+        <div class="panel-head"><div><p class="eyebrow">PROMISES VS ACTUALS</p><h2>Management said → result</h2></div><span class="status-chip">{{ management_promises|length }}</span></div>
+        <div class="table-card embedded scroll"><table class="data-table numeric">
+          <thead><tr><th>FY</th><th>Metric</th><th>Promise</th><th>Actual</th><th>Status</th><th>Origin</th></tr></thead>
+          <tbody>{% for p in management_promises %}<tr><td>FY{{ p.target_year }}</td><td><strong>{{ p.metric }}</strong></td><td>{% if p.low == p.high %}{{ p.low|mf_num(2) }}{% else %}{{ p.low|mf_num(2) }} – {{ p.high|mf_num(2) }}{% endif %} {{ p.unit }}</td><td>{{ p.actual|mf_num(2) if p.actual is not none else '—' }}</td><td><span class="status-chip">{{ p.status }}</span></td><td>{{ p.origin }}</td></tr><tr class="promise-statement"><td></td><td colspan="5"><small>{{ p.statement }}</small></td></tr>{% else %}<tr><td colspan="6" class="empty-cell">No explicit numeric guidance stored yet. Run the SEC guidance scan or add a promise manually.</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+      <form class="panel stack" method="post" action="{{ url_for('web.add_management_promise', ticker=security.ticker) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="panel-head"><div><p class="eyebrow">COMMIT PROMISE</p><h2>Add guidance the parser missed</h2></div><button class="button primary" type="submit">Add</button></div>
+        <label>Metric<select name="metric"><option value="revenue">Revenue</option><option value="revenue_growth_pct">Revenue growth %</option><option value="gross_margin_pct">Gross margin %</option><option value="operating_margin_pct">Operating margin %</option><option value="net_margin_pct">Net margin %</option><option value="fcf">Free cash flow</option></select></label>
+        <div class="form-grid three"><label>Fiscal year<input name="target_year" inputmode="numeric" required></label><label>Low / target<input name="low" inputmode="decimal" required></label><label>High<input name="high" inputmode="decimal"></label></div>
+        <label>Unit<input name="unit" placeholder="% or USD"></label>
+        <label>Original statement / source note<textarea name="statement" rows="5"></textarea></label>
+      </form>
+    </div>
+
     <div class="panel">
       <div class="panel-head"><div><p class="eyebrow">ACCOUNTABILITY</p><h2>Filed execution history</h2><p class="muted">Measures outcomes and capital-allocation evidence; it is not a judgment about personality or integrity.</p></div></div>
       <div class="table-card embedded scroll"><table class="data-table numeric">
