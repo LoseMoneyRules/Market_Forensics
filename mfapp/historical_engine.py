@@ -200,7 +200,7 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
     company = db.session.get(Company, security.company_id) if security else None
     if security is None or company is None:
         raise RuntimeError("Security/company not found")
-    years = max(3, min(int(lookback_years), 15))
+    years = max(3, min(int(lookback_years), 40))
     market_refresh = refresh_historical_prices(security, user_id, years)
     provider = preferred_provider(security.id)
     user_agent = _ua(user_id)
