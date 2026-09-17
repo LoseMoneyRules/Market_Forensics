@@ -12,9 +12,9 @@ from .research_synthesis import audit_2_summary, build_synthesis, expectations_c
 from .monitoring_engine import NUMERIC_OPERATORS
 from .alert_engine import (
     SYSTEM_ALERTS,
-    alert_catalog,
-    alert_email,
-    alert_subscription,
+    alert_catalog as get_alert_catalog,
+    alert_email as get_alert_email,
+    alert_subscription as get_alert_subscription,
     evaluate_coverage,
     save_alert_catalog,
     save_alert_email,
@@ -108,11 +108,11 @@ def _rule_payload(row: MonitoringRule, catalog: dict, subscription: dict) -> dic
 
 def _monitoring_surface(coverage) -> dict:
     rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.id.asc()).all()
-    catalog = alert_catalog(coverage.id)
-    subscription = alert_subscription(g.user.id, coverage.id)
+    catalog = get_alert_catalog(coverage.id)
+    subscription = get_alert_subscription(g.user.id, coverage.id)
     return {
         "coverage_id": coverage.id,
-        "email": alert_email(g.user.id),
+        "email": get_alert_email(g.user.id),
         "smtp_ready": bool(__import__("os").environ.get("MF_SMTP_HOST", "").strip() and __import__("os").environ.get("MF_SMTP_FROM", "").strip()),
         "catalog": catalog,
         "subscription": subscription,
@@ -200,9 +200,9 @@ def research_surface_detail(ticker: str, section: str):
 
 @bp.route("/alerts/email", methods=["GET", "POST"])
 @login_required
-def alert_email():
+def alert_email_route():
     if request.method == "GET":
-        return jsonify({"email": alert_email(g.user.id)})
+        return jsonify({"email": get_alert_email(g.user.id)})
     payload = request.get_json(silent=True) or request.form.to_dict()
     try:
         value = save_alert_email(g.user.id, str(payload.get("email") or ""), g.user.id)
@@ -213,7 +213,7 @@ def alert_email():
 
 @bp.route("/alerts/subscription/<int:coverage_id>", methods=["GET", "POST"])
 @login_required
-def alert_subscription(coverage_id: int):
+def alert_subscription_route(coverage_id: int):
     try:
         current = subscription_catalog_for_user(g.user.id, coverage_id)
     except PermissionError as exc:
@@ -239,12 +239,12 @@ def alert_subscription(coverage_id: int):
         )
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Invalid alert selection."}), 400
-    return jsonify({"ok": True, "subscription": value, "email": alert_email(g.user.id)})
+    return jsonify({"ok": True, "subscription": value, "email": get_alert_email(g.user.id)})
 
 
 @bp.post("/company/<ticker>/alerts/catalog")
 @role_required("CONTROL")
-def alert_catalog(ticker: str):
+def alert_catalog_route(ticker: str):
     require_control_view()
     ctx = _ctx(ticker)
     payload = request.get_json(silent=True) or {}
@@ -326,7 +326,7 @@ def alert_rule(ticker: str, rule_id: int):
         return jsonify({"ok": False, "error": "Rule name is required."}), 400
     audit("monitoring.rule.edit", "monitoring_rule", rule.id, {"ticker": ticker.upper()})
     db.session.commit()
-    return jsonify({"ok": True, "rule": _rule_payload(rule, alert_catalog(ctx["coverage"].id), alert_subscription(g.user.id, ctx["coverage"].id))})
+    return jsonify({"ok": True, "rule": _rule_payload(rule, get_alert_catalog(ctx["coverage"].id), get_alert_subscription(g.user.id, ctx["coverage"].id))})
 
 
 @bp.post("/company/<ticker>/monitoring/evaluate-now")
