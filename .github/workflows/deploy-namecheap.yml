@@ -10,66 +10,39 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 25
     environment: production
-
     steps:
       - name: Checkout main
         uses: actions/checkout@v7
         with:
           ref: main
-
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
           cache: 'pip'
-
-      - name: Install and verify release
+      - name: Test release before upload
+        env:
+          MF_SECRET_KEY: test-secret-key
         run: |
           set -euo pipefail
           pip install -r requirements-dev.txt
-          python tools/materialize_v312.py
-          python tools/verify_v312.py
-          python .v312_reference/SELF_TEST.py
-          python -m compileall -q app.py manage.py mfapp market_forensics tests tools
-          export MF_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
           export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+          python -m compileall -q app.py manage.py mfapp tests
           pytest -q
-
-      - name: Build hosted dependency bundle
-        run: |
-          set -euo pipefail
-          rm -rf _vendor
-          python -m pip install --disable-pip-version-check --no-compile --target _vendor -r requirements-vendor.txt
-          python -S - <<'PY'
-          import sys
-          sys.path.insert(0, '_vendor')
-          import numpy, pandas, docx, reportlab, PIL
-          print('Hosted dependency bundle PASS', numpy.__version__, pandas.__version__)
-          PY
-          find _vendor -type d -name __pycache__ -prune -exec rm -rf {} +
-          find _vendor -type f -name '*.pyc' -delete
-
-      - name: Verify deployment secrets
+      - name: Verify FTPES secrets
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
           FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
           FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in FTP_HOST FTP_USER FTP_PASS; do
-            if [ -z "${!name:-}" ]; then
-              echo "Missing required GitHub secret: $name"
-              exit 1
-            fi
-          done
-
+          for name in FTP_HOST FTP_USER FTP_PASS; do test -n "${!name:-}" || { echo "Missing $name"; exit 1; }; done
       - name: Install FTPES client
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq lftp
-
-      - name: Deploy application files over FTPES
+      - name: Upload application payload and restart Passenger
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
           FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
@@ -77,27 +50,6 @@ jobs:
         run: |
           set -euo pipefail
           printf 'restart %s\n' "${GITHUB_SHA}" > /tmp/restart.txt
-
-          echo "Starting resilient _vendor sync. Existing complete files are skipped by size; partial files are resumed."
-          timeout --signal=TERM 75m lftp <<LFTP
-          set cmd:fail-exit yes
-          set ssl:verify-certificate yes
-          set ftp:ssl-force yes
-          set ftp:ssl-protect-data yes
-          set net:max-retries 3
-          set net:timeout 30
-          set net:reconnect-interval-base 5
-          set net:reconnect-interval-max 20
-          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
-          mirror --reverse --continue --ignore-time --parallel=4 --verbose \
-            --exclude-glob __pycache__/ \
-            --exclude-glob '*.pyc' \
-            ./_vendor ./_vendor
-          bye
-          LFTP
-          echo "_vendor sync complete."
-
-          echo "Starting application payload sync."
           timeout --signal=TERM 10m lftp <<LFTP
           set cmd:fail-exit yes
           set ssl:verify-certificate yes
@@ -105,52 +57,29 @@ jobs:
           set ftp:ssl-protect-data yes
           set net:max-retries 3
           set net:timeout 30
-          set net:reconnect-interval-base 5
-          set net:reconnect-interval-max 20
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
-
-          mirror --reverse --delete --verbose \
-            --exclude-glob __pycache__/ \
-            --exclude-glob '*.pyc' \
-            ./mfapp ./mfapp
-
-          mirror --reverse --delete --verbose \
-            --exclude-glob __pycache__/ \
-            --exclude-glob '*.pyc' \
-            ./market_forensics ./market_forensics
-
-          mirror --reverse --delete --verbose \
-            --exclude-glob __pycache__/ \
-            --exclude-glob '*.pyc' \
-            ./mfengine ./mfengine
-
+          mirror --reverse --delete --verbose --exclude-glob __pycache__/ --exclude-glob '*.pyc' ./mfapp ./mfapp
           mirror --reverse --delete --verbose ./docs ./docs
-
           put -O . app.py
           put -O . manage.py
           put -O . requirements.txt
           put -O . requirements-dev.txt
-          put -O . requirements-vendor.txt
           put -O . README.md
           put -O . VERSION
-
           put /tmp/restart.txt -o tmp/restart.txt
           bye
           LFTP
-          echo "Application payload sync complete; Passenger restart requested."
-
       - name: Production health check
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health || true)"
             if printf '%s' "$body" | grep -q '"status":"ok"' \
-              && printf '%s' "$body" | grep -q '"version":"0.0.4"' \
-              && printf '%s' "$body" | grep -q '"engine":"3.1.12 FULL"'; then
-              echo "$body"
-              exit 0
+              && printf '%s' "$body" | grep -q '"version":"0.1.0"' \
+              && printf '%s' "$body" | grep -q '"architecture":"web-native"'; then
+              echo "$body"; exit 0
             fi
             sleep 6
           done
-          echo "Production health check failed, wrong release version, or wrong engine."
+          echo "Health check failed. Migration/startup/version mismatch is fail-closed."
           exit 1

@@ -1,1 +1,1 @@
-# 0.1.0 has no heavy vendored runtime. Dependencies are intentionally lightweight.
+# 0.1.0 has no separate heavy vendor bundle. Runtime dependencies live in requirements.txt.

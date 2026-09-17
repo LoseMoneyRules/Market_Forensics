@@ -1,81 +1,32 @@
-# Deploy Market Forensics v0.0.1 on Namecheap Stellar Plus
+# Market Forensics 0.1.0 — Namecheap deployment
 
-This build is designed for Namecheap Shared Hosting using **Setup Python App / WSGI**.
+Production remains on the existing cPanel Python App / Passenger / WSGI stack and the existing MariaDB database.
 
-## 1. Choose the address
-Create a subdomain in cPanel such as `app.yourdomain.com` or use the main domain if Market Forensics will live there. Enable SSL/HTTPS before inviting anyone.
+## Preserve before first 0.1.0 deployment
 
-## 2. Create MariaDB database
-In cPanel create a MySQL/MariaDB database and database user, then grant that user ALL PRIVILEGES on the Market Forensics database. Keep the database name, username, password and host (`localhost` on most cPanel shared-host setups).
+Do not rotate or replace `MF_SECRET_KEY`, `MF_ENCRYPTION_KEY`, `MF_DATABASE_URL`, the database, or the existing CONTROL account. 0.1.0 deliberately reuses the 0.0.4 account/security tables so passwords, TOTP enrollment, roles, user IDs and encrypted API credentials survive the upgrade.
 
-## 3. Upload application
-Upload the repository files into an application folder, for example `/home/CPANEL_USER/market_forensics`.
+## Release path
 
-Do not upload `.env`, local databases, generated 2FA QR images, API secrets or personal data.
+The production workflow is manual and deploys **main** only:
 
-## 4. Create Python application
-In cPanel open **Setup Python App** and create an application:
+1. tests must pass;
+2. the lightweight application payload is uploaded over FTPES;
+3. Passenger is restarted;
+4. `/health` must report version `0.1.0` and architecture `web-native`.
 
-- Python: 3.13 (or the latest supported 3.13 build offered)
-- Application root: `market_forensics`
-- Application URL: your chosen domain/subdomain
-- Startup file: `app.py`
-- Entry point: `app`
+A startup migration failure prevents a healthy application response. The legacy research conversion is recorded once in `mf_schema_migration` and is not a permanent dual-write system.
 
-## 5. Install dependencies
-Inside Setup Python App add `requirements.txt` under configuration files and run **Pip Install**, or activate the virtual environment shown by cPanel and run `pip install -r requirements.txt`.
+## Cron jobs
 
-## 6. Generate production secrets
-Activate the app virtual environment and run `python manage.py generate-secrets`.
+Heavy work is queued in `mf_job` and should be drained by cPanel cron. A practical shared-hosting schedule is every 5 minutes:
 
-Copy the generated values. Never commit them to GitHub.
+```bash
+cd /home/ACCOUNT/PYTHON_APP_ROOT && /home/ACCOUNT/virtualenv/PYTHON_APP_ROOT/3.13/bin/python manage.py run-jobs --limit 5
+```
 
-## 7. Configure environment variables
-In Setup Python App add:
+No daemon, resident worker, Redis, Celery, or long-lived background process is required.
 
-- `MF_ENV=production`
-- `MF_SECRET_KEY=<generated value>`
-- `MF_ENCRYPTION_KEY=<generated Fernet key>`
-- `MF_DATABASE_URL=mysql+pymysql://DBUSER:URL_ENCODED_PASSWORD@localhost/DBNAME`
-- `MF_SITE_NAME=Market Forensics`
-- `MF_SESSION_DAYS=7`
+## Runtime principle
 
-If the database password contains characters such as `@`, `:`, `/`, `#` or `%`, URL-encode the password before placing it in the connection URL.
-
-## 8. Create CONTROL account
-From the activated Python environment run:
-
-`python manage.py bootstrap-admin --email YOUR_EMAIL --name "Your Name"`
-
-Choose a long unique password. The command creates `instance/control-2fa.png`. Open it, scan it with your authenticator, confirm the account works, then delete the PNG from the server.
-
-Optional test data: `python manage.py seed-demo`
-
-The demo uses fictional ticker `MFCO` and is not real investment research.
-
-## 9. Restart application
-Return to **Setup Python App** and press **Restart**.
-
-Open `https://YOUR_DOMAIN/health`.
-
-Expected response: `{"status":"ok","version":"0.0.1"}`
-
-Then open the home page and sign in with CONTROL + authenticator code.
-
-## 10. First beta invite
-Inside CONTROL create one FRIEND invite for yourself or a trusted test email. Open the invite link on a phone, complete password + 2FA enrollment, and verify the mobile experience before inviting anyone else.
-
-## Pre-invite checklist
-- HTTPS works with no certificate warning
-- CONTROL requires password + 2FA
-- FRIEND cannot open `/control`
-- INSIDER cannot open `/control`
-- logout works
-- invite link expires/works only once
-- `instance/` and local databases are not in GitHub
-- production secrets are only in cPanel environment variables
-- backup is enabled
-- phone, iPad and desktop layouts are tested
-
-## GitHub deployment note
-Namecheap Shared Hosting does not offer a native Git VCS deployment workflow on every shared plan. For v0.0.1, upload the repository files to the Python application root first. Automated deployment from GitHub can be added later over SSH if the hosting account permits it.
+Normal page requests read already persisted MariaDB state. API ingestion, SEC refresh, FINRA imports, scans and bulk work belong in jobs. Fast form saves and deterministic Bear/Base/Bull recalculation may execute in-request.
