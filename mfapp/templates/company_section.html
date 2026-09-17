@@ -99,6 +99,25 @@
         <div><h3>INVALIDATION / NEXT</h3><p>{{ synthesis.invalidation or 'No locked thesis invalidation stored.' }}</p>{% for item in synthesis.next %}<p>{{ item }}</p>{% endfor %}</div>
       </div>
     </div>
+    <div class="panel auto-triangulation">
+      <div class="panel-head">
+        <div><p class="eyebrow">AUTOMATIC TRIANGULATION</p><h2>Peer evidence · {{ auto_triangulation.method }}</h2><p class="muted">{% if auto_triangulation.sic %}SEC SIC {{ auto_triangulation.sic }} · {{ auto_triangulation.sic_description }}{% else %}SIC metadata will populate on the next SEC refresh.{% endif %}</p></div>
+        <span class="status-chip">{{ auto_triangulation.peers|length }} peers</span>
+      </div>
+      {% if auto_triangulation.available %}
+        {% if auto_triangulation.signals %}
+        <div class="triangulation-signals">{% for s in auto_triangulation.signals %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.state }}</span></div>{% endfor %}</div>
+        {% endif %}
+        <div class="table-card embedded scroll"><table class="data-table numeric">
+          <thead><tr><th>Metric</th><th>{{ security.ticker }}</th><th>Peer median</th><th>Read</th></tr></thead>
+          <tbody>{% for row in auto_triangulation.comparisons %}<tr><td><strong>{{ row.label }}</strong></td><td>{{ '%.2f'|format(row.target) }}</td><td>{{ '%.2f'|format(row.peer_median) }}</td><td><span class="status-chip">{{ row.state }}</span></td></tr>{% else %}<tr><td colspan="4" class="empty-cell">Peer metrics are still sparse.</td></tr>{% endfor %}</tbody>
+        </table></div>
+        <details><summary><strong>Peer set</strong></summary><div class="peer-hints"><p>{% for p in auto_triangulation.peers %}<strong>{{ p.ticker or p.name }}</strong> · {{ p.match }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p></div></details>
+      {% else %}
+        <div class="notice amber"><strong>PEER SET NOT READY.</strong> {{ auto_triangulation.reason }}</div>
+      {% endif %}
+    </div>
+
     <div class="two-col triangulation-grid">
       <div class="panel">
         <div class="panel-head"><div><p class="eyebrow">EXTERNAL TRIANGULATION</p><h2>Evidence outside the company narrative</h2></div><span class="status-chip">{{ triangulation_rows|length }}</span></div>
