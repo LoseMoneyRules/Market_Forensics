@@ -23,7 +23,7 @@ def test_health_and_version(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
     response = app.test_client().get("/health")
     assert response.status_code == 200
-    assert response.get_json()["version"] == "0.1.0"
+    assert response.get_json()["version"] == "0.1.1"
     assert response.get_json()["architecture"] == "web-native"
 
 
