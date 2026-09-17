@@ -76,9 +76,9 @@
     <div class="panel business-evidence-path">
       <div class="panel-head"><div><p class="eyebrow">EVIDENCE PATH</p><h2>MICRO / MACRO / for / against / invalidation</h2></div></div>
       <div class="evidence-path-grid">
-        <div><h3>MICRO · FOR</h3>{% for item in synthesis.micro_for %}<p>{{ item }}</p>{% else %}<p class="muted">No positive micro signal above threshold.</p>{% endfor %}</div>
-        <div><h3>MICRO · AGAINST</h3>{% for item in synthesis.micro_against %}<p>{{ item }}</p>{% else %}<p class="muted">No automatic counter-signal above threshold.</p>{% endfor %}</div>
-        <div><h3>MACRO / INDUSTRY</h3>{% for item in synthesis.macro %}<p>{{ item }}</p>{% else %}<p class="muted">No stored macro/industry evidence yet.</p>{% endfor %}</div>
+        <div><h3>MICRO · FOR</h3>{% for item in synthesis.micro_for %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}</p>{% else %}<p class="muted">No positive micro signal above threshold.</p>{% endfor %}</div>
+        <div><h3>MICRO · AGAINST</h3>{% for item in synthesis.micro_against %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}</p>{% else %}<p class="muted">No automatic counter-signal above threshold.</p>{% endfor %}</div>
+        <div><h3>MACRO / INDUSTRY</h3>{% for item in synthesis.macro %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}</p>{% else %}<p class="muted">No stored macro/industry evidence yet.</p>{% endfor %}</div>
         <div><h3>INVALIDATION / NEXT</h3><p>{{ synthesis.invalidation or 'No locked thesis invalidation stored.' }}</p>{% for item in synthesis.next %}<p>{{ item }}</p>{% endfor %}</div>
       </div>
     </div>
