@@ -11,13 +11,14 @@
   <link rel="icon" href="{{ url_for('static', filename='img/mark.svg') }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/v012.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/v013.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
 {% if g.user %}
 <header class="topbar">
   <a class="brand" href="{{ url_for('web.dashboard') }}">
     <img src="{{ logo_url or url_for('static', filename='img/mark.svg') }}" alt="" class="brand-mark">
-    <span><strong>Market Forensics</strong><small>{{ mf_version }}</small></span>
+    <span><strong>Market Forensics</strong></span>
   </a>
   <div class="top-actions">
     {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}

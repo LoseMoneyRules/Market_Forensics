@@ -4,7 +4,7 @@ from __future__ import annotations
 # responsibility to keep the model layer readable and shared-hosting friendly.
 from .core_identity import Company, Security, Coverage, MarketSnapshot, Source, FinancialPeriod, RawFinancialFact, NormalizedFinancial
 from .core_research import ResearchState, ResearchVersion, Expectation, ValuationModel, ValuationScenario, BearCaseItem, Catalyst, ManagementAssessment, FinancialFlow, MonitoringRule, MonitoringHistory, RiskPlan, InvestmentState, Position, DecisionJournal
-from .core_operations import Event, Provenance, DataQualityIssue, Job, RefreshRun, Alert
+from .core_operations import Event, Provenance, DataQualityIssue, Job, RefreshRun, Alert, HistoricalPrice, HistoricalTestRun, HistoricalTestSample
 from .core_publication import Snapshot, Publication, CalculationRun, SchemaMigration
 
 __all__ = [
@@ -13,6 +13,6 @@ __all__ = [
     "Expectation", "ValuationModel", "ValuationScenario", "BearCaseItem", "Catalyst",
     "ManagementAssessment", "FinancialFlow", "MonitoringRule", "MonitoringHistory",
     "RiskPlan", "InvestmentState", "Position", "DecisionJournal", "Event", "Provenance",
-    "DataQualityIssue", "Job", "RefreshRun", "Alert", "Snapshot", "Publication",
-    "CalculationRun", "SchemaMigration",
+    "DataQualityIssue", "Job", "RefreshRun", "Alert", "HistoricalPrice", "HistoricalTestRun",
+    "HistoricalTestSample", "Snapshot", "Publication", "CalculationRun", "SchemaMigration",
 ]

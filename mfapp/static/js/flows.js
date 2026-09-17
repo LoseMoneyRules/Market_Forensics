@@ -27,7 +27,7 @@
 
     const title = document.createElement('div');
     title.className = 'flow-title';
-    title.innerHTML = `<div><strong>${data.flow_type || 'Financial Flow'}</strong><div class="muted">${data.period || ''}</div></div><span class="status-chip">${data.calculation_version || ''}</span>`;
+    title.innerHTML = `<div><strong>${data.flow_type || 'Financial Flow'}</strong><div class="muted">${data.period || ''}</div></div>`;
     root.appendChild(title);
 
     if (!edges.length) {

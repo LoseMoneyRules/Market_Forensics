@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ security.ticker }} · Historical Test · Market Forensics{% endblock %}
+{% macro pct(v) %}{% if v is not none %}{{ '%.1f'|format(v|float) }}%{% else %}—{% endif %}{% endmacro %}
+{% macro money(v) %}{% if v is not none %}${{ '%.2f'|format(v|float) }}{% else %}—{% endif %}{% endmacro %}
+{% block content %}
+<section class="page company-page">
+  <div class="company-head"><div><div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>Point-in-time validation</span></div><h1>Historical Test</h1><p>Re-run today's valuation policy in the past using only information that was available at each historical cutoff, then score it with outcomes that happened later.</p></div><form class="panel compact-run" method="post" action="{{ url_for('web.queue_historical_test_013', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Lookback<select name="lookback_years"><option value="5">5 years</option><option value="10" selected>10 years</option><option value="15">15 years</option></select></label><button class="button primary" type="submit">Run walk-forward</button></form></div>
+  {% set section='historical-test' %}{% include "_company_tabs_013.html" %}
+
+  <div class="notice teal"><strong>No-lookahead protocol.</strong> Future filings cannot enter an earlier replay. Current saved company-specific assumptions are never backcast. Future prices are used only after each historical valuation is frozen. Historical prices are reconciled to a common split basis before outcome scoring.</div>
+
+  {% if latest_run %}
+  <div class="kpi-grid">
+    <div class="kpi accent"><span>Reliability</span><strong>{{ pct(latest_run.reliability_score) }}</strong><small>{{ latest_run.status }}</small></div>
+    <div class="kpi"><span>Valuation accuracy</span><strong>{{ pct(latest_run.valuation_accuracy) }}</strong><small>Expected value vs future 1Y</small></div>
+    <div class="kpi"><span>Direction accuracy</span><strong>{{ pct(latest_run.direction_accuracy) }}</strong><small>Valuation gap vs future direction</small></div>
+    <div class="kpi"><span>Range coverage</span><strong>{{ pct(latest_run.range_coverage) }}</strong><small>Future 1Y inside Bear–Bull</small></div>
+  </div>
+  <div class="two-col">
+    <div class="panel"><div class="panel-head"><div><p class="eyebrow">LATEST RUN</p><h2>{{ latest_run.lookback_years }}Y walk-forward</h2></div><span class="status-chip">{{ latest_run.sample_size }} scored samples</span></div><p>Engine policy is frozen for the run. Historical calibration can use only prices and filing data dated before each anchor.</p><div class="metric-list"><div><span>Assumption accuracy</span><strong>{{ pct(latest_run.assumption_accuracy) }}</strong></div><div><span>Started</span><strong>{{ latest_run.started_at.strftime('%Y-%m-%d %H:%M') }}</strong></div><div><span>Completed</span><strong>{{ latest_run.finished_at.strftime('%Y-%m-%d %H:%M') if latest_run.finished_at else 'Running' }}</strong></div></div></div>
+    <div class="panel"><div class="panel-head"><h2>What the score means</h2></div><p><strong>Reliability is not a buy/sell signal.</strong> It tells us how well this valuation process survived historical out-of-sample checks.</p><p class="muted">40% valuation accuracy · 20% direction · 20% Bear/Bull range coverage · 20% fundamental-assumption accuracy. Missing outcomes are excluded rather than guessed.</p></div>
+  </div>
+
+  <div class="table-card scroll"><table class="data-table numeric"><thead><tr><th>Anchor</th><th>FY</th><th>Price then</th><th>Bear</th><th>Base</th><th>Bull</th><th>Expected</th><th>1Y actual</th><th>3Y actual</th><th>5Y actual</th><th>Reliability</th><th>Status</th></tr></thead><tbody>
+  {% for s in samples %}<tr><td>{{ s.anchor_date }}</td><td>{{ s.fiscal_year or '—' }}</td><td>{{ money(s.anchor_price) }}</td><td>{{ money(s.bear_value) }}</td><td>{{ money(s.base_value) }}</td><td>{{ money(s.bull_value) }}</td><td>{{ money(s.expected_value) }}</td><td>{{ money(s.outcomes.get('price_1y')) }}</td><td>{{ money(s.outcomes.get('price_3y')) }}</td><td>{{ money(s.outcomes.get('price_5y')) }}</td><td>{{ pct(s.scores.get('reliability')) }}</td><td><span class="status-chip">{{ s.status }}</span></td></tr>{% else %}<tr><td colspan="12" class="empty-cell">No scored historical samples in this run.</td></tr>{% endfor %}
+  </tbody></table></div>
+
+  <details class="panel"><summary><strong>Audit one replay</strong></summary>{% if samples %}{% set s=samples[0] %}<div class="three-col"><div><h3>Inputs</h3><pre class="audit-json">{{ s.inputs|tojson(indent=2) }}</pre></div><div><h3>Assumptions</h3><pre class="audit-json">{{ s.assumptions|tojson(indent=2) }}</pre></div><div><h3>Leakage checks</h3><pre class="audit-json">{{ s.leakage_checks|tojson(indent=2) }}</pre></div></div>{% endif %}</details>
+  {% else %}
+  <div class="panel empty-state"><h2>No historical test yet</h2><p>Run a 10-year walk-forward. The job first stores split-aware historical prices, then reconstructs each historical SEC information set and validates the frozen valuation against later outcomes.</p></div>
+  {% endif %}
+
+  {% if runs %}<div class="panel"><div class="panel-head"><h2>Run history</h2></div>{% for run in runs %}<div class="list-row"><div><strong>{{ run.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ run.lookback_years }}Y</strong><p>{{ run.sample_size }} samples · reliability {{ pct(run.reliability_score) }}</p></div><span class="status-chip">{{ run.status }}</span></div>{% endfor %}</div>{% endif %}
+</section>
+{% endblock %}

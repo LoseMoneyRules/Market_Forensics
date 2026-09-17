@@ -94,19 +94,16 @@ def test_display_preference_persists_per_user(tmp_path, monkeypatch):
 
 
 def test_autofill_builds_coherent_scenarios_and_preserves_manual_override(tmp_path, monkeypatch):
-    app = build_app(tmp_path, monkeypatch)
-    user_id, coverage_id = seed_company(app)
+    app = build_app(tmp_path, monkeypatch); user_id, coverage_id = seed_company(app)
     with app.app_context():
         result = prefill_coverage(coverage_id, user_id)
         assert set(result["scenario_updates"]) == {"BEAR", "BASE", "BULL"}
-        model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).first()
-        scenarios = {row.name: row for row in model.scenarios}
-        bear = float(scenarios["BEAR"].equity_value_per_share)
-        base = float(scenarios["BASE"].equity_value_per_share)
-        bull = float(scenarios["BULL"].equity_value_per_share)
+        model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).first(); scenarios = {row.name: row for row in model.scenarios}
+        bear = float(scenarios["BEAR"].equity_value_per_share); base = float(scenarios["BASE"].equity_value_per_share); bull = float(scenarios["BULL"].equity_value_per_share)
         assert 0 < bear <= base <= bull
         assert scenarios["BASE"].inputs["auto_prefill"] is True
-        assert model.method == "AUTO_FUNDAMENTAL_DRAFT"
+        assert model.method == "MULTI_METHOD_INTRINSIC"
+        assert model.assumptions["auto_draft"]["current_price_role"] == "COMPARISON_ONLY_UNLESS_REQUIRED_AS_EXPLICIT_PROVISIONAL_FALLBACK"
         assert model.coverage.research.numbers.startswith(AUTO_MARKER)
 
         scenarios["BASE"].equity_value_per_share = Decimal("77.77")
