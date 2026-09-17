@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import requests
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -17,6 +18,7 @@ from .data_providers import latest_snapshot, provider_status, refresh_security_q
 from .extensions import db
 from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
 from .historical_engine import run_historical_test
+from .management_promises import extract_promises, html_to_text, store_promises
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
@@ -149,7 +151,7 @@ def _deep_validation(company_id: int, coverage_id: int | None) -> dict[str, Any]
 
 def _management_scan(company: Company, security: Security, user_id: int, limit: int = 24) -> dict[str, Any]:
     ua = sec_user_agent(user_id); meta = sec_ticker_meta(security.ticker, ua); submissions = sec_json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", ua)
-    recent = (submissions.get("filings") or {}).get("recent") or {}; forms = recent.get("form") or []; accns = recent.get("accessionNumber") or []; filed = recent.get("filingDate") or []; docs = recent.get("primaryDocument") or []; stored = 0
+    recent = (submissions.get("filings") or {}).get("recent") or {}; forms = recent.get("form") or []; accns = recent.get("accessionNumber") or []; filed = recent.get("filingDate") or []; docs = recent.get("primaryDocument") or []; stored = 0; promises_stored = 0
     for i, form in enumerate(forms[:max(1, min(limit, 100))]):
         if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}: continue
         accn = str(accns[i] if i < len(accns) else "")
@@ -159,7 +161,15 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
         source = Source(company_id=company.id, provider="SEC", source_type="FILING", title=f"{security.ticker} {form} {filing_date}", url=url, accession_no=accn,
                         published_at=datetime.fromisoformat(filing_date) if filing_date else None, retrieved_at=utcnow(), meta={"form": form, "cik": meta["cik"]})
         db.session.add(source); db.session.flush(); db.session.add(Event(company_id=company.id, source_id=source.id, event_type=f"SEC_{form.replace(' ','_').replace('-','_')}", title=source.title, event_date=source.published_at or utcnow(), payload={"form": form, "accession_no": accn, "url": url})); stored += 1
-    db.session.commit(); return {"filings_stored": stored, "cik": meta["cik"], "forms_scanned": min(len(forms), limit)}
+        if url and form in {"10-K", "10-Q", "8-K"}:
+            try:
+                response = requests.get(url, headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate"}, timeout=12)
+                if response.status_code == 200:
+                    extracted = extract_promises(html_to_text(response.text), source_id=source.id)
+                    promises_stored += store_promises(company.id, extracted, source_id=source.id)
+            except Exception:
+                pass
+    db.session.commit(); return {"filings_stored": stored, "promises_stored": promises_stored, "cik": meta["cik"], "forms_scanned": min(len(forms), limit)}
 
 
 def _discovery(user_id: int) -> dict[str, Any]:
