@@ -64,6 +64,7 @@ def set_secret(user_id: int, name: str, value: str) -> None:
 
 
 def provider_status(user_id: int) -> dict[str, bool]:
+    finra_api = bool(get_secret(user_id, "finra_client_id") and get_secret(user_id, "finra_client_secret"))
     return {
         "alpaca": bool(get_secret(user_id, "alpaca_key") and get_secret(user_id, "alpaca_secret")),
         "tiingo": bool(get_secret(user_id, "tiingo_token")),
@@ -71,7 +72,28 @@ def provider_status(user_id: int) -> dict[str, bool]:
         "massive": bool(get_secret(user_id, "massive_key")),
         "sec": bool(get_secret(user_id, "sec_user_agent")),
         "finra": True,
+        "finra_api": finra_api,
     }
+
+
+def provider_overview(user_id: int) -> list[dict[str, Any]]:
+    status = provider_status(user_id)
+    return [
+        {"key": "sec", "name": "SEC EDGAR", "category": "Fundamentals / filings", "state": "READY" if status["sec"] else "NEEDS USER-AGENT", "required": True,
+         "capabilities": "10-K, 10-Q, 8-K, XBRL facts, normalized financials, provenance"},
+        {"key": "alpaca", "name": "Alpaca", "category": "Market data", "state": "READY" if status["alpaca"] else "OPTIONAL", "required": False,
+         "capabilities": "Primary quote source; public chart remains last-resort fallback"},
+        {"key": "finra", "name": "FINRA public files", "category": "Positioning / flows", "state": "PUBLIC", "required": False,
+         "capabilities": "Reg SHO daily short-sale volume; no credential required"},
+        {"key": "finra_api", "name": "FINRA Query API", "category": "Positioning / flows", "state": "READY" if status["finra_api"] else "OPTIONAL", "required": False,
+         "capabilities": "Consolidated short interest, days-to-cover, changes, threshold history"},
+        {"key": "tiingo", "name": "Tiingo", "category": "Market redundancy", "state": "READY" if status["tiingo"] else "OPTIONAL", "required": False,
+         "capabilities": "Secondary quote source"},
+        {"key": "alpha_vantage", "name": "Alpha Vantage", "category": "Market redundancy", "state": "READY" if status["alpha_vantage"] else "OPTIONAL", "required": False,
+         "capabilities": "Secondary delayed quote source"},
+        {"key": "massive", "name": "Massive", "category": "Future market depth", "state": "READY" if status["massive"] else "OPTIONAL", "required": False,
+         "capabilities": "Credential retained for future options / reference / market-depth modules"},
+    ]
 
 
 def _alpaca(ticker: str, user_id: int) -> QuoteResult:
@@ -101,7 +123,7 @@ def _tiingo(ticker: str, user_id: int) -> QuoteResult:
     if not token:
         return QuoteResult(False, "Tiingo", message="not configured")
     try:
-        r = requests.get(f"https://api.tiingo.com/iex/{ticker}", params={"token": token}, headers={"User-Agent": "MarketForensics/0.1.1"}, timeout=8)
+        r = requests.get(f"https://api.tiingo.com/iex/{ticker}", params={"token": token}, headers={"User-Agent": "MarketForensics/0.1.2"}, timeout=8)
         if r.status_code != 200:
             return QuoteResult(False, "Tiingo", message=f"HTTP {r.status_code}")
         raw = r.json() or []
@@ -137,7 +159,7 @@ def _public_chart(ticker: str) -> QuoteResult:
         r = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
             params={"range": "5d", "interval": "1d", "events": "div,splits"},
-            headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.1.1"}, timeout=8,
+            headers={"User-Agent": "Mozilla/5.0 MarketForensics/0.1.2"}, timeout=8,
         )
         if r.status_code != 200:
             return QuoteResult(False, "Public market chart", message=f"HTTP {r.status_code}")
@@ -188,4 +210,4 @@ def refresh_security_quote(security: Security, user_id: int) -> QuoteResult:
     return result
 
 
-__all__ = ["QuoteResult", "get_secret", "set_secret", "provider_status", "latest_snapshot", "fetch_quote", "refresh_security_quote"]
+__all__ = ["QuoteResult", "get_secret", "set_secret", "provider_status", "provider_overview", "latest_snapshot", "fetch_quote", "refresh_security_quote"]
