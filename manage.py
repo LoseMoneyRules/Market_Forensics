@@ -51,10 +51,8 @@ def migrate() -> None:
 
 
 def _run_monitoring_for_controls() -> None:
-    from mfapp.monitoring_016 import evaluate_user
-    controls = User.query.filter_by(role="CONTROL", is_active=True).order_by(User.id).all()
-    for user in controls:
-        print({"monitoring": evaluate_user(user.id)})
+    from mfapp.monitoring_017 import evaluate_all
+    print({"monitoring": evaluate_all()})
 
 
 def run_jobs(limit: int) -> None:
@@ -63,8 +61,8 @@ def run_jobs(limit: int) -> None:
     with app.app_context():
         for result in execute(limit=limit):
             print(result)
-        # Monitoring is intentionally evaluated even when the queue is empty so cPanel cron
-        # remains a true unattended trigger engine rather than a browser-only feature.
+        # Monitoring is evaluated even when the queue is empty so cPanel cron remains
+        # the unattended trigger engine for CONTROL plus opted-in published-research members.
         _run_monitoring_for_controls()
 
 

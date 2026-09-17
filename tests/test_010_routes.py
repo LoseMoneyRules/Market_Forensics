@@ -53,13 +53,15 @@ def test_primary_get_routes_render_without_mutating_research_state(tmp_path, mon
     with app.app_context(): assert counts() == before
 
 
-def test_company_publish_entrypoint_and_settings_controls_are_visible(tmp_path, monkeypatch):
+def test_company_publish_entrypoint_is_relocated_by_017_and_settings_controls_are_visible(tmp_path, monkeypatch):
     app = build_app(tmp_path, monkeypatch); user_id = seed_control(app); client = app.test_client(); login_session(client, user_id)
     overview = client.get("/company/NKE/overview").get_data(as_text=True)
-    assert "Publish research" in overview
-    assert "One publication" in overview
     assert "Process readiness" in overview
     assert "PENDING APPROVAL" in overview or "MISSING EVIDENCE" in overview
+    # The legacy form remains server-rendered for progressive enhancement; v017 removes its hint and moves it into readiness.
+    base = open("mfapp/static/js/v017.js", encoding="utf-8").read()
+    assert "movePublicationToReadiness" in base
+    assert "$('.action-hint',form)?.remove()" in base
     settings = client.get("/settings").get_data(as_text=True); assert "FINRA Public API Client ID" in settings; assert "FINRA Public API Client Secret" in settings; assert "Financial numbers" in settings
 
 
@@ -83,4 +85,4 @@ def test_control_browser_worker_pumps_one_due_job(tmp_path, monkeypatch):
 
 def test_health_is_public_and_identifies_web_native_release(tmp_path, monkeypatch):
     app = build_app(tmp_path, monkeypatch); response = app.test_client().get("/health"); assert response.status_code == 200
-    payload = response.get_json(); assert payload["version"] == "0.1.6"; assert payload["architecture"] == "web-native"
+    payload = response.get_json(); assert payload["version"] == "0.1.7"; assert payload["architecture"] == "web-native"

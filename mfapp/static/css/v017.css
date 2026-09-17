@@ -1,0 +1,113 @@
+:root{
+  --mf-body-size:14px;
+  --mf-body-line:1.5;
+  --mf-heading-weight:500;
+  --mf-control-weight:400;
+  --mf-critical-weight:700;
+  --mf-chart-text:#4f6272;
+  --mf-chart-grid:#d9e0e6;
+  --mf-chart-price:#3a6f99;
+  --mf-chart-bear:#a04444;
+  --mf-chart-bull:#39745d;
+}
+
+/* Readable body. Bold is not the default hierarchy. */
+body{font-size:var(--mf-body-size);line-height:var(--mf-body-line)}
+.company-page,.company-page p,.company-page li,.company-page td,.company-page textarea,.company-page input,.company-page select,.published-report,.published-report p,.published-report li{font-size:14px}
+.company-page small,.company-page .muted,.company-page .action-hint,.published-report small,.published-report .muted{font-size:12px;line-height:1.45}
+h1{font-size:24px;font-weight:var(--mf-heading-weight)}
+h2{font-size:17px;font-weight:var(--mf-heading-weight)}
+h3{font-size:15px;font-weight:var(--mf-heading-weight)}
+.eyebrow{font-size:11px;font-weight:500}
+.panel-head>strong,.company-page strong,.company-page b,.published-report strong,.published-report b{font-weight:500}
+
+/* Only identity / live price / decisive state remains genuinely bold. */
+.ticker-badge,.company-market [data-live-price],.research-action strong,.research-state-017 .critical,.research-state-017 .action-value{font-weight:var(--mf-critical-weight)!important}
+.research-intelligence-strip strong{font-weight:500}
+.research-intelligence-strip .synthesis-kpi-016:nth-child(2) strong{font-weight:var(--mf-critical-weight)}
+.company-page .company-states strong,.company-page .data-table td strong,.current-kpi strong,.kpi strong,.management-score strong,.management-score b,.flow-chain-node strong,.audit-warning-016 strong{font-weight:500!important}
+
+/* Buttons and all research navigation stay regular weight. */
+.button,.button.primary,.button.positive,.button.micro,.text-button,.theme-toggle,.mobile-menu-button,.mobile-tools-button,.company-tabs-toggle{font-size:13px;font-weight:400!important}
+.navitem,.company-tabs a,.company-tabs a.active,.view-switch a,.tape-controls a,.role-pill{font-weight:400!important}
+.company-tabs a{font-size:13px}
+label{font-size:13px;font-weight:400}
+.data-table{font-size:13px}.data-table th{font-size:11px;font-weight:500}
+.status-chip{font-size:11px;font-weight:500}
+
+/* Decorative/release version labels are never part of the normal product UI. */
+.settings-version,.decision-brief,.version-badge,.release-badge,.decorative-version{display:none!important}
+
+/* Publication is never beside live price. It is surfaced only inside Process readiness. */
+.company-actions>form[action*="snapshot"]{display:none!important}
+.company-market span{font-size:11px;font-weight:400;text-transform:none;letter-spacing:0}
+.company-market [data-live-price]{font-size:25px}
+.company-market small{font-size:12px}
+.publish-readiness-017{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.publish-readiness-017 .publish-copy{font-size:13px;color:var(--muted)}
+.publish-readiness-017.ready{border-top-color:var(--primary-line);background:linear-gradient(90deg,var(--primary-soft),transparent);margin-left:-12px;margin-right:-12px;padding:14px 12px 0}
+.publish-readiness-017.pending .button{opacity:.45;pointer-events:none}
+
+/* Overview order: menu -> Evidence path -> RESEARCH STATE -> readiness/signals. */
+.evidence-path-017{margin:10px 0 12px;border:1px solid var(--line);border-radius:9px;background:var(--white);overflow:hidden}
+.evidence-path-017 summary{cursor:pointer;padding:11px 13px;font-size:14px;font-weight:400;color:var(--ink);list-style:none}
+.evidence-path-017 summary::-webkit-details-marker{display:none}
+.evidence-path-017 summary:after{content:'⌄';float:right;color:var(--muted)}
+.evidence-path-017[open] summary:after{content:'⌃'}
+.evidence-path-body-017{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;border-top:1px solid var(--line);padding:12px}
+.evidence-path-block-017{border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--paper)}
+.evidence-path-block-017 h3{margin:0 0 7px;font-size:12px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.evidence-path-block-017 p,.evidence-path-block-017 li{font-size:13px;line-height:1.45;margin:3px 0}.evidence-path-block-017 ul{margin:0;padding-left:16px}
+.research-state-form-017{margin-bottom:14px}
+.overview-support-017{display:block}.overview-support-017>.stack-gap{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+/* Business = model, strategic divergence and macro only. */
+.business-context-017{margin-bottom:18px}
+.business-evidence-grid-017{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+.business-evidence-grid-017 h3{margin:0 0 7px}.business-evidence-grid-017 ul{margin:6px 0 0;padding-left:18px}
+
+/* Charts use explicit theme tokens; canvas text is redrawn on theme change. */
+.chart-card canvas{background:transparent}
+.chart-legend-017{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:9px;color:var(--mf-chart-text);font-size:12px}
+.chart-key-017{display:inline-flex;align-items:center;gap:6px}.chart-key-017 i{display:inline-block;width:18px;height:2px;background:var(--mf-chart-price)}.chart-key-017.bear i{background:var(--mf-chart-bear)}.chart-key-017.bull i{background:var(--mf-chart-bull)}.chart-key-017.neutral i{background:var(--mf-zero)}
+.expectations-chart-017,.valuation-chart-017,.tape-chart-017{margin-bottom:18px}.expectations-chart-017 canvas,.valuation-chart-017 canvas,.tape-chart-017 canvas{display:block;width:100%;height:300px}
+.expectations-chart-017 .muted,.valuation-chart-017 .muted,.tape-chart-017 .muted{color:var(--mf-chart-text)}
+.tape-stack-017{display:grid;grid-template-columns:1fr;gap:0;margin-top:16px}
+
+/* Monitoring is management, not a static bullish/bearish glossary. */
+.alert-delivery-017{margin-bottom:18px}.alert-delivery-grid-017{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(0,1.2fr);gap:16px}
+.alert-email-box-017,.alert-switches-017{border:1px solid var(--line);border-radius:9px;padding:14px;background:var(--paper)}
+.alert-email-box-017 h3,.alert-switches-017 h3,.alert-rule-list-017>h3{margin:0 0 10px}
+.alert-email-box-017 p,.alert-switches-017 p{font-size:13px;color:var(--muted)}
+.alert-email-row-017{display:flex;gap:8px;align-items:end}.alert-email-row-017 label{flex:1}
+.channel-row-017{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}
+.alert-switch-017{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}.alert-switch-017:first-of-type{border-top:0}.alert-switch-017 input{width:auto}.alert-switch-017 .alert-name{display:block;font-size:14px}.alert-switch-017 small{display:block;font-size:12px;color:var(--muted);margin-top:2px}.switch-label-017{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px}
+.alert-rule-list-017{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}.alert-rule-manage-017{border-bottom:1px solid var(--line);padding-bottom:4px}.alert-rule-manage-017:last-child{border-bottom:0}
+.rule-editor-017{margin:0 0 10px 0;padding:0 0 8px}.rule-editor-017 summary{cursor:pointer;font-size:12px;color:var(--primary-2);font-weight:400}.rule-edit-grid-017{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}.rule-edit-grid-017 input,.rule-edit-grid-017 select{width:100%}.locked-rule-017{display:block;font-size:12px;color:var(--muted);margin:-4px 0 10px}.danger-017{border-color:var(--mf-chart-bear)!important;color:var(--mf-chart-bear)!important}
+.monitor-plan-card h3{font-size:15px;font-weight:500}.monitor-plan-card p{font-size:14px}.monitor-plan-card strong{font-size:14px;font-weight:500}
+
+/* Member alert preferences live with published research. */
+.member-alerts-017{margin-top:18px}.member-alert-list-017{margin-top:14px;border-top:1px solid var(--line)}
+.member-alert-item-017{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}.member-alert-item-017 input{margin-top:3px}.member-alert-item-017 span{font-weight:400}.member-alert-item-017 small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+
+/* Evidence polarity remains visible without making labels heavy. */
+.status-chip.tone-positive{background:var(--mf-bull-soft);border-color:#b9d9c7;color:var(--mf-bull)}
+.status-chip.tone-negative{background:var(--mf-bear-soft);border-color:#e2baba;color:var(--mf-bear)}
+
+html[data-theme="dark"]{
+  --mf-chart-text:#d4dde6;
+  --mf-chart-grid:#3d5061;
+  --mf-chart-price:#7db0d6;
+  --mf-chart-bear:#e18585;
+  --mf-chart-bull:#74b895;
+}
+html[data-theme="dark"] .evidence-path-017,html[data-theme="dark"] .business-context-017,html[data-theme="dark"] .alert-delivery-017,html[data-theme="dark"] .member-alerts-017{color:var(--ink)}
+html[data-theme="dark"] .evidence-path-block-017,html[data-theme="dark"] .alert-email-box-017,html[data-theme="dark"] .alert-switches-017{background:var(--paper)}
+html[data-theme="dark"] .expectations-chart-017 canvas,html[data-theme="dark"] .valuation-chart-017 canvas,html[data-theme="dark"] .tape-chart-017 canvas{filter:none}
+
+@media(max-width:900px){
+  .evidence-path-body-017{grid-template-columns:1fr 1fr}.overview-support-017>.stack-gap,.business-evidence-grid-017,.alert-delivery-grid-017{grid-template-columns:1fr}.alert-switch-017{grid-template-columns:1fr 1fr}.alert-switch-017>div{grid-column:1/-1}.rule-edit-grid-017{grid-template-columns:1fr 1fr}
+}
+@media(max-width:600px){
+  body,.company-page,.company-page p,.company-page li,.company-page td{font-size:14px}.evidence-path-body-017{grid-template-columns:1fr}.alert-email-row-017{align-items:stretch;flex-direction:column}.alert-switch-017,.rule-edit-grid-017{grid-template-columns:1fr}.alert-switch-017>div{grid-column:auto}.expectations-chart-017 canvas,.valuation-chart-017 canvas,.tape-chart-017 canvas{height:250px}.publish-readiness-017{align-items:flex-start;flex-direction:column}
+}
