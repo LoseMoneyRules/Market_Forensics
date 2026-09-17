@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-
 from sqlalchemy import UniqueConstraint
-
 from .extensions import db
 
 
@@ -11,9 +9,6 @@ def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# Account / security foundation retained from 0.0.4. Table names and fields are
-# intentionally stable so existing accounts, CONTROL identity, 2FA enrollment,
-# invites, encrypted API credentials and user audit history survive 0.1.0.
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(254), unique=True, nullable=False, index=True)
@@ -54,3 +49,6 @@ class AuditEvent(db.Model):
     object_id = db.Column(db.String(80))
     meta = db.Column(db.JSON, nullable=False, default=dict)
     created_at = db.Column(db.DateTime(timezone=False), nullable=False, default=utcnow, index=True)
+
+
+from .core_models import MarketSnapshot  # noqa: E402,F401
