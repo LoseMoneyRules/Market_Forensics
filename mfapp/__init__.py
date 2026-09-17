@@ -101,7 +101,7 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     from .auth import bp as auth_bp
     from .routes import bp as web_bp
-    from . import routes_013 as release_routes  # noqa: F401  # must load before blueprint registration
+    from . import routes_013 as release_routes  # noqa: F401  # route module name is internal; release behavior is versioned by app config
     from .preview import bp as preview_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(web_bp)
@@ -112,12 +112,14 @@ def create_app(test_config: dict | None = None) -> Flask:
         from .schema import bootstrap_schema
         from .upgrade_012 import queue_existing_coverage_prefill as queue_012
         from .upgrade_013 import queue_existing_coverage_prefill as queue_013
+        from .upgrade_014 import queue_existing_coverage_prefill as queue_014
         with app.app_context():
             schema_result = bootstrap_schema(migrate_legacy=True)
             app.config["SCHEMA_BOOTSTRAP_RESULT"] = {
                 "schema": schema_result,
                 "upgrade_0_1_2": queue_012(),
                 "upgrade_0_1_3": queue_013(),
+                "upgrade_0_1_4": queue_014(),
             }
 
     return app
