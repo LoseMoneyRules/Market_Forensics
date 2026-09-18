@@ -191,8 +191,8 @@ def _ctx(ticker: str) -> dict:
 
     market = latest_snapshot(security.id)
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
-    valuation = valuation_result(coverage)
     cache = latest_research_cache(coverage.id, company.id)
+    valuation = dict((cache or {}).get("valuation") or valuation_result(coverage))
 
     active_recalc = Job.query.filter(
         Job.user_id == g.user.id,
