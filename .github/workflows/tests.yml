@@ -80,3 +80,19 @@ jobs:
           assert render_docx(data).getvalue().startswith(b"PK")
           print("production-minimal smoke ok")
           PY
+
+      - name: Self-contained reporting vendor smoke
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mf-report-vendor
+          python -m pip install -q --no-cache-dir --no-compile --target /tmp/mf-report-vendor -r requirements-reporting.txt
+          test -d /tmp/mf-report-vendor/docx
+          test -d /tmp/mf-report-vendor/reportlab
+          PYTHONPATH=/tmp/mf-report-vendor python -S - <<'PY'
+          import docx
+          import reportlab
+          from docx import Document
+          from reportlab.pdfgen import canvas
+          assert Document is not None and canvas is not None
+          print("self-contained report vendor ok")
+          PY
