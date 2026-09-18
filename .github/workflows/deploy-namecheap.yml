@@ -85,6 +85,10 @@ jobs:
           mkdir -p .release-payload .production-backup .empty-cleanup
           cp app.py manage.py requirements.txt requirements-reporting.txt VERSION .release-payload/
           cp -a mfapp .release-payload/
+          rm -rf .release-payload/mfapp/_reporting_vendor
+          python -m pip install --no-compile --target .release-payload/mfapp/_reporting_vendor -r requirements-reporting.txt
+          test -d .release-payload/mfapp/_reporting_vendor/docx
+          test -d .release-payload/mfapp/_reporting_vendor/reportlab
           find .release-payload -type d -name __pycache__ -prune -exec rm -rf {} +
           find .release-payload -type f -name '*.pyc' -delete
           test ! -e .release-payload/mfapp/full312.py
