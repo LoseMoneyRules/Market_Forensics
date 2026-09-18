@@ -21,6 +21,24 @@ from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
 
 
+def _job_target_map(jobs: list[Job]) -> dict[int, dict]:
+    security_ids = {int(job.security_id) for job in jobs if job.security_id}
+    company_ids = {int(job.company_id) for job in jobs if job.company_id}
+    securities = {row.id: row for row in Security.query.filter(Security.id.in_(security_ids)).all()} if security_ids else {}
+    companies = {row.id: row for row in Company.query.filter(Company.id.in_(company_ids)).all()} if company_ids else {}
+    out = {}
+    for job in jobs:
+        security = securities.get(job.security_id)
+        company = companies.get(job.company_id)
+        if security is not None:
+            out[job.id] = {"label": str(security.ticker).upper(), "ticker": str(security.ticker).upper(), "scope": "SECURITY"}
+        elif company is not None:
+            out[job.id] = {"label": company.display_name or company.legal_name or f"Company #{company.id}", "ticker": None, "scope": "COMPANY"}
+        else:
+            out[job.id] = {"label": "GLOBAL", "ticker": None, "scope": "GLOBAL"}
+    return out
+
+
 def _queue_status(user_id: int) -> dict:
     # Status checks also recover dead leases, so a dead worker cannot block the
     # browser fallback forever while the UI still says RUNNING.
@@ -35,11 +53,24 @@ def _queue_status(user_id: int) -> dict:
         Job.status.in_(["DONE", "FAILED", "CANCELLED"]),
         Job.finished_at.is_not(None),
     ).order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    active = Job.query.filter(
+        Job.user_id == user_id, Job.status.in_(["QUEUED", "RUNNING"])
+    ).order_by(Job.status.desc(), Job.priority.asc(), Job.id.asc()).limit(12).all()
+    targets = _job_target_map(active)
+    active_jobs = [{
+        "id": job.id,
+        "type": job.job_type,
+        "status": job.status,
+        "target": targets[job.id]["label"],
+        "scope": targets[job.id]["scope"],
+        "ticker": targets[job.id]["ticker"],
+    } for job in active]
     return {
         "due": due, "queued": queued, "running": running, "failed": failed, "cancelled": cancelled,
         "recovered_stale": recovered,
         "last_finished_id": finished.id if finished else None,
         "last_finished_at": finished.finished_at.isoformat() if finished and finished.finished_at else None,
+        "active_jobs": active_jobs,
         "executor": "cron+browser-fallback",
     }
 
@@ -312,12 +343,15 @@ def settings():
     require_control_view()
     queue_status = _queue_status(g.user.id)
     jobs = Job.query.filter_by(user_id=g.user.id).order_by(Job.created_at.desc()).limit(50).all()
+    job_targets = _job_target_map(jobs)
+    job_items = [{"job": job, "target": job_targets[job.id]} for job in jobs]
     refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
     return render_template(
         "settings.html",
         providers=provider_status(g.user.id),
         provider_catalog=provider_overview(g.user.id),
         jobs=jobs,
+        job_items=job_items,
         refreshes=refreshes,
         queue_status=queue_status,
         number_formats=NUMBER_FORMATS,
