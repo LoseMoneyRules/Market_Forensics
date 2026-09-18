@@ -126,12 +126,14 @@
           <thead><tr><th>Metric</th><th>{{ security.ticker }}</th><th>Peer median</th><th>Read</th></tr></thead>
           <tbody>{% for row in auto_triangulation.comparisons %}<tr><td><strong>{{ row.label }}</strong></td><td>{{ '%.2f'|format(row.target) }}</td><td>{{ '%.2f'|format(row.peer_median) }}</td><td><span class="status-chip">{{ row.state }}</span></td></tr>{% else %}<tr><td colspan="4" class="empty-cell">Peer metrics are still sparse.</td></tr>{% endfor %}</tbody>
         </table></div>
-        {% set pvc = auto_triangulation.peer_value_crosscheck or {} %}
+        {% set pvc = auto_triangulation.get('peer_value_crosscheck') or {} %}
+        {% set po = valuation.get('peer_overlay') or {} %}
+        {% set intrinsic_base = po.get('intrinsic_base') if po.get('intrinsic_base') is not none else valuation.get('base') %}
         <div class="peer-valuation-bridge">
-          <div><span>Peer fair-value cross-check</span><strong>{{ '$%.2f'|format(pvc.estimate) if pvc.estimate is not none else '—' }}</strong><small>{{ pvc.method_count or 0 }} methods · {{ pvc.peer_count or 0 }} peers</small></div>
-          <div><span>Intrinsic Base</span><strong>{{ '$%.2f'|format(valuation.peer_overlay.intrinsic_base) if valuation.peer_overlay and valuation.peer_overlay.intrinsic_base is not none else ('$%.2f'|format(valuation.base) if valuation.base is not none else '—') }}</strong><small>Primary valuation engine</small></div>
-          <div><span>Peer influence</span><strong>{% if valuation.peer_overlay and valuation.peer_overlay.applied %}{{ '%.0f'|format(valuation.peer_overlay.weight*100) }}%{% else %}0%{% endif %}</strong><small>Bounded; never peer-only</small></div>
-          <div><span>Forensic Base</span><strong>{{ '$%.2f'|format(valuation.base) if valuation.base is not none else '—' }}</strong><small>{% if valuation.peer_overlay and valuation.peer_overlay.applied %}Peer overlay applied, max ±10% shift{% else %}Intrinsic only{% endif %}</small></div>
+          <div><span>Peer fair-value cross-check</span><strong>{{ '$%.2f'|format(pvc.get('estimate')) if pvc.get('estimate') is not none else '—' }}</strong><small>{{ pvc.get('method_count') or 0 }} methods · {{ pvc.get('peer_count') or 0 }} peers</small></div>
+          <div><span>Intrinsic Base</span><strong>{{ '$%.2f'|format(intrinsic_base) if intrinsic_base is not none else '—' }}</strong><small>Primary valuation engine</small></div>
+          <div><span>Peer influence</span><strong>{% if po.get('applied') %}{{ '%.0f'|format((po.get('weight') or 0)*100) }}%{% else %}0%{% endif %}</strong><small>Bounded; never peer-only</small></div>
+          <div><span>Forensic Base</span><strong>{{ '$%.2f'|format(valuation.get('base')) if valuation.get('base') is not none else '—' }}</strong><small>{% if po.get('applied') %}Peer overlay applied, max ±10% shift{% else %}Intrinsic only{% endif %}</small></div>
         </div>
         <details><summary><strong>Peer set</strong></summary><div class="peer-hints"><p>{% for p in auto_triangulation.peers %}<strong>{{ p.ticker or p.name }}</strong> · {{ p.match }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p></div></details>
       {% else %}
