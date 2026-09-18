@@ -864,3 +864,20 @@ def test_020_portfolio_get_does_not_compute_historical_correlations(tmp_path, mo
     login_control(client, uid)
     response = client.get("/portfolio")
     assert response.status_code == 200
+
+
+def test_020_mobile_navigation_has_single_working_controller_and_css_contract():
+    js = Path("mfapp/static/js/app.js").read_text()
+    css = Path("mfapp/static/css/app.css").read_text()
+    base = Path("mfapp/templates/base.html").read_text()
+    assert js.count("const menuButton = document.getElementById('mf-mobile-menu')") == 1
+    assert "menuButton?.addEventListener('click'" in js
+    assert "backdrop?.addEventListener('click', closeMobile)" in js
+    assert "event.key === 'Escape'" in js
+    assert "window.innerWidth > 900" in js
+    assert 'id="mf-mobile-menu"' in base
+    assert 'id="mf-mobile-backdrop"' in base
+    assert 'id="mf-primary-nav"' in base
+    assert "body.nav-open .navrail" in css
+    assert "body.nav-open .mobile-backdrop" in css
+    assert "z-index:90" in css
