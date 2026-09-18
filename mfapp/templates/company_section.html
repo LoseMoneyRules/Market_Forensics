@@ -23,23 +23,30 @@
       {% if intelligence.warnings %}<div class="notice amber"><strong>Review before relying on the read.</strong> {{ intelligence.warnings|join(' ') }}</div>{% endif %}
     </div>
 
-    <div class="decision-evidence-grid">
-      <div class="panel">
-        <div class="panel-head"><div><p class="eyebrow">EVIDENCE DIAGNOSTIC</p><h2>Weighted support / opposition</h2></div><span class="status-chip">Evidence score {{ '%+.2f'|format(intelligence.score) }}</span></div>
-        <div class="metric-grid">
-          <div><span>Positive threshold</span><strong>+{{ '%.2f'|format(intelligence.buy_threshold) }}</strong><small>Diagnostic only; the Decision Lenses remain canonical.</small></div>
-          <div><span>Negative threshold</span><strong>{{ '%.2f'|format(intelligence.sell_threshold) }}</strong><small>Diagnostic only; no score can bypass readiness or validation.</small></div>
-          <div><span>Validation</span><strong>{{ intelligence.validation_state }}</strong><small>Separate from Research completion.</small></div>
-        </div>
-        {% if intelligence.blockers %}<div class="decision-blockers">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>For / against</h2></div>
-        <div class="evidence-sides">
-          <div><h3>FOR</h3>{% for s in intelligence.supporting_evidence[:5] %}<p><strong>{{ s.label }}</strong> · {{ s.detail }}</p>{% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}</div>
-          <div><h3>AGAINST</h3>{% for s in intelligence.opposing_evidence[:5] %}<p><strong>{{ s.label }}</strong> · {{ s.detail }}</p>{% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}</div>
+    <div class="panel evidence-summary-panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">EVIDENCE</p><h2>For / against</h2></div>
+        <div class="evidence-score-compact">
+          <span>Diagnostic score</span>
+          <strong>{{ '%+.2f'|format(intelligence.score) }}</strong>
+          <small>sum of visible weights · Decision Lenses / readiness / validation remain canonical</small>
         </div>
       </div>
+      <div class="evidence-sides">
+        <div>
+          <h3>FOR</h3>
+          {% for s in intelligence.supporting_evidence[:5] %}
+          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight positive">{{ '%+.2f'|format(s.weight) }}</b></p>
+          {% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}
+        </div>
+        <div>
+          <h3>AGAINST</h3>
+          {% for s in intelligence.opposing_evidence[:5] %}
+          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight negative">{{ '%+.2f'|format(s.weight) }}</b></p>
+          {% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}
+        </div>
+      </div>
+      {% if intelligence.blockers %}<div class="decision-blockers compact">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
     </div>
 
     <div class="panel decision-map">
