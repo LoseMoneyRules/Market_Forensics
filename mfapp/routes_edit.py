@@ -7,15 +7,18 @@ from flask import abort, flash, g, redirect, request, url_for
 
 from .access import audit, require_control_view
 from .core_models import (
-    BearCaseItem, Catalyst, DecisionJournal, Event, Expectation, ManagementAssessment,
-    MonitoringHistory, MonitoringRule, Position, Source, ValuationScenario,
+    BearCaseItem, Catalyst, Coverage, DecisionJournal, Event, Expectation, InvestmentState,
+    ManagementAssessment, MonitoringHistory, MonitoringRule, Position, PositionProfile,
+    PortfolioRiskPlan, Security, Source, ValuationScenario,
 )
 from .extensions import db
 from .jobs import enqueue_job
 from .management_promises import add_manual_promise
+from .portfolio_engine import ensure_portfolio_profile, ensure_portfolio_risk
 from .routes import RESEARCH_FIELDS, SECTION_KEYS, _ctx, _research_version, bp, dec, parse_date, utcnow
 from .security import role_required
-from .services import create_snapshot
+from .services import create_snapshot, ensure_security_from_validation
+from .symbols import validate_ticker
 
 
 def _queue_recalc(ctx) -> None:
@@ -27,6 +30,25 @@ def _queue_recalc(ctx) -> None:
         payload={"coverage_id": ctx["coverage"].id},
         priority=95,
     )
+
+def _portfolio_security(ticker: str) -> Security | None:
+    return (
+        Security.query.filter(db.func.upper(Security.ticker) == str(ticker or "").strip().upper())
+        .order_by(Security.active.desc(), Security.is_primary.desc(), Security.id.asc())
+        .first()
+    )
+
+
+def _sync_portfolio_investment_state(security: Security, side: str) -> Coverage | None:
+    coverage = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if coverage is None:
+        return None
+    investment = InvestmentState.query.filter_by(coverage_id=coverage.id).first()
+    if investment is not None:
+        investment.state = "EXISTING_SHORT" if side == "SHORT" else "EXISTING_LONG"
+        investment.updated_by = g.user.id
+    return coverage
+
 
 
 @bp.post("/company/<ticker>/research/<section>")
@@ -267,56 +289,160 @@ def save_thesis_invalidation(ticker):
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
 
 
-@bp.post("/portfolio/<ticker>/risk")
+@bp.post("/portfolio/position")
 @role_required("CONTROL")
-def save_risk(ticker):
-    """Private monetary risk belongs to Portfolio and never changes the research thesis."""
+def save_portfolio_position():
+    """Create or replace a real holding without requiring Research/Coverage first."""
     require_control_view()
-    ctx = _ctx(ticker)
-    risk = ctx["risk"]
-    risk.max_loss_pct = dec(request.form.get("max_loss_pct"))
-    risk.max_position_pct = dec(request.form.get("max_position_pct"))
-    risk.entry_conditions = str(request.form.get("entry_conditions") or "").strip()
-    risk.add_conditions = str(request.form.get("add_conditions") or "").strip()
-    risk.trim_conditions = str(request.form.get("trim_conditions") or "").strip()
-    risk.exit_conditions = str(request.form.get("exit_conditions") or "").strip()
-    risk.notes = str(request.form.get("notes") or "").strip()
-    risk.updated_by = g.user.id
-    audit("portfolio.risk.save", "coverage", ctx["coverage"].id, {"max_loss_pct": float(risk.max_loss_pct) if risk.max_loss_pct is not None else None, "max_position_pct": float(risk.max_position_pct) if risk.max_position_pct is not None else None})
+    ticker = str(request.form.get("ticker") or "").strip().upper()
+    validation = validate_ticker(ticker)
+    if not validation.valid:
+        flash(validation.message or "Ticker not found / symbol not recognized.", "error")
+        return redirect(url_for("web.portfolio"))
+    shares = dec(request.form.get("shares"))
+    avg_cost = dec(request.form.get("avg_cost"))
+    side = str(request.form.get("side") or "LONG").strip().upper()
+    if shares is None or shares <= 0 or avg_cost is None or avg_cost < 0 or side not in {"LONG", "SHORT"}:
+        flash("Ticker, side, shares > 0 and a valid average cost are required.", "error")
+        return redirect(url_for("web.portfolio"))
+
+    security, created = ensure_security_from_validation(validation)
+    position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if position is None:
+        position = Position(user_id=g.user.id, security_id=security.id)
+        db.session.add(position)
+    position.shares = shares
+    position.avg_cost = avg_cost
+    position.currency = security.currency or "USD"
+    position.notes = str(request.form.get("notes") or "").strip()
+    profile = ensure_portfolio_profile(g.user.id, security.id)
+    profile.side = side
+    profile.tags = str(request.form.get("tags") or "").strip()
+    coverage = _sync_portfolio_investment_state(security, side)
+    audit("portfolio.position.upsert", "security", security.id, {
+        "ticker": security.ticker,
+        "side": side,
+        "shares": float(shares),
+        "research_attached": bool(coverage),
+    })
     db.session.commit()
+    enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"portfolio": True}, priority=20)
+    if created:
+        enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"portfolio": True, "lookback_years": 3}, priority=35)
     enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
-    flash("Portfolio risk plan saved. Portfolio analytics queued for update.", "success")
-    return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
+    flash(f"{security.ticker} position saved. Research is optional and can be attached later.", "success")
+    return redirect(url_for("web.portfolio_security", ticker=security.ticker))
 
 
 @bp.post("/portfolio/<ticker>/position")
 @role_required("CONTROL")
 def save_position(ticker):
     require_control_view()
-    ctx = _ctx(ticker)
+    security = _portfolio_security(ticker)
+    if security is None:
+        abort(404)
     shares = dec(request.form.get("shares"))
     avg_cost = dec(request.form.get("avg_cost"))
-    if shares is None or avg_cost is None or avg_cost < 0:
-        flash("Enter valid shares and average cost.", "error")
-        return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
-    position = ctx["position"] or Position(user_id=g.user.id, security_id=ctx["security"].id)
-    if position.id is None:
+    side = str(request.form.get("side") or "LONG").strip().upper()
+    if shares is None or shares <= 0 or avg_cost is None or avg_cost < 0 or side not in {"LONG", "SHORT"}:
+        flash("Enter a valid side, shares > 0 and average cost.", "error")
+        return redirect(url_for("web.portfolio_security", ticker=security.ticker))
+
+    position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if position is None:
+        position = Position(user_id=g.user.id, security_id=security.id)
         db.session.add(position)
     position.shares = shares
     position.avg_cost = avg_cost
-    position.currency = ctx["security"].currency
+    position.currency = security.currency or "USD"
     position.notes = str(request.form.get("notes") or "").strip()
-    state = str(request.form.get("investment_state") or ctx["investment"].state).upper()
-    if state in {"NO_POSITION", "WATCHLIST", "EXISTING_LONG", "EXISTING_SHORT", "LONG_UNDER_REVIEW", "SHORT_UNDER_REVIEW", "EXITING"}:
-        ctx["investment"].state = state
-    ctx["investment"].action = str(request.form.get("action") or ctx["investment"].action).upper()[:80]
-    ctx["investment"].review_reason = str(request.form.get("review_reason") or "").strip()
-    ctx["investment"].updated_by = g.user.id
-    audit("portfolio.position.save", "coverage", ctx["coverage"].id, {"shares": float(shares), "investment_state": ctx["investment"].state})
+    profile = ensure_portfolio_profile(g.user.id, security.id)
+    profile.side = side
+    profile.tags = str(request.form.get("tags") or "").strip()
+    coverage = _sync_portfolio_investment_state(security, side)
+    if coverage is not None:
+        investment = InvestmentState.query.filter_by(coverage_id=coverage.id).first()
+        if investment is not None:
+            if "action" in request.form:
+                investment.action = str(request.form.get("action") or "").upper()[:80]
+            if "review_reason" in request.form:
+                investment.review_reason = str(request.form.get("review_reason") or "").strip()
+    audit("portfolio.position.save", "security", security.id, {
+        "ticker": security.ticker,
+        "side": side,
+        "shares": float(shares),
+        "research_attached": bool(coverage),
+    })
     db.session.commit()
+    enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"portfolio": True}, priority=20)
     enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
     flash("Position saved. Portfolio analytics queued for update.", "success")
-    return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
+    return redirect(url_for("web.portfolio_security", ticker=security.ticker))
+
+
+@bp.post("/portfolio/<ticker>/remove")
+@role_required("CONTROL")
+def remove_position(ticker):
+    require_control_view()
+    security = _portfolio_security(ticker)
+    if security is None:
+        abort(404)
+    position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if position is not None:
+        db.session.delete(position)
+    coverage = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if coverage is not None:
+        investment = InvestmentState.query.filter_by(coverage_id=coverage.id).first()
+        if investment is not None:
+            investment.state = "WATCHLIST"
+            investment.updated_by = g.user.id
+    audit("portfolio.position.remove", "security", security.id, {"ticker": security.ticker, "research_preserved": bool(coverage)})
+    db.session.commit()
+    enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
+    flash(f"{security.ticker} removed from Portfolio. Research and risk history were preserved.", "success")
+    return redirect(url_for("web.portfolio"))
+
+
+@bp.post("/portfolio/<ticker>/risk")
+@role_required("CONTROL")
+def save_risk(ticker):
+    """Private money-risk is portfolio-owned and never mutates Research invalidation."""
+    require_control_view()
+    security = _portfolio_security(ticker)
+    if security is None:
+        abort(404)
+    risk = ensure_portfolio_risk(g.user.id, security.id)
+    risk_budget = dec(request.form.get("risk_budget_pct"))
+    reference = dec(request.form.get("sizing_reference_price"))
+    haircut = dec(request.form.get("event_liquidity_haircut_pct"))
+    max_position = dec(request.form.get("max_position_pct"))
+    if any(value is not None and value < 0 for value in (risk_budget, reference, haircut, max_position)):
+        flash("Risk inputs cannot be negative.", "error")
+        return redirect(url_for("web.portfolio_security", ticker=security.ticker))
+    if max_position is not None and max_position > 100:
+        flash("Max position % cannot exceed 100.", "error")
+        return redirect(url_for("web.portfolio_security", ticker=security.ticker))
+    risk.risk_budget_pct = risk_budget
+    risk.sizing_reference_price = reference
+    risk.event_liquidity_haircut_pct = haircut
+    risk.max_position_pct = max_position
+    risk.correlation_notes = str(request.form.get("correlation_notes") or "").strip()
+    risk.kill_switch = str(request.form.get("kill_switch") or "").strip()
+    risk.entry_conditions = str(request.form.get("entry_conditions") or "").strip()
+    risk.add_conditions = str(request.form.get("add_conditions") or "").strip()
+    risk.trim_conditions = str(request.form.get("trim_conditions") or "").strip()
+    risk.exit_conditions = str(request.form.get("exit_conditions") or "").strip()
+    risk.notes = str(request.form.get("notes") or "").strip()
+    risk.updated_by = g.user.id
+    audit("portfolio.risk.save", "security", security.id, {
+        "ticker": security.ticker,
+        "risk_budget_pct": float(risk.risk_budget_pct) if risk.risk_budget_pct is not None else None,
+        "max_position_pct": float(risk.max_position_pct) if risk.max_position_pct is not None else None,
+    })
+    db.session.commit()
+    enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
+    flash("Portfolio money-risk plan saved. Sizing math has been refreshed.", "success")
+    return redirect(url_for("web.portfolio_security", ticker=security.ticker))
 
 
 @bp.post("/company/<ticker>/journal")
