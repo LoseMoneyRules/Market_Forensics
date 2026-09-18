@@ -12,13 +12,15 @@
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
 **Production:** 0.2.6 on Namecheap  
-**Main before 0.2.7:** 0.2.6 at `6ecc385b29445db2a3940451f071a2425cd4f3c3`  
-**0.2.6 post-merge CI:** run `35363115872` / run #787 = completed / success  
+**Main code release:** 0.2.7 merged at `ef02e56596da90d3768601994219fca9284a49df` via PR #24  
+**0.2.7 PR CI:** run `35369138874` / run #797 = completed / success  
+**0.2.7 post-merge main CI:** pending  
+**Production:** 0.2.6 on Namecheap  
 **0.2.6 Namecheap deploy:** run `35363441025` / deploy #35 = completed / success; candidate health + post-cleanup health passed; no rollback  
-**Active candidate:** 0.2.7 — Research integrity / reporting / macro / peer valuation  
-**Branch:** `0.2.7`
+**Release phase:** 0.2.7 is in `main`; production deploy pending  
+**Branch:** `main`
 
-0.2.6 is the verified production baseline. 0.2.7 is the active candidate and must not be called LIVE until its own PR CI, post-merge CI, deploy and production health all pass.
+0.2.7 is now the authoritative code in main. Production remains 0.2.6 until the 0.2.7 post-merge CI and Namecheap deploy/health gates succeed. Do not describe 0.2.7 as LIVE before that production transition is recorded here.
 
 ---
 
@@ -433,6 +435,8 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 ---
 
 ## 11. Merge / deploy state
+
+**Current phase:** PR #24 merged to `main` at `ef02e56596da90d3768601994219fca9284a49df`; post-merge main CI and Namecheap deploy are pending.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
