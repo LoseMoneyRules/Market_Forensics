@@ -152,7 +152,14 @@ def _published_for_role(role: str):
 
 @bp.get("/health")
 def health():
-    return {"status": "ok", "version": current_app.config["VERSION"], "architecture": "web-native", "database": "primary"}
+    from .reporting import report_backend_status
+    return {
+        "status": "ok",
+        "version": current_app.config["VERSION"],
+        "architecture": "web-native",
+        "database": "primary",
+        "reports": report_backend_status()["backend"],
+    }
 
 
 @bp.get("/")
