@@ -371,6 +371,215 @@ def _finish_normalized(row: NormalizedFinancial, source_map: dict[str, Any], *, 
     row.calculation_version = CALCULATION_VERSION
 
 
+
+_AV_INCOME_FIELDS = {
+    "revenue": ("totalRevenue",),
+    "cogs": ("costOfRevenue",),
+    "gross_profit": ("grossProfit",),
+    "operating_income": ("operatingIncome",),
+    "pretax_income": ("incomeBeforeTax",),
+    "income_tax": ("incomeTaxExpense",),
+    "net_income": ("netIncome",),
+}
+_AV_BALANCE_FIELDS = {
+    "cash": ("cashAndCashEquivalentsAtCarryingValue",),
+    "receivables": ("currentNetReceivables",),
+    "inventory": ("inventory",),
+    "payables": ("currentAccountsPayable",),
+    "assets": ("totalAssets",),
+    "liabilities": ("totalLiabilities",),
+    "equity": ("totalShareholderEquity",),
+}
+_AV_CASH_FIELDS = {
+    "cfo": ("operatingCashflow",),
+    "capex": ("capitalExpenditures",),
+}
+
+
+def _alpha_vantage_statement(function: str, ticker: str, user_id: int) -> dict[str, Any]:
+    """Fetch an optional normalized statement without ever weakening SEC refresh.
+
+    Alpha Vantage is a secondary fill/triangulation source. Any provider error,
+    throttle message, or missing key returns an empty payload so SEC remains the
+    canonical path.
+    """
+    key = get_secret(user_id, "alpha_vantage_key")
+    if not key:
+        return {}
+    try:
+        response = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": function, "symbol": ticker, "apikey": key},
+            timeout=15,
+        )
+        if response.status_code != 200:
+            return {}
+        payload = response.json() or {}
+        if any(k in payload for k in ("Error Message", "Information", "Note")):
+            return {}
+        if not isinstance(payload.get("annualReports"), list) and not isinstance(payload.get("quarterlyReports"), list):
+            return {}
+        return payload
+    except Exception:
+        return {}
+
+
+def _av_source(company: Company, ticker: str, function: str, payload: dict[str, Any]) -> Source:
+    content_hash = hashlib.sha256(str(payload).encode()).hexdigest()
+    source = Source.query.filter_by(
+        company_id=company.id,
+        provider="Alpha Vantage",
+        source_type=function,
+        content_hash=content_hash,
+    ).first()
+    if source:
+        return source
+    source = Source(
+        company_id=company.id,
+        provider="Alpha Vantage",
+        source_type=function,
+        title=f"{ticker} Alpha Vantage {function.replace('_', ' ').title()}",
+        url=f"https://www.alphavantage.co/query?function={function}&symbol={ticker}",
+        retrieved_at=utcnow(),
+        content_hash=content_hash,
+        meta={"symbol": ticker, "fallback_only": True},
+    )
+    db.session.add(source)
+    db.session.flush()
+    return source
+
+
+def _av_decimal(report: dict[str, Any], keys: Iterable[str]) -> Decimal | None:
+    for key in keys:
+        value = _as_decimal(report.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _av_debt(report: dict[str, Any]) -> tuple[Decimal | None, str]:
+    total = _av_decimal(report, ("shortLongTermDebtTotal",))
+    if total is not None:
+        return total, "shortLongTermDebtTotal"
+    current = _av_decimal(report, ("currentDebt", "shortTermDebt"))
+    long_term = _av_decimal(report, ("longTermDebt",))
+    if current is not None and long_term is not None:
+        return current + long_term, "currentDebt + longTermDebt"
+    return None, ""
+
+
+def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: int) -> dict[str, Any]:
+    """Fill only missing normalized facts from an already-configured AV key.
+
+    SEC facts always win. Matching is by exact fiscal period end date, and every
+    filled value receives explicit Alpha Vantage provenance.
+    """
+    if not get_secret(user_id, "alpha_vantage_key"):
+        return {"configured": False, "filled": 0, "sources": []}
+
+    pairs = (
+        db.session.query(FinancialPeriod, NormalizedFinancial)
+        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+        .filter(FinancialPeriod.company_id == company.id)
+        .order_by(FinancialPeriod.end_date.desc())
+        .limit(40)
+        .all()
+    )
+    if not pairs:
+        return {"configured": True, "filled": 0, "sources": []}
+
+    income_fields = tuple(_AV_INCOME_FIELDS)
+    balance_fields = tuple(_AV_BALANCE_FIELDS) + ("debt",)
+    cash_fields = tuple(_AV_CASH_FIELDS)
+    needs = {
+        "INCOME_STATEMENT": any(any(getattr(row, field, None) is None for field in income_fields) for _, row in pairs),
+        "BALANCE_SHEET": any(any(getattr(row, field, None) is None for field in balance_fields) for _, row in pairs),
+        "CASH_FLOW": any(any(getattr(row, field, None) is None for field in cash_fields) for _, row in pairs),
+    }
+
+    payloads: dict[str, dict[str, Any]] = {}
+    sources: dict[str, Source] = {}
+    for function, needed in needs.items():
+        if not needed:
+            continue
+        payload = _alpha_vantage_statement(function, security.ticker, user_id)
+        if not payload:
+            continue
+        payloads[function] = payload
+        sources[function] = _av_source(company, security.ticker, function, payload)
+
+    filled = 0
+    touched: set[int] = set()
+    for period, row in pairs:
+        period_key = "annualReports" if period.period_type == "FY" else "quarterlyReports"
+        end = period.end_date.isoformat()
+        source_map = dict(row.source_map or {})
+        quality = dict(row.quality or {})
+        for function, payload in payloads.items():
+            report = next((item for item in payload.get(period_key, []) if str(item.get("fiscalDateEnding") or "")[:10] == end), None)
+            if not report:
+                continue
+            source = sources[function]
+            mapping = _AV_INCOME_FIELDS if function == "INCOME_STATEMENT" else _AV_BALANCE_FIELDS if function == "BALANCE_SHEET" else _AV_CASH_FIELDS
+            candidates: list[tuple[str, Decimal, str]] = []
+            for field, keys in mapping.items():
+                if getattr(row, field, None) is not None:
+                    continue
+                value = _av_decimal(report, keys)
+                if value is None:
+                    continue
+                if field == "capex":
+                    value = abs(value)
+                candidates.append((field, value, next((key for key in keys if _as_decimal(report.get(key)) is not None), keys[0])))
+            if function == "BALANCE_SHEET" and row.debt is None:
+                debt, debt_field = _av_debt(report)
+                if debt is not None:
+                    candidates.append(("debt", debt, debt_field))
+            for field, value, provider_field in candidates:
+                setattr(row, field, value)
+                source_map[field] = {
+                    "tag": provider_field,
+                    "source_id": source.id,
+                    "provider": "Alpha Vantage",
+                    "method": "MISSING_FIELD_FALLBACK",
+                    "period_end": end,
+                }
+                exists = Provenance.query.filter_by(
+                    object_type="normalized_financial",
+                    object_id=str(period.id),
+                    field_name=field,
+                    financial_period_id=period.id,
+                    provider="Alpha Vantage",
+                ).first()
+                if not exists:
+                    db.session.add(Provenance(
+                        source_id=source.id,
+                        object_type="normalized_financial",
+                        object_id=str(period.id),
+                        field_name=field,
+                        raw_or_normalized="NORMALIZED",
+                        financial_period_id=period.id,
+                        provider="Alpha Vantage",
+                        freshness_at=utcnow(),
+                        calculation_version=CALCULATION_VERSION,
+                        notes=f"{provider_field} / missing-field fallback / SEC retained when available",
+                    ))
+                filled += 1
+                touched.add(period.id)
+        if period.id in touched:
+            _finish_normalized(row, source_map, period_type=period.period_type)
+            quality.update({
+                "provider": "SEC + Alpha Vantage fallback",
+                "secondary_fundamental_source": "Alpha Vantage",
+                "sec_preferred": True,
+            })
+            row.source_map = source_map
+            row.quality = quality
+
+    return {"configured": True, "filled": filled, "sources": sorted(payloads)}
+
+
+
 def refresh_company_fundamentals(company: Company, security: Security, user_id: int) -> dict[str, Any]:
     user_agent = _ua(user_id)
     meta = _ticker_meta(security.ticker, user_agent)
@@ -457,6 +666,8 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         _finish_normalized(normalized, source_map, period_type=fp)
         quarter_saved += 1
 
+    fallback = _alpha_vantage_fill_missing(company, security, user_id)
+
     company.legal_name = meta["name"] or company.legal_name
     company.display_name = meta["name"] or company.display_name
     company.cik = meta["cik"]
@@ -470,4 +681,5 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "cik": meta["cik"], "name": company.display_name,
         "years": years[-16:], "quarter_periods": [f"FY{fy}-{fp}" for fy, fp in quarter_keys[-24:]],
         "source_id": source.id,
+        "fundamental_fallback": fallback,
     }
