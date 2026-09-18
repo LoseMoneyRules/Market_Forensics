@@ -433,6 +433,11 @@
       if (!next) throw new Error('gate markup');
       current.replaceWith(next);
       applySemanticStatuses(next);
+      if (payload?.research_conclusion) {
+        document.querySelectorAll('[data-research-conclusion]').forEach((el)=>{
+          el.textContent = payload.research_conclusion;
+        });
+      }
       dirty = false;
     } catch (error) {
       if (button) { button.disabled = false; button.textContent = prior; }
