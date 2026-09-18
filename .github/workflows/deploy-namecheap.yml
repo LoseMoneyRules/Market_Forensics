@@ -191,6 +191,37 @@ jobs:
           find .reporting-vendor-payload -type d -name __pycache__ -prune -exec rm -rf {} +
           find .reporting-vendor-payload -type f -name '*.pyc' -delete
 
+      - name: Verify reporting vendor is excluded from backup plan
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mf-backup-plan
+          mkdir -p /tmp/mf-backup-plan
+          timeout --signal=TERM 90s lftp <<LFTP > /tmp/mf-backup-plan.txt
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          mirror --just-print \
+            --exclude='^_reporting_vendor(/|$)' \
+            --exclude-glob __pycache__/ \
+            --exclude-glob '*.pyc' \
+            ./mfapp /tmp/mf-backup-plan/mfapp
+          bye
+          LFTP
+          cat /tmp/mf-backup-plan.txt
+          if grep -q '_reporting_vendor' /tmp/mf-backup-plan.txt; then
+            echo "::error::Reporting vendor leaked into the backup plan. Refusing to deploy."
+            exit 1
+          fi
+          echo "Reporting vendor exclusion verified against production before backup."
+
       - name: Backup current production runtime
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
@@ -207,7 +238,7 @@ jobs:
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --verbose \
-            --exclude-glob _reporting_vendor* \
+            --exclude='^_reporting_vendor(/|$)' \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./mfapp ./.production-backup/mfapp
@@ -311,7 +342,7 @@ jobs:
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --delete --verbose \
-            --exclude-glob _reporting_vendor* \
+            --exclude='^_reporting_vendor(/|$)' \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./.release-payload/mfapp ./mfapp
@@ -409,7 +440,7 @@ jobs:
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --delete --verbose \
-            --exclude-glob _reporting_vendor* \
+            --exclude='^_reporting_vendor(/|$)' \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./.production-backup/mfapp ./mfapp
