@@ -881,3 +881,12 @@ def test_020_mobile_navigation_has_single_working_controller_and_css_contract():
     assert "body.nav-open .navrail" in css
     assert "body.nav-open .mobile-backdrop" in css
     assert "z-index:90" in css
+
+
+def test_020_current_price_refresh_contract_is_five_minutes():
+    workspace = Path("mfapp/workspace_routes.py").read_text()
+    js = Path("mfapp/static/js/app.js").read_text()
+    assert "timedelta(minutes=5)" in workspace
+    assert '"MARKET_REFRESH"' in workspace
+    assert "5 * 60 * 1000" in js
+    assert "/price/refresh" in js
