@@ -4,6 +4,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import and_
 from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, url_for
 from sqlalchemy import or_
 
@@ -309,9 +310,17 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
     company_ids = [row.company_id for row in securities.values()]
     companies = {row.id: row for row in Company.query.filter(Company.id.in_(company_ids)).all()} if company_ids else {}
 
-    snapshot_rows = MarketSnapshot.query.filter(MarketSnapshot.security_id.in_(security_ids)).order_by(
-        MarketSnapshot.security_id.asc(), MarketSnapshot.as_of.desc(), MarketSnapshot.id.desc()
-    ).all()
+    latest_times = db.session.query(
+        MarketSnapshot.security_id.label("security_id"),
+        db.func.max(MarketSnapshot.as_of).label("max_as_of"),
+    ).filter(MarketSnapshot.security_id.in_(security_ids)).group_by(MarketSnapshot.security_id).subquery()
+    snapshot_rows = MarketSnapshot.query.join(
+        latest_times,
+        and_(
+            MarketSnapshot.security_id == latest_times.c.security_id,
+            MarketSnapshot.as_of == latest_times.c.max_as_of,
+        ),
+    ).order_by(MarketSnapshot.id.desc()).all()
     snapshots = {}
     for row in snapshot_rows:
         snapshots.setdefault(row.security_id, row)
