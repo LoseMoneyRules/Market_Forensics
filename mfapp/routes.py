@@ -118,6 +118,30 @@ def _fallback_readiness() -> dict:
     }
 
 
+def _fallback_intelligence(readiness: dict | None = None, *, updating: bool = True) -> dict:
+    readiness = readiness or _fallback_readiness()
+    message = "Research cache is updating." if updating else "Research cache is not available."
+    return {
+        "action": "WAIT",
+        "stance": "DATA REVIEW",
+        "bias": "NEUTRAL",
+        "confidence": "LOW",
+        "score": 0.0,
+        "positives": 0,
+        "negatives": 0,
+        "warnings": [message],
+        "blockers": [message],
+        "signals": [],
+        "top_signals": [],
+        "supporting_evidence": [],
+        "opposing_evidence": [],
+        "base_gap_pct": None,
+        "validation_state": (readiness.get("validation") or {}).get("state", "NOT RUN"),
+        "buy_threshold": 2.5,
+        "sell_threshold": -2.5,
+    }
+
+
 def _fallback_lenses(valuation: dict, cache_pending: bool) -> dict:
     price = valuation.get("current_price")
     base = valuation.get("base")
@@ -188,12 +212,7 @@ def _ctx(ticker: str) -> dict:
 
     cache_pending = active_recalc is not None
     readiness = dict((cache or {}).get("readiness") or _fallback_readiness())
-    intelligence = dict((cache or {}).get("intelligence") or {
-        "action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW",
-        "score": 0.0, "positives": 0, "negatives": 0, "warnings": ["Research cache is updating."],
-        "top_signals": [], "base_gap_pct": None, "validation_state": readiness.get("validation", {}).get("state", "NOT RUN"),
-        "buy_threshold": 2.5, "sell_threshold": -2.5,
-    })
+    intelligence = dict((cache or {}).get("intelligence") or _fallback_intelligence(readiness, updating=cache_pending))
     decision_lenses = dict((cache or {}).get("decision_lenses") or _fallback_lenses(valuation, cache_pending))
     brief = dict((cache or {}).get("brief") or _fast_brief(valuation, model, decision_lenses))
 
@@ -308,12 +327,7 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             "bear": None, "base": None, "bull": None, "expected_value": None,
         })
         readiness = dict(cache.get("readiness") or _fallback_readiness())
-        intelligence = dict(cache.get("intelligence") or {
-            "action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW",
-            "score": 0.0, "positives": 0, "negatives": 0, "warnings": ["Research cache is building."],
-            "top_signals": [], "base_gap_pct": None, "validation_state": readiness.get("validation", {}).get("state", "NOT RUN"),
-            "buy_threshold": 2.5, "sell_threshold": -2.5,
-        })
+        intelligence = dict(cache.get("intelligence") or _fallback_intelligence(readiness, updating=True))
         lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
         pending = [gate.get("label") for gate in readiness.get("gates", []) if not gate.get("approved")]
         validation_state = str((readiness.get("validation") or {}).get("state") or "NOT RUN")
