@@ -14,19 +14,18 @@
 **Production:** 0.2.8 on Namecheap  
 **Verified production baseline:** deploy run `35380547531` / deploy #40 = completed / success on main commit `371af002bf9a74f9b302a7489a1b93624c6042ea`; candidate health + post-cleanup health passed with `version = 0.2.8`, `reports = rich`  
 **Persistent report vendor verification:** deploy #40 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
-**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; same-version UI/report polish merged through PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; VERSION remains `0.2.8`  
-**Latest verified main CI:** run `35380378348` / #840 = completed / success on `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**0.2.8 polish deploy:** deploy #40 includes PR #28 / current main through `371af002bf9a74f9b302a7489a1b93624c6042ea`  
-**Active second polish:** branch `polish/0.2.8-data-ui-2`; VERSION remains `0.2.8`; data-completeness recovery + small layout corrections, pending CI / merge / deploy  
-**Release phase:** 0.2.8 + PR #28 polish are LIVE; the second same-version polish is still a candidate branch  
-**Branch:** `polish/0.2.8-data-ui-2`
+**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; UI/report polish PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; data-completeness/layout polish PR #29 at `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; VERSION remains `0.2.8`  
+**Latest verified main CI:** run `35384935210` / #842 = completed / success on `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**0.2.8 production deploy:** deploy #40 includes PR #28 / main through `371af002bf9a74f9b302a7489a1b93624c6042ea`; PR #29 is not yet deployed  
+**Release phase:** 0.2.8 + PR #28 polish are LIVE; PR #29 is complete and validated on main and needs a separate Namecheap deploy  
+**Branch:** `main`
 
-Deploy #40 is the authoritative production baseline. The active second polish does not change VERSION or architecture and must not be treated as production until its own merge and Namecheap deploy succeed.
+Deploy #40 is the authoritative production baseline. PR #29 keeps VERSION and architecture unchanged. After its production deploy, existing normalized fundamentals need one SEC re-ingest (Refresh all or per-company Refresh SEC + TTM) to benefit from the broader mappings; Recalculate alone only rebuilds analytics from already-stored normalized facts.
 ---
 
 ## 0.2.8 release scope
 
-Second same-version polish on `polish/0.2.8-data-ui-2`:
+Second same-version polish merged through PR #29:
 - Coverage moves Refresh stale / Refresh all below the table and its single Process/Validate note; a fully approved process displays only READY rather than 13/13 plus READY.
 - Validate keeps the walk-forward action bar immediately below the Research tabs.
 - Fundamentals keeps its eight current KPIs on one row on wide screens and moves Data Completeness to the bottom.
