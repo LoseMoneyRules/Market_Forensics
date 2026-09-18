@@ -17,13 +17,18 @@
 **Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; UI/report polish PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; data-completeness/layout polish PR #29 at `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; VERSION remains `0.2.8`  
 **Latest verified main CI:** run `35384935210` / #842 = completed / success on `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
 **0.2.8 production deploy:** deploy #40 includes PR #28 / main through `371af002bf9a74f9b302a7489a1b93624c6042ea`; PR #29 is not yet deployed  
-**Release phase:** 0.2.8 + PR #28 polish are LIVE; PR #29 is complete and validated on main and needs a separate Namecheap deploy  
-**Branch:** `main`
+**Release phase:** 0.2.8 + PR #28 polish are LIVE; PR #29 is complete and validated on main and needs a separate Namecheap deploy; final micro-polish candidate is pending CI / merge  
+**Branch:** `polish/0.2.8-readiness-links-sort`
 
 Deploy #40 is the authoritative production baseline. PR #29 keeps VERSION and architecture unchanged. After its production deploy, existing normalized fundamentals need one SEC re-ingest (Refresh all or per-company Refresh SEC + TTM) to benefit from the broader mappings; Recalculate alone only rebuilds analytics from already-stored normalized facts.
 ---
 
 ## 0.2.8 release scope
+
+Final 0.2.8 micro-polish candidate on `polish/0.2.8-readiness-links-sort`:
+- Process Readiness gate names link directly to their corresponding Research page.
+- Coverage rows are sorted alphabetically by ticker before rendering.
+- VERSION remains `0.2.8`; no architecture, data, provider, report or deployment behavior changes.
 
 Second same-version polish merged through PR #29:
 - Coverage moves Refresh stale / Refresh all below the table and its single Process/Validate note; a fully approved process displays only READY rather than 13/13 plus READY.
