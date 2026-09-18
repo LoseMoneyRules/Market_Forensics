@@ -39,6 +39,13 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
     inventory = _n(current.get("inventory"))
     receivables = _n(current.get("receivables"))
     fcf = _n(current.get("fcf"))
+    net_income = _n(current.get("net_income"))
+    operating_income = _n(current.get("operating_income"))
+    pretax_income = _n(current.get("pretax_income"))
+    income_tax = _n(current.get("income_tax"))
+    debt = _n(current.get("debt")) or 0.0
+    cash = _n(current.get("cash")) or 0.0
+    equity = _n(current.get("equity"))
     shares = _n(current.get("diluted_shares")) or _n(current.get("shares_outstanding"))
 
     history = list(reversed(history_with_current(company.id, 6)))
@@ -61,6 +68,13 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
 
     market_cap = price * shares if price not in (None, 0) and shares not in (None, 0) else None
     fcf_yield = (fcf / market_cap * 100.0) if fcf is not None and market_cap not in (None, 0) else None
+    pe = (market_cap / net_income) if market_cap not in (None, 0) and net_income is not None and net_income > 0 else None
+    enterprise_value = (market_cap + debt - cash) if market_cap is not None else None
+    ev_sales = (enterprise_value / revenue) if enterprise_value is not None and revenue not in (None, 0) else None
+    tax_rate = (income_tax / pretax_income) if income_tax is not None and pretax_income is not None and pretax_income > 0 else .21
+    tax_rate = max(0.0, min(.40, tax_rate))
+    invested_capital = (debt + equity - cash) if equity is not None else None
+    roic = (operating_income * (1.0 - tax_rate) / invested_capital * 100.0) if operating_income is not None and invested_capital not in (None, 0) and invested_capital > 0 else None
 
     return {
         "company_id": company.id,
@@ -136,19 +150,23 @@ def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_
 
     peer_rows = peer_rows[:max(1, limit)]
     metrics = [
-        ("revenue_growth_pct", "Revenue growth", True),
-        ("operating_margin_pct", "Operating margin", True),
-        ("fcf_margin_pct", "FCF margin", True),
-        ("inventory_to_revenue_pct", "Inventory / Revenue", False),
-        ("receivables_to_revenue_pct", "Receivables / Revenue", False),
-        ("asset_turnover", "Asset turnover", True),
-        ("share_change_pct", "Share change", False),
-        ("fcf_yield_pct", "FCF yield", True),
+        ("revenue_growth_pct", "Revenue growth", "HIGHER"),
+        ("operating_margin_pct", "Operating margin", "HIGHER"),
+        ("fcf_margin_pct", "FCF margin", "HIGHER"),
+        ("roic_pct", "ROIC", "HIGHER"),
+        ("inventory_to_revenue_pct", "Inventory / Revenue", "LOWER"),
+        ("receivables_to_revenue_pct", "Receivables / Revenue", "LOWER"),
+        ("asset_turnover", "Asset turnover", "HIGHER"),
+        ("share_change_pct", "Share change", "LOWER"),
+        ("pe", "P/E", "CHEAPER"),
+        ("ev_sales", "EV / Sales", "CHEAPER"),
+        ("fcf_yield_pct", "FCF yield", "HIGHER"),
     ]
 
     comparisons = []
     signals = []
-    for key, label, higher_better in metrics:
+    comparison_map: dict[str, dict[str, Any]] = {}
+    for key, label, direction in metrics:
         tv = target.get(key)
         vals = [r.get(key) for r in peer_rows if r.get(key) is not None]
         if tv is None or not vals:
@@ -159,13 +177,17 @@ def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_
         material = abs(diff) >= max(1.5 if key.endswith("_pct") else .15, scale * .15)
         state = "IN LINE"
         if material:
-            favorable = diff > 0 if higher_better else diff < 0
-            state = "STRENGTH" if favorable else "WEAKNESS"
+            if direction == "CHEAPER":
+                state = "CHEAPER" if diff < 0 else "RICHER"
+            else:
+                favorable = diff > 0 if direction == "HIGHER" else diff < 0
+                state = "STRENGTH" if favorable else "WEAKNESS"
             signals.append({
                 "label": label,
                 "state": state,
                 "detail": f"{label}: target {tv:.2f} vs peer median {med:.2f}.",
             })
+        comparison_map[key] = {"target": tv, "peer_median": med, "difference": diff, "state": state}
         comparisons.append({
             "key": key,
             "label": label,
@@ -173,6 +195,21 @@ def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_
             "peer_median": med,
             "difference": diff,
             "state": state,
+        })
+
+    valuation_states = [comparison_map.get("pe", {}).get("state"), comparison_map.get("ev_sales", {}).get("state")]
+    quality_states = [comparison_map.get("operating_margin_pct", {}).get("state"), comparison_map.get("roic_pct", {}).get("state")]
+    if "RICHER" in valuation_states and "STRENGTH" not in quality_states:
+        signals.insert(0, {
+            "label": "Relative value + quality",
+            "state": "PREMIUM WITHOUT QUALITY",
+            "detail": "Valuation is richer than peers without a matching operating-margin/ROIC advantage in stored evidence.",
+        })
+    elif "CHEAPER" in valuation_states and "STRENGTH" in quality_states:
+        signals.insert(0, {
+            "label": "Relative value + quality",
+            "state": "RELATIVE VALUE + QUALITY",
+            "detail": "Stored evidence shows a cheaper relative multiple alongside an operating-quality advantage.",
         })
 
     return {
