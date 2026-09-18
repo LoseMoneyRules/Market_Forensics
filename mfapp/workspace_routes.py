@@ -43,6 +43,14 @@ def approve_research_gate(ticker: str, gate_key: str):
         existing.note = str(request.form.get("note") or "")[:240]
         audit("research_gate.approve", "coverage", ctx["coverage"].id, {"gate": gate_key, "evidence_hash": gate["evidence_hash"]})
     db.session.commit()
+    enqueue_job(
+        "RECALCULATE",
+        user_id=g.user.id,
+        company_id=ctx["company"].id,
+        security_id=ctx["security"].id,
+        payload={"coverage_id": ctx["coverage"].id},
+        priority=95,
+    )
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
 
