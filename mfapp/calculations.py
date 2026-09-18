@@ -90,9 +90,16 @@ def valuation_sensitivity(base_value: Any, current_price: Any) -> list[dict[str,
 
 def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None = None) -> dict[str, Any]:
     previous = previous or {}; revenue = number(current.get("revenue")); cogs = number(current.get("cogs"))
+    gross_profit = number(current.get("gross_profit"))
+    # Gross margin is a core operating metric. When the filing supplies Revenue
+    # and COGS but omits a separate Gross Profit fact, Revenue - COGS is an exact
+    # accounting bridge, not an estimate. Preserve None only when the filing
+    # inputs themselves are insufficient.
+    if gross_profit is None and revenue is not None and cogs is not None:
+        gross_profit = revenue - cogs
     metrics = {
         "revenue_growth_pct": pct_change(current.get("revenue"), previous.get("revenue")),
-        "gross_margin_pct": ratio(current.get("gross_profit"), revenue, 100.0),
+        "gross_margin_pct": ratio(gross_profit, revenue, 100.0),
         "operating_margin_pct": ratio(current.get("operating_income"), revenue, 100.0),
         "net_margin_pct": ratio(current.get("net_income"), revenue, 100.0),
         "fcf_margin_pct": ratio(current.get("fcf"), revenue, 100.0),
