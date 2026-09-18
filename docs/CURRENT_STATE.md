@@ -17,11 +17,11 @@
 **0.2.7 post-merge main CI:** run `35369300915` / run #798 = completed / success on merge commit  
 **CURRENT_STATE sync CI:** run `35369397930` / run #801 = completed / success on clean main state  
 **0.2.7 Namecheap deploy:** run `35369640385` / deploy #36 = completed / success; candidate health + post-cleanup health passed; no rollback  
-**Deploy-vendor hotfix:** PR #25 (`fix/reporting-vendor-cache`) hardens future deploys so unchanged report dependencies are persistent and not retransferred  
-**Release phase:** 0.2.7 is LIVE; deployment-workflow hotfix PR #25 pending merge  
-**Branch:** `fix/reporting-vendor-cache`
+**Deploy-vendor hotfix:** PR #25 merged to `main` at `8908092dedf3a5390f54774848852cd860b12d5b`; PR CI run `35371300278` / #809 = success; post-merge main CI run `35371391426` / #810 = success  
+**Release phase:** 0.2.7 is LIVE; persistent reporting-vendor deploy cache is active in `main` for future deploys  
+**Branch:** `main`
 
-0.2.7 is the authoritative code in main and is LIVE on Namecheap. Deploy #36 completed successfully with candidate and post-cleanup production health green. PR #25 does not change the application release or production data; it changes the GitHub→Namecheap transfer mechanism used by future deploys.
+0.2.7 is the authoritative code in main and is LIVE on Namecheap. Deploy #36 completed successfully with candidate and post-cleanup production health green. PR #25 is now merged and changes only the GitHub→Namecheap transfer mechanism: the next deploy will reuse the existing healthy report vendor when `requirements-reporting.txt` is unchanged, bootstrapping only the tiny hash marker if needed.
 
 ---
 
@@ -443,7 +443,7 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
-**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`), with candidate health and post-cleanup health green. PR #25 is a deployment-infrastructure hotfix for future releases; it does not require a production application redeploy.
+**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`), with candidate health and post-cleanup health green. Deployment hotfix PR #25 is merged to `main` at `8908092dedf3a5390f54774848852cd860b12d5b`; PR CI #809 and post-merge main CI #810 are green. No production application redeploy is required for this workflow-only hotfix.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
@@ -455,9 +455,9 @@ Completed 0.2.7 release sequence:
 
 `0.2.7 branch → PR CI green → merge main → post-merge main CI green → Namecheap deploy #36 → production health green`
 
-Deployment-workflow hotfix sequence:
+Completed deployment-workflow hotfix sequence:
 
-`PR #25 CI green → merge main → next release deploy reuses persistent report vendor when requirements hash is unchanged`
+`PR #25 CI #809 green → merge main → main CI #810 green → next release deploy reuses persistent report vendor when requirements hash is unchanged`
 
 Do not merge merely because individual fixes look correct.
 
