@@ -655,10 +655,29 @@ def company_section(ticker, section):
         scale_series.extend({
             "label": row.get("period_label"), "forecast_revenue": row.get("revenue")
         } for row in forecasts)
+        leverage_display = {"value": None, "basis": "", "reason": "Debt/cash or positive FCF unavailable on the current basis."}
+        current_metrics = dict((current_financial or {}).get("metrics") or {})
+        if current_metrics.get("net_debt_to_fcf") is not None:
+            leverage_display = {
+                "value": current_metrics.get("net_debt_to_fcf"),
+                "basis": f"{(current_financial or {}).get('period_label') or 'Current'} basis",
+                "reason": "",
+            }
+        else:
+            for row in financials:
+                ratio = (row.get("metrics") or {}).get("net_debt_to_fcf")
+                if ratio is not None:
+                    leverage_display = {
+                        "value": ratio,
+                        "basis": f"Latest available FY{row.get('fiscal_year')} fallback",
+                        "reason": "",
+                    }
+                    break
         extra.update({
             "financials": financials,
             "quarterly_financials": quarterly_financials,
             "current_financial": current_financial,
+            "leverage_display": leverage_display,
             "numbers_completeness": numbers_completeness(company.id),
             "forecast_rows": forecasts,
             "numbers_scale_series": scale_series,
