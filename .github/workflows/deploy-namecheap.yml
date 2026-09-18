@@ -81,14 +81,16 @@ jobs:
           test -n "$MF_RELEASE_VERSION"
           echo "MF_RELEASE_VERSION=$MF_RELEASE_VERSION" >> "$GITHUB_ENV"
           echo "Preparing Market Forensics $MF_RELEASE_VERSION"
-          rm -rf .release-payload .production-backup .empty-cleanup
+          rm -rf .release-payload .production-backup .empty-cleanup .reporting-vendor-payload
           mkdir -p .release-payload .production-backup .empty-cleanup
           cp app.py manage.py requirements.txt requirements-reporting.txt VERSION .release-payload/
           cp -a mfapp .release-payload/
           rm -rf .release-payload/mfapp/_reporting_vendor
-          python -m pip install --no-compile --target .release-payload/mfapp/_reporting_vendor -r requirements-reporting.txt
-          test -d .release-payload/mfapp/_reporting_vendor/docx
-          test -d .release-payload/mfapp/_reporting_vendor/reportlab
+          MF_REPORTING_REQUIREMENTS_SHA="$(sha256sum requirements-reporting.txt | awk '{print $1}')"
+          test -n "$MF_REPORTING_REQUIREMENTS_SHA"
+          echo "MF_REPORTING_REQUIREMENTS_SHA=$MF_REPORTING_REQUIREMENTS_SHA" >> "$GITHUB_ENV"
+          printf '%s\n' "$MF_REPORTING_REQUIREMENTS_SHA" > /tmp/mf-reporting-requirements.sha256
+          echo "Reporting runtime dependency hash: $MF_REPORTING_REQUIREMENTS_SHA"
           find .release-payload -type d -name __pycache__ -prune -exec rm -rf {} +
           find .release-payload -type f -name '*.pyc' -delete
           test ! -e .release-payload/mfapp/full312.py
@@ -112,6 +114,83 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq lftp
 
+      - name: Inspect persistent reporting vendor
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          rm -f /tmp/mf-reporting-marker.remote /tmp/mf-reporting-req.remote \
+            /tmp/mf-reporting-docx.remote /tmp/mf-reporting-reportlab.remote
+          timeout --signal=TERM 90s lftp <<LFTP
+          set cmd:fail-exit no
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          get ./mfapp/_reporting_vendor/.mf-requirements.sha256 -o /tmp/mf-reporting-marker.remote
+          get ./requirements-reporting.txt -o /tmp/mf-reporting-req.remote
+          get ./mfapp/_reporting_vendor/docx/__init__.py -o /tmp/mf-reporting-docx.remote
+          get ./mfapp/_reporting_vendor/reportlab/__init__.py -o /tmp/mf-reporting-reportlab.remote
+          bye
+          LFTP
+
+          vendor_present=0
+          if [ -s /tmp/mf-reporting-docx.remote ] && [ -s /tmp/mf-reporting-reportlab.remote ]; then
+            vendor_present=1
+          fi
+          remote_marker="$(tr -d '\r\n' < /tmp/mf-reporting-marker.remote 2>/dev/null || true)"
+          remote_requirements_sha=""
+          if [ -s /tmp/mf-reporting-req.remote ]; then
+            remote_requirements_sha="$(sha256sum /tmp/mf-reporting-req.remote | awk '{print $1}')"
+          fi
+
+          upload=1
+          bootstrap_marker=0
+          if [ "$vendor_present" = "1" ] && [ "$remote_marker" = "$MF_REPORTING_REQUIREMENTS_SHA" ]; then
+            upload=0
+            echo "Persistent reporting vendor cache hit."
+          elif [ "$vendor_present" = "1" ] && [ -z "$remote_marker" ] \
+            && [ "$remote_requirements_sha" = "$MF_REPORTING_REQUIREMENTS_SHA" ]; then
+            upload=0
+            bootstrap_marker=1
+            echo "Existing reporting vendor matches deployed requirements; bootstrapping marker without retransferring vendor."
+          else
+            echo "Reporting vendor cache miss; a new runtime will be staged once."
+          fi
+
+          echo "MF_REPORTING_VENDOR_PRESENT=$vendor_present" >> "$GITHUB_ENV"
+          echo "MF_REPORTING_VENDOR_UPLOAD=$upload" >> "$GITHUB_ENV"
+
+          if [ "$bootstrap_marker" = "1" ]; then
+            timeout --signal=TERM 60s lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          put /tmp/mf-reporting-requirements.sha256 -o ./mfapp/_reporting_vendor/.mf-requirements.sha256
+          bye
+          LFTP
+          fi
+
+      - name: Build reporting vendor only when dependencies changed
+        if: env.MF_REPORTING_VENDOR_UPLOAD == '1'
+        run: |
+          set -euo pipefail
+          rm -rf .reporting-vendor-payload
+          python -m pip install --no-compile --target .reporting-vendor-payload -r requirements-reporting.txt
+          test -d .reporting-vendor-payload/docx
+          test -d .reporting-vendor-payload/reportlab
+          cp /tmp/mf-reporting-requirements.sha256 .reporting-vendor-payload/.mf-requirements.sha256
+          find .reporting-vendor-payload -type d -name __pycache__ -prune -exec rm -rf {} +
+          find .reporting-vendor-payload -type f -name '*.pyc' -delete
+
       - name: Backup current production runtime
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
@@ -128,12 +207,14 @@ jobs:
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --verbose \
+            --exclude-glob _reporting_vendor* \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./mfapp ./.production-backup/mfapp
           get ./app.py -o ./.production-backup/app.py
           get ./manage.py -o ./.production-backup/manage.py
           get ./requirements.txt -o ./.production-backup/requirements.txt
+          get ./requirements-reporting.txt -o ./.production-backup/requirements-reporting.txt
           get ./VERSION -o ./.production-backup/VERSION
           bye
           LFTP
@@ -152,6 +233,67 @@ jobs:
           printf '%s' "$body" | grep -q '"status":"ok"'
           printf '%s' "$body" | grep -q "\"version\":\"${MF_ROLLBACK_VERSION}\""
 
+      - name: Stage changed reporting vendor
+        if: env.MF_REPORTING_VENDOR_UPLOAD == '1'
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          timeout --signal=TERM 90s lftp <<LFTP
+          set cmd:fail-exit no
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          rm -rf ./mfapp/_reporting_vendor.next
+          rm -rf ./mfapp/_reporting_vendor.failed
+          rm -rf ./mfapp/_reporting_vendor.rollback
+          bye
+          LFTP
+
+          timeout --signal=TERM 10m lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 3
+          set net:timeout 30
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          mirror --reverse --delete --verbose ./.reporting-vendor-payload ./mfapp/_reporting_vendor.next
+          bye
+          LFTP
+
+          if ! timeout --signal=TERM 60s lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          $(if [ "$MF_REPORTING_VENDOR_PRESENT" = "1" ]; then printf '%s\n' "mv ./mfapp/_reporting_vendor ./mfapp/_reporting_vendor.rollback"; fi)
+          mv ./mfapp/_reporting_vendor.next ./mfapp/_reporting_vendor
+          bye
+          LFTP
+          then
+            echo "Reporting vendor swap failed; restoring previous active runtime if present."
+            timeout --signal=TERM 60s lftp <<LFTP || true
+          set cmd:fail-exit no
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          mv ./mfapp/_reporting_vendor.rollback ./mfapp/_reporting_vendor
+          bye
+          LFTP
+            exit 1
+          fi
+
       - name: Upload release candidate and restart Passenger
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
@@ -169,6 +311,7 @@ jobs:
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --delete --verbose \
+            --exclude-glob _reporting_vendor* \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./.release-payload/mfapp ./mfapp
@@ -241,6 +384,22 @@ jobs:
         run: |
           set -euo pipefail
           printf 'restart rollback %s %s\n' "$MF_ROLLBACK_VERSION" "${GITHUB_SHA}" > /tmp/restart.txt
+
+          if [ "${MF_REPORTING_VENDOR_UPLOAD:-0}" = "1" ]; then
+            timeout --signal=TERM 60s lftp <<LFTP
+          set cmd:fail-exit yes
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 2
+          set net:timeout 20
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          mv ./mfapp/_reporting_vendor ./mfapp/_reporting_vendor.failed
+          $(if [ "${MF_REPORTING_VENDOR_PRESENT:-0}" = "1" ]; then printf '%s\n' "mv ./mfapp/_reporting_vendor.rollback ./mfapp/_reporting_vendor"; fi)
+          bye
+          LFTP
+          fi
+
           timeout --signal=TERM 10m lftp <<LFTP
           set cmd:fail-exit yes
           set ssl:verify-certificate yes
@@ -250,12 +409,14 @@ jobs:
           set net:timeout 30
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --delete --verbose \
+            --exclude-glob _reporting_vendor* \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./.production-backup/mfapp ./mfapp
           put -O . .production-backup/app.py
           put -O . .production-backup/manage.py
           put -O . .production-backup/requirements.txt
+          put -O . .production-backup/requirements-reporting.txt
           put -O . .production-backup/VERSION
           put /tmp/restart.txt -o tmp/restart.txt
           bye
