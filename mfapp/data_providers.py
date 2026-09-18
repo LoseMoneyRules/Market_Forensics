@@ -85,7 +85,7 @@ def provider_overview(user_id: int) -> list[dict[str, Any]]:
         {"key": "finra", "name": "FINRA public files", "category": "Positioning / flows", "state": "PUBLIC", "required": False, "capabilities": "Reg SHO daily short-sale volume; no credential required"},
         {"key": "finra_api", "name": "FINRA Query API", "category": "Positioning / flows", "state": "READY" if status["finra_api"] else "OPTIONAL", "required": False, "capabilities": "Consolidated short interest, days-to-cover, changes, threshold history"},
         {"key": "tiingo", "name": "Tiingo", "category": "Market redundancy", "state": "READY" if status["tiingo"] else "OPTIONAL", "required": False, "capabilities": "Independent quote and historical cross-check"},
-        {"key": "alpha_vantage", "name": "Alpha Vantage", "category": "Market redundancy", "state": "READY" if status["alpha_vantage"] else "OPTIONAL", "required": False, "capabilities": "Secondary delayed quote source"},
+        {"key": "alpha_vantage", "name": "Alpha Vantage", "category": "Market + fundamental redundancy", "state": "READY" if status["alpha_vantage"] else "OPTIONAL", "required": False, "capabilities": "Secondary delayed quote plus missing-field income statement / balance sheet / cash-flow fallback; SEC remains primary"},
         {"key": "massive", "name": "Massive", "category": "Future market depth", "state": "READY" if status["massive"] else "OPTIONAL", "required": False, "capabilities": "Credential retained for future options / reference / market-depth modules"},
     ]
 
