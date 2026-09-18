@@ -12,7 +12,16 @@ from .research_cache import latest_cache_map
 
 MIN_LONG_PRICE = 5.0
 MIN_SHORT_PRICE = 10.0
-MIN_DOLLAR_VOLUME = 25_000_000.0
+MIN_DOLLAR_VOLUME = 50_000_000.0
+MIN_DAILY_VOLUME = 500_000.0
+MAX_PER_SIDE = 12
+MAJOR_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA"}
+NON_OPERATING_NAME_TOKENS = (
+    " WARRANT", "WARRANT ", " RIGHTS", " RIGHT", " UNIT", " UNITS",
+    " ETF", "ETN", " EXCHANGE TRADED FUND", " FUND", " PORTFOLIO",
+    " ACQUISITION CORP", " ACQUISITION CO", " BLANK CHECK",
+    " PREFERRED", " PREFERENCE", " DEPOSITARY SHARE", " NOTES DUE ",
+)
 
 
 def _headers(user_id: int) -> dict[str, str] | None:
@@ -34,7 +43,7 @@ def _n(value: Any) -> float | None:
 def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str, Any]]:
     """Batch-read already materialized Research context.
 
-    Discovery must never run fundamentals/readiness/valuation engines per symbol.
+    Discovery never runs fundamentals/readiness/valuation engines per symbol.
     """
     if not symbols:
         return {}
@@ -76,11 +85,6 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
 
 
 def _snapshot_map(symbols: set[str], headers: dict[str, str], errors: list[str]) -> dict[str, dict[str, Any]]:
-    """One bounded market-data call to qualify screener results.
-
-    This prevents penny/illiquid names from becoming high-priority short ideas
-    merely because they printed a large percentage move.
-    """
     if not symbols:
         return {}
     try:
@@ -112,26 +116,94 @@ def _snapshot_map(symbols: set[str], headers: dict[str, str], errors: list[str])
         return {}
 
 
-def _priority(side: str, base_gap: float | None, move: float | None, dollar_volume: float | None) -> tuple[str, int, str]:
+def _asset_map(symbols: set[str], headers: dict[str, str], errors: list[str]) -> dict[str, dict[str, Any]]:
+    """Validate candidate securities in one bounded Alpaca assets request.
+
+    Failing closed is deliberate: if the scan cannot verify an active tradable
+    US equity, it does not promote that symbol merely to fill the radar.
+    """
+    if not symbols:
+        return {}
+    try:
+        response = requests.get(
+            "https://paper-api.alpaca.markets/v2/assets",
+            headers=headers,
+            params={"status": "active", "asset_class": "us_equity"},
+            timeout=(5, 20),
+        )
+        if response.status_code != 200:
+            errors.append(f"Asset qualification HTTP {response.status_code}.")
+            return {}
+        wanted = {str(x).upper() for x in symbols}
+        out: dict[str, dict[str, Any]] = {}
+        for raw in response.json() or []:
+            symbol = str(raw.get("symbol") or "").upper()
+            if symbol not in wanted:
+                continue
+            out[symbol] = {
+                "name": str(raw.get("name") or symbol).strip(),
+                "status": str(raw.get("status") or "").lower(),
+                "exchange": str(raw.get("exchange") or "").upper(),
+                "tradable": bool(raw.get("tradable")),
+                "marginable": bool(raw.get("marginable")),
+                "shortable": bool(raw.get("shortable")),
+                "easy_to_borrow": bool(raw.get("easy_to_borrow")),
+                "fractionable": bool(raw.get("fractionable")),
+            }
+        return out
+    except Exception as exc:
+        errors.append(f"Asset qualification: {type(exc).__name__}")
+        return {}
+
+
+def _asset_is_operating_equity(asset: dict[str, Any]) -> tuple[bool, str]:
+    if not asset:
+        return False, "UNVERIFIED ASSET"
+    if asset.get("status") != "active" or not asset.get("tradable"):
+        return False, "INACTIVE / NOT TRADABLE"
+    exchange = str(asset.get("exchange") or "").upper()
+    if exchange not in MAJOR_EXCHANGES:
+        return False, "NON-CORE EXCHANGE"
+    name = " " + str(asset.get("name") or "").upper() + " "
+    if any(token in name for token in NON_OPERATING_NAME_TOKENS):
+        return False, "NON-OPERATING SECURITY"
+    return True, ""
+
+
+def _priority(
+    side: str,
+    base_gap: float | None,
+    move: float | None,
+    dollar_volume: float | None,
+    context: dict[str, Any],
+) -> tuple[str, int, str]:
     researched = side in {"LONG", "SHORT"}
     edge = abs(base_gap or 0.0)
     dislocation = abs(move or 0.0)
-    liquid = (dollar_volume or 0.0) >= 50_000_000.0
+    liquid = (dollar_volume or 0.0) >= 100_000_000.0
+    readiness = dict(context.get("readiness") or {})
+    lenses = dict(context.get("decision_lenses") or {})
+    confidence = str(lenses.get("model_confidence") or "").upper()
+    research_mature = bool(readiness.get("ready_to_validate")) or confidence in {"HIGH", "MEDIUM", "VALIDATED"}
+
+    if researched and edge >= 25.0 and research_mature:
+        return "P1", 1, "RESEARCHED + MATURE VALUE GAP"
     if researched and edge >= 25.0:
-        return "P1", 1, "RESEARCHED VALUE GAP"
+        return "P2", 2, "RESEARCHED VALUE GAP · PROCESS INCOMPLETE"
     if researched and edge >= 15.0:
         return "P2", 2, "RESEARCHED EDGE"
     if "LEAD" in side and dislocation >= 12.0 and liquid:
-        return "P2", 2, "QUALIFIED DISLOCATION"
+        return "P2", 2, "LIQUID QUALIFIED DISLOCATION"
     return "P3", 3, "WATCH / DEEPER CHECK"
 
 
 def market_scan(user_id: int) -> dict[str, Any]:
-    """Two-sided market radar with quality guardrails and explicit priorities.
+    """High-conviction two-sided research radar.
 
-    Provider screeners create leads. A single snapshot call qualifies price and
-    liquidity. Stored Research Base gaps outrank raw price moves whenever they
-    exist. No unknown name receives an intrinsic-value conclusion.
+    The scan intentionally prefers an empty list over a low-quality list.
+    Screeners generate a small candidate pool; asset metadata, price, liquidity,
+    shortability and stored Research context decide whether a name is allowed
+    into the visible Long/Short radar.
     """
     headers = _headers(user_id)
     if not headers:
@@ -176,7 +248,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
                 item["activity_rank"] = idx
                 item["activity_volume"] = _n(row.get("volume"))
                 item["trades"] = _n(row.get("trade_count") or row.get("trades"))
-                item["scan_score"] += max(0.0, 35.0 - (idx - 1) * 0.35)
+                item["scan_score"] += max(0.0, 30.0 - (idx - 1) * 0.30)
                 item["lenses"].append("HIGH ACTIVITY")
         else:
             errors.append(f"Most-active screener HTTP {response.status_code}.")
@@ -203,14 +275,18 @@ def market_scan(user_id: int) -> dict[str, Any]:
                     item["move_pct"] = change
                     item["move_side"] = side_label
                     item["price"] = _n(row.get("price")) or item.get("price")
-                    item["scan_score"] += min(45.0, abs(change or 0.0) * 2.5) + max(0.0, 10.0 - idx * 0.15)
+                    item["scan_score"] += min(42.0, abs(change or 0.0) * 2.25) + max(0.0, 8.0 - idx * 0.12)
                     item["lenses"].append("PRICE DISLOCATION")
         else:
             errors.append(f"Market-movers screener HTTP {response.status_code}.")
     except Exception as exc:
         errors.append(f"Market-movers screener: {type(exc).__name__}")
 
-    snapshots = _snapshot_map(set(by_symbol), headers, errors)
+    symbols = set(by_symbol)
+    snapshots = _snapshot_map(symbols, headers, errors)
+    assets = _asset_map(symbols, headers, errors)
+    local_context = _coverage_context_map(user_id, symbols)
+
     for symbol, item in by_symbol.items():
         snap = snapshots.get(symbol) or {}
         item["price"] = _n(snap.get("price")) or _n(item.get("price"))
@@ -219,25 +295,39 @@ def market_scan(user_id: int) -> dict[str, Any]:
         if item["dollar_volume"] is None and item["price"] is not None and item.get("activity_volume") is not None:
             item["dollar_volume"] = item["price"] * item["activity_volume"]
 
-    local_context = _coverage_context_map(user_id, set(by_symbol))
     excluded = Counter()
     candidates: list[dict[str, Any]] = []
 
     for symbol, item in by_symbol.items():
+        asset = dict(assets.get(symbol) or {})
+        valid_asset, asset_reason = _asset_is_operating_equity(asset)
+        if not valid_asset:
+            excluded[asset_reason] += 1
+            continue
+
         context = dict(local_context.get(symbol) or {})
         local = list(context.get("discovery_labels") or [])
         move = _n(item.get("move_pct"))
         base_gap = _n(context.get("base_gap_pct"))
         price = _n(item.get("price")) or _n((context.get("valuation") or {}).get("current_price"))
+        volume = _n(item.get("daily_volume"))
         dollar_volume = _n(item.get("dollar_volume"))
         item["price"] = price
-        reasons: list[str] = []
+        item["asset"] = asset
+        item["name"] = asset.get("name") or symbol
+        item["exchange"] = asset.get("exchange") or ""
+
+        reasons: list[str] = [f"{item['exchange']} · active / tradable"]
         if item.get("activity_rank"):
             reasons.append(f"Most active #{item['activity_rank']}")
         if move is not None:
             reasons.append(f"Market move {move:+.1f}%")
-        if price is not None:
-            reasons.append(f"Price ${price:,.2f}")
+        if dollar_volume is not None:
+            reasons.append(f"Day $ volume {dollar_volume/1_000_000:.0f}M")
+
+        if price is None:
+            excluded["PRICE UNKNOWN"] += 1
+            continue
 
         side = ""
         target_status = "TARGET UNKNOWN"
@@ -251,51 +341,67 @@ def market_scan(user_id: int) -> dict[str, Any]:
             if base_gap >= 15.0:
                 side = "LONG"
                 target_status = "ROOM TO BASE"
-                radar_label = "VALUE GAP · RESEARCHED"
-                item["scan_score"] += min(25.0, base_gap / 2.5)
+                radar_label = "VALUE GAP"
+                item["scan_score"] += min(26.0, base_gap / 2.4)
                 local.append("LONG VALUE GAP")
             elif base_gap <= -15.0:
+                if price < MIN_SHORT_PRICE or not asset.get("shortable"):
+                    excluded["SHORT NOT ACTIONABLE"] += 1
+                    continue
                 side = "SHORT"
                 target_status = "ABOVE BASE"
                 radar_label = "OVERVALUED VS BASE"
-                item["scan_score"] += min(25.0, abs(base_gap) / 2.5)
+                item["scan_score"] += min(26.0, abs(base_gap) / 2.4)
                 local.append("SHORT VALUE GAP")
             elif base_gap > 0:
                 side = "LONG WATCH"
                 target_status = "LIMITED ROOM"
-                radar_label = "WATCH · LIMITED ROOM"
+                radar_label = "WATCH"
             else:
+                if price < MIN_SHORT_PRICE or not asset.get("shortable"):
+                    excluded["SHORT NOT ACTIONABLE"] += 1
+                    continue
                 side = "SHORT WATCH"
                 target_status = "LIMITED ROOM"
-                radar_label = "WATCH · LIMITED ROOM"
+                radar_label = "WATCH"
         else:
-            if price is None:
-                excluded["PRICE UNKNOWN"] += 1
-                continue
             if price < MIN_LONG_PRICE:
                 excluded["LOW PRICE"] += 1
                 continue
-            if dollar_volume is not None and dollar_volume < MIN_DOLLAR_VOLUME:
-                excluded["LOW LIQUIDITY"] += 1
+            if volume is not None and volume < MIN_DAILY_VOLUME:
+                excluded["LOW VOLUME"] += 1
                 continue
-            if move is not None and move <= -8.0:
-                side = "LONG LEAD"
-                radar_label = "DISLOCATION · TARGET UNKNOWN"
-                local.append("DOWNSIDE DISLOCATION")
-                reasons.append("Intrinsic value not yet known")
-            elif move is not None and move >= 10.0 and price >= MIN_SHORT_PRICE:
-                side = "SHORT LEAD"
-                radar_label = "OVEREXTENSION · TARGET UNKNOWN"
-                local.append("UPSIDE DISLOCATION")
-                reasons.append("Intrinsic value not yet known")
-            elif move is not None and move >= 10.0 and price < MIN_SHORT_PRICE:
-                excluded["LOW-PRICE SHORT GUARDRAIL"] += 1
-                continue
-            else:
-                excluded["NO QUALIFIED EDGE"] += 1
+            if dollar_volume is None or dollar_volume < MIN_DOLLAR_VOLUME:
+                excluded["LOW / UNKNOWN LIQUIDITY"] += 1
                 continue
 
-        priority, priority_rank, priority_reason = _priority(side, base_gap, move, dollar_volume)
+            if move is not None and move <= -10.0:
+                side = "LONG LEAD"
+                radar_label = "DOWNSIDE DISLOCATION"
+                local.append("DOWNSIDE DISLOCATION")
+                reasons.append("Intrinsic target not yet established")
+            elif move is not None and move >= 10.0:
+                if price < MIN_SHORT_PRICE:
+                    excluded["LOW-PRICE SHORT"] += 1
+                    continue
+                if not asset.get("shortable"):
+                    excluded["NOT SHORTABLE"] += 1
+                    continue
+                side = "SHORT LEAD"
+                radar_label = "UPSIDE OVEREXTENSION"
+                local.append("UPSIDE DISLOCATION")
+                reasons.append("Intrinsic target not yet established")
+            else:
+                excluded["NO STRONG EDGE"] += 1
+                continue
+
+        priority, priority_rank, priority_reason = _priority(side, base_gap, move, dollar_volume, context)
+
+        # Unknown raw-move leads are shown only when they clear the stronger P2 bar.
+        if not context and priority_rank > 2:
+            excluded["INSUFFICIENT CONVICTION"] += 1
+            continue
+
         if priority == "P1":
             item["scan_score"] += 30.0
         elif priority == "P2":
@@ -320,8 +426,8 @@ def market_scan(user_id: int) -> dict[str, Any]:
         candidates.append(item)
 
     candidates.sort(key=lambda row: (row.get("priority_rank", 9), -row.get("scan_score", 0.0), row["ticker"]))
-    long_candidates = [row for row in candidates if str(row.get("research_side") or "").startswith("LONG")][:24]
-    short_candidates = [row for row in candidates if str(row.get("research_side") or "").startswith("SHORT")][:24]
+    long_candidates = [row for row in candidates if str(row.get("research_side") or "").startswith("LONG")][:MAX_PER_SIDE]
+    short_candidates = [row for row in candidates if str(row.get("research_side") or "").startswith("SHORT")][:MAX_PER_SIDE]
     final = long_candidates + short_candidates
 
     return {
@@ -330,7 +436,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "long_candidates": long_candidates,
         "short_candidates": short_candidates,
         "errors": errors,
-        "universe_source": "Alpaca most-active + movers + one IEX snapshot qualification call",
+        "universe_source": "Alpaca active/tradable assets + most-active + movers + IEX snapshots + stored Research cache",
         "candidate_count": len(final),
         "known_enriched": sum(1 for row in final if row.get("known_context")),
         "long_count": len(long_candidates),
@@ -343,9 +449,13 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "min_long_price": MIN_LONG_PRICE,
             "min_short_price": MIN_SHORT_PRICE,
             "min_dollar_volume": MIN_DOLLAR_VOLUME,
+            "min_daily_volume": MIN_DAILY_VOLUME,
+            "major_exchanges": sorted(MAJOR_EXCHANGES),
+            "short_requires_shortable": True,
             "unknown_targets": "never treated as intrinsic conclusions",
+            "fill_quota": "none",
         },
-        "enrichment_mode": "BATCH_CACHE_PLUS_SINGLE_SNAPSHOT_CALL",
+        "enrichment_mode": "FAIL_CLOSED_ASSET_QUALIFICATION",
     }
 
 
