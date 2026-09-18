@@ -229,7 +229,7 @@ def test_027_business_get_never_fetches_macro_provider(tmp_path, monkeypatch):
     assert calls["n"] == 0
 
 def test_027_peer_overlay_is_bounded_auditable_and_never_peer_only():
-    base = {"bear": 70.0, "base": 100.0, "bull": 150.0, "expected_value": 105.0}
+    base = {"bear": 70.0, "base": 100.0, "bull": 150.0, "expected_value": 105.0, "current_price": 80.0, "downside_pct": -12.5, "base_upside_pct": 25.0, "bull_upside_pct": 87.5}
     tri = {
         "peer_value_crosscheck": {
             "eligible": True,
@@ -244,7 +244,9 @@ def test_027_peer_overlay_is_bounded_auditable_and_never_peer_only():
     assert out["peer_overlay"]["weight"] == 0.20
     assert out["peer_overlay"]["applied_factor"] == 1.10
     assert round(out["base"], 2) == 110.00
+    assert round(out["base_upside_pct"], 2) == 37.50
     assert out["intrinsic_scenarios"]["base"] == 100.0
+    assert out["intrinsic_valuation"]["base_upside_pct"] == 25.0
 
     insufficient = apply_peer_valuation_overlay(base, {"peer_value_crosscheck": {"eligible": False, "estimate": 200}})
     assert insufficient["base"] == 100.0
