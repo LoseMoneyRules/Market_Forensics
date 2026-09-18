@@ -159,6 +159,14 @@ def test_022_command_center_dark_valuation_flow_and_tape_contracts():
     assert "tapePriceShortChart" in app_js
 
 
+def test_022_workflows_never_hardcode_release_version():
+    for workflow in (Path(".github/workflows/tests.yml"), Path(".github/workflows/deploy-namecheap.yml")):
+        text = workflow.read_text()
+        assert '== "0.2.' not in text
+        assert "== '0.2." not in text
+        assert "VERSION" in text
+
+
 def test_022_release_identity_and_state_contract():
     assert Path("VERSION").read_text().strip() == "0.2.2"
     state = Path("docs/CURRENT_STATE.md").read_text()
