@@ -189,7 +189,8 @@ jobs:
             if [ "$code" = "200" ] \
               && printf '%s' "$body" | grep -q '"status":"ok"' \
               && printf '%s' "$body" | grep -q "\"version\":\"${MF_RELEASE_VERSION}\"" \
-              && printf '%s' "$body" | grep -q '"architecture":"web-native"'; then
+              && printf '%s' "$body" | grep -q '"architecture":"web-native"' \
+              && printf '%s' "$body" | grep -q '"reports":"rich"'; then
               exit 0
             fi
             sleep 6
