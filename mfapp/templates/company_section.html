@@ -12,7 +12,7 @@
     <div class="panel decision-brief">
       <div class="panel-head"><div><p class="eyebrow">DECISION BRIEF</p><h2>What the evidence says now</h2></div><span class="status-chip">{{ brief.confidence }} confidence</span></div>
       <div class="decision-brief-grid">
-        <div class="action-block"><span>Research conclusion</span><strong>{{ decision_lenses.research_conclusion }}</strong><small>{{ decision_lenses.value }} value · {{ decision_lenses.path }} path · {{ decision_lenses.model_confidence }} model confidence</small></div>
+        <div class="action-block"><span>Research conclusion</span><strong data-research-conclusion>{{ decision_lenses.research_conclusion }}</strong><small>{{ decision_lenses.value }} value · {{ decision_lenses.path }} path · {{ decision_lenses.model_confidence }} model confidence</small></div>
         <div class="brief-metric"><span>Market</span><strong>{{ money(brief.price) }}</strong><small>5-minute refresh while open</small></div>
         <div class="brief-metric"><span>Bear</span><strong>{{ money(brief.bear) }}</strong></div>
         <div class="brief-metric"><span>Base</span><strong>{{ money(brief.base) }}</strong><small>{% if brief.base_gap_pct is not none %}{{ '%+.1f'|format(brief.base_gap_pct) }}% vs market{% else %}Gap pending{% endif %}</small></div>
