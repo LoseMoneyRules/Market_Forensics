@@ -115,22 +115,16 @@ def _plain_research_lines(data: dict[str, Any]) -> list[str]:
             lines += ["", label, _txt(data.get(key)) or "—"]
         fundamentals=data.get("fundamentals_history") or []
         if fundamentals:
-            story.append(Paragraph("Fundamentals history",styles["MFH2"]))
-            rows=[["Period","Revenue","Op %","FCF","Inv/Rev","Rec/Rev","CFO/NI","Shares YoY"]]
+            lines += ["", "FUNDAMENTALS HISTORY"]
             for row in fundamentals[-8:]:
-                rows.append([
-                    str(row.get("period") or "—"),
-                    _money(row.get("revenue")),
-                    _pct(row.get("operating_margin_pct")),
-                    _money(row.get("fcf")),
-                    _pct(row.get("inventory_to_revenue_pct")),
-                    _pct(row.get("receivables_to_revenue_pct")),
-                    (f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"),
-                    _pct(row.get("share_count_growth_pct")),
-                ])
-            ft=Table(rows,colWidths=[.55*inch,1.0*inch,.6*inch,.95*inch,.75*inch,.75*inch,.7*inch,.75*inch])
-            ft.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.5)]))
-            story += [ft,Spacer(1,6)]
+                cfo_ni = f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"
+                lines.append(
+                    f"{row.get('period') or '—'} · Revenue {_money(row.get('revenue'))} · "
+                    f"Op margin {_pct(row.get('operating_margin_pct'))} · FCF {_money(row.get('fcf'))} · "
+                    f"Inv/Rev {_pct(row.get('inventory_to_revenue_pct'))} · "
+                    f"Rec/Rev {_pct(row.get('receivables_to_revenue_pct'))} · "
+                    f"CFO/NI {cfo_ni} · Shares YoY {_pct(row.get('share_count_growth_pct'))}"
+                )
 
         tri=data.get("triangulation") or {}
         if tri.get("available"):
