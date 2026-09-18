@@ -18,6 +18,7 @@ CALCULATION_VERSION = "0.2.0"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"],
+    "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
     "gross_profit": ["GrossProfit"],
     "operating_income": ["OperatingIncomeLoss"],
     "pretax_income": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
@@ -348,10 +349,18 @@ def _normalized(period: FinancialPeriod) -> NormalizedFinancial:
 
 
 def _finish_normalized(row: NormalizedFinancial, source_map: dict[str, Any], *, period_type: str) -> None:
-    if row.revenue is not None and row.gross_profit is not None:
+    # Preserve direct filing facts first, then fill only exact accounting bridges.
+    # Gross Profit is frequently absent from Companyfacts even when Revenue and
+    # Cost of Revenue are both reported.
+    if row.gross_profit is None and row.revenue is not None and row.cogs is not None:
+        row.gross_profit = row.revenue - row.cogs
+        source_map.setdefault("gross_profit", {"tag": "DERIVED", "method": "REVENUE_MINUS_COGS"})
+    if row.cogs is None and row.revenue is not None and row.gross_profit is not None:
         row.cogs = row.revenue - row.gross_profit
-    if row.gross_profit is not None and row.operating_income is not None:
+        source_map.setdefault("cogs", {"tag": "DERIVED", "method": "REVENUE_MINUS_GROSS_PROFIT"})
+    if row.operating_expenses is None and row.gross_profit is not None and row.operating_income is not None:
         row.operating_expenses = row.gross_profit - row.operating_income
+        source_map.setdefault("operating_expenses", {"tag": "DERIVED", "method": "GROSS_PROFIT_MINUS_OPERATING_INCOME"})
     if row.cfo is not None and row.capex is not None:
         row.fcf = row.cfo - row.capex
     row.source_map = source_map
