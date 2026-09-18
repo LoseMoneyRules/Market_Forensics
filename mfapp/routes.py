@@ -29,6 +29,7 @@ from .decision_lenses import build_decision_lenses
 from .expectations_engine import price_implied_expectations
 from .discovery_engine import classify_coverage, search_universe
 from .research_synthesis import build_synthesis
+from .research_cache import latest_research_cache, latest_cache_map
 from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
@@ -108,6 +109,51 @@ def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, m
     )
 
 
+def _fallback_readiness() -> dict:
+    return {
+        "done": 0, "evidence_ready": 0, "total": 13, "gates": [],
+        "ready_to_validate": False,
+        "validation": {"state": "NOT RUN", "run_id": None, "status": None, "samples": 0, "reliability": None},
+        "bias_flags": [],
+    }
+
+
+def _fallback_lenses(valuation: dict, cache_pending: bool) -> dict:
+    price = valuation.get("current_price")
+    base = valuation.get("base")
+    try:
+        gap = ((float(base) / float(price) - 1.0) * 100.0) if base is not None and price not in (None, 0) else None
+    except (TypeError, ValueError, ZeroDivisionError):
+        gap = None
+    value = "UNVERIFIED" if gap is None else ("ATTRACTIVE" if gap >= 20 else "EXPENSIVE" if gap <= -15 else "FAIR")
+    return {
+        "rows": [],
+        "business": "CALCULATING" if cache_pending else "UNPROVEN",
+        "value": value,
+        "expectations": "CALCULATING" if cache_pending else "UNAVAILABLE",
+        "variant": "CALCULATING" if cache_pending else "UNPROVEN",
+        "path": "CALCULATING" if cache_pending else "UNCLEAR",
+        "model_confidence": "CALCULATING" if cache_pending else "UNVALIDATED",
+        "thesis_control": "CALCULATING" if cache_pending else "UNRESOLVED",
+        "research_conclusion": "UPDATING" if cache_pending else "DATA REVIEW",
+        "implied_expectations": {"available": False, "classification": "CALCULATING" if cache_pending else "UNAVAILABLE", "drivers": []},
+    }
+
+
+def _fast_brief(valuation: dict, model: ValuationModel | None, lenses: dict) -> dict:
+    price = valuation.get("current_price"); base = valuation.get("base")
+    try:
+        gap = ((float(base) / float(price) - 1.0) * 100.0) if base is not None and price not in (None, 0) else None
+    except (TypeError, ValueError, ZeroDivisionError):
+        gap = None
+    horizon = int((model.assumptions or {}).get("horizon_years") or 5) if model else 5
+    return {
+        "price": price, "bear": valuation.get("bear"), "base": base, "bull": valuation.get("bull"),
+        "base_gap_pct": gap, "confidence": lenses.get("model_confidence") or "UNVALIDATED",
+        "horizon_years": horizon, "target_year": date.today().year + horizon, "reasons": [],
+    }
+
+
 def _ctx(ticker: str) -> dict:
     coverage = _coverage(ticker)
     security = db.session.get(Security, coverage.security_id)
@@ -118,24 +164,46 @@ def _ctx(ticker: str) -> dict:
     model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
     if not all((research, risk, investment, model)):
         raise RuntimeError(f"Coverage workspace incomplete for coverage_id={coverage.id}; run migration/repair before serving it")
+
     market = latest_snapshot(security.id)
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     valuation = valuation_result(coverage)
-    readiness = _research_readiness(coverage)
-    intelligence = _intelligence(coverage, company, model, market, valuation, readiness)
-    management_read = management_engine(company.id)
-    tape_read = tape_series(security, 12)
-    decision_lenses = build_decision_lenses(
-        coverage=coverage, company=company, research=research, risk=risk, model=model, market=market,
-        valuation=valuation, intelligence=intelligence, readiness=readiness,
-        management=management_read, tape=tape_read,
-    )
-    return {"coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
-            "investment": investment, "model": model, "market": market, "position": position,
-            "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
-            "intelligence": intelligence, "decision_lenses": decision_lenses,
-            "brief": company_brief(company.id, valuation, intelligence, model)}
+    cache = latest_research_cache(coverage.id, company.id)
 
+    active_recalc = Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.company_id == company.id,
+        Job.job_type == "RECALCULATE",
+        Job.status.in_(["QUEUED", "RUNNING"]),
+    ).first()
+    if cache is None and active_recalc is None:
+        active_recalc = enqueue_job(
+            "RECALCULATE",
+            user_id=g.user.id,
+            company_id=company.id,
+            security_id=security.id,
+            payload={"coverage_id": coverage.id},
+            priority=95,
+        )
+
+    cache_pending = active_recalc is not None
+    readiness = dict((cache or {}).get("readiness") or _fallback_readiness())
+    intelligence = dict((cache or {}).get("intelligence") or {
+        "action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW",
+        "score": 0.0, "positives": 0, "negatives": 0, "warnings": ["Research cache is updating."],
+        "top_signals": [], "base_gap_pct": None, "validation_state": readiness.get("validation", {}).get("state", "NOT RUN"),
+        "buy_threshold": 2.5, "sell_threshold": -2.5,
+    })
+    decision_lenses = dict((cache or {}).get("decision_lenses") or _fallback_lenses(valuation, cache_pending))
+    brief = dict((cache or {}).get("brief") or _fast_brief(valuation, model, decision_lenses))
+
+    return {
+        "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
+        "investment": investment, "model": model, "market": market, "position": position,
+        "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
+        "intelligence": intelligence, "decision_lenses": decision_lenses, "brief": brief,
+        "research_cache": cache or {}, "cache_pending": cache_pending,
+    }
 
 def _research_version(coverage: Coverage, research: ResearchState, reason: str) -> None:
     version = (db.session.query(db.func.max(ResearchVersion.version)).filter(ResearchVersion.coverage_id == coverage.id).scalar() or 0) + 1
