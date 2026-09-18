@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 import uuid
 import signal
@@ -25,6 +26,9 @@ from .positioning import refresh_positioning_bundle
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
+TERMINAL_JOB_STATUSES = ("DONE", "FAILED", "CANCELLED", "SUPERSEDED")
+DEFAULT_JOB_LEASE_SECONDS = 30 * 60
+JOB_LEASE_SECONDS = {"DISCOVERY_SCAN": 3 * 60}
 
 
 def utcnow() -> datetime:
@@ -72,17 +76,108 @@ def compact_queue(user_id: int | None = None) -> int:
     return superseded
 
 
-def recover_stale_running_jobs(user_id: int | None = None, stale_after_minutes: int = 30) -> int:
-    cutoff = utcnow() - timedelta(minutes=max(5, int(stale_after_minutes)))
-    query = Job.query.filter(Job.status == "RUNNING", Job.locked_at.is_not(None), Job.locked_at < cutoff)
+def _calculation_runs_for_job(job: Job) -> list[CalculationRun]:
+    rows = CalculationRun.query.filter_by(status="RUNNING", calculation_type=job.job_type).all()
+    return [row for row in rows if int((row.inputs or {}).get("job_id") or 0) == job.id]
+
+
+def _finish_open_attempt_records(job: Job, status: str, message: str) -> None:
+    finished = utcnow()
+    summary = {"reason": message, "job_status": status}
+    for row in RefreshRun.query.filter_by(job_id=job.id, status="RUNNING").all():
+        row.status = status
+        row.summary = summary
+        row.finished_at = finished
+    for row in _calculation_runs_for_job(job):
+        row.status = status
+        row.outputs = summary
+        row.finished_at = finished
+
+
+def cancel_job(job: Job, *, reason: str = "Cancelled by CONTROL") -> int | None:
+    """Move an active job to a terminal CANCELLED state without deleting produced data.
+
+    Returns the recorded executor PID for a RUNNING job so the caller may
+    best-effort terminate that worker after committing the cancellation.
+    """
+    if str(job.status or "").upper() not in ACTIVE_JOB_STATUSES:
+        return None
+    executor = dict((job.result or {}).get("_executor") or {})
+    pid = int(executor.get("pid") or 0) or None
+    now = utcnow()
+    prior = dict(job.result or {})
+    prior["cancelled"] = {"at": now.isoformat(), "reason": reason}
+    job.result = prior
+    job.status = "CANCELLED"
+    job.error_message = reason
+    job.finished_at = now
+    job.locked_at = None
+    _finish_open_attempt_records(job, "CANCELLED", reason)
+    return pid
+
+
+def terminate_job_executor(pid: int | None) -> bool:
+    """Safely terminate only a verified Market Forensics CLI executor.
+
+    On Linux/shared hosting we verify ownership and /proc command line before
+    sending SIGTERM. If verification is unavailable, cancellation remains
+    cooperative and the DB terminal state still wins.
+    """
+    if not pid or pid <= 1 or pid == os.getpid():
+        return False
+    proc = f"/proc/{int(pid)}"
+    try:
+        stat = os.stat(proc)
+        if hasattr(os, "getuid") and stat.st_uid != os.getuid():
+            return False
+        with open(f"{proc}/cmdline", "rb") as handle:
+            command = handle.read().replace(b"\x00", b" ").decode("utf-8", "ignore")
+        if "manage.py" not in command or "run-jobs" not in command:
+            return False
+        os.kill(int(pid), signal.SIGTERM)
+        return True
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _lease_seconds(job: Job, stale_after_minutes: int | None = None) -> int:
+    if stale_after_minutes is not None:
+        return max(1, int(stale_after_minutes)) * 60
+    return int(JOB_LEASE_SECONDS.get(str(job.job_type).upper(), DEFAULT_JOB_LEASE_SECONDS))
+
+
+def recover_stale_running_jobs(user_id: int | None = None, stale_after_minutes: int | None = None) -> int:
+    """Recover dead workers without leaving RUNNING rows forever.
+
+    A stale attempt is closed in audit tables. Retryable jobs return to QUEUED;
+    exhausted jobs become FAILED. Discovery has a shorter lease because its
+    hard execution deadline is 90 seconds.
+    """
+    now = utcnow()
+    query = Job.query.filter(Job.status == "RUNNING", Job.locked_at.is_not(None))
     if user_id is not None:
         query = query.filter(Job.user_id == user_id)
-    rows = query.all()
-    for job in rows:
-        job.status = "QUEUED"; job.locked_at = None; job.started_at = None; job.run_after = utcnow()
-    if rows:
+    recovered = 0
+    for job in query.all():
+        lease = _lease_seconds(job, stale_after_minutes)
+        if not job.locked_at or (now - job.locked_at).total_seconds() <= lease:
+            continue
+        recovered += 1
+        message = f"Recovered stale RUNNING lease after {lease}s; previous executor is no longer trusted."
+        _finish_open_attempt_records(job, "FAILED", message)
+        job.locked_at = None
+        job.error_message = message
+        if int(job.attempts or 0) < int(job.max_attempts or 0):
+            job.status = "QUEUED"
+            job.started_at = None
+            job.finished_at = None
+            job.run_after = now
+        else:
+            job.status = "FAILED"
+            job.finished_at = now
+    if recovered:
         db.session.commit()
-    return len(rows)
+    return recovered
 
 
 def _flow_row(period: FinancialPeriod, row: NormalizedFinancial) -> dict[str, Any]:
@@ -504,25 +599,46 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
         if getattr(getattr(bind, "dialect", None), "name", "") in {"mysql", "mariadb", "postgresql"}: query = query.with_for_update(skip_locked=True)
         job = query.first()
         if job is None: break
-        job.status = "RUNNING"; job.locked_at = utcnow(); job.started_at = utcnow(); job.attempts += 1; db.session.commit()
+        job.status = "RUNNING"; job.locked_at = utcnow(); job.started_at = utcnow(); job.attempts += 1
+        job.result = {"_executor": {"pid": os.getpid(), "started_at": job.started_at.isoformat()}}
+        db.session.commit()
         refresh = RefreshRun(company_id=job.company_id, security_id=job.security_id, job_id=job.id, refresh_type=job.job_type, status="RUNNING", started_at=job.started_at)
         calc_coverage = int((job.payload or {}).get("coverage_id") or 0) or None
         calc = CalculationRun(coverage_id=calc_coverage, calculation_type=job.job_type, calculation_version=CALCULATION_VERSION,
                               inputs={"job_id": job.id, "payload": job.payload or {}}, status="RUNNING", started_at=job.started_at)
         db.session.add_all([refresh, calc]); db.session.commit(); started = time.perf_counter()
         try:
-            payload = _execute_with_deadline(job); finished = utcnow(); job.status = "DONE"; job.result = payload; job.error_message = ""; job.finished_at = finished
-            refresh.status = "DONE"; refresh.summary = payload; refresh.finished_at = finished; calc.status = "DONE"; calc.outputs = payload; calc.finished_at = finished
-        except Exception as exc:
-            error_id = uuid.uuid4().hex[:12]; finished = utcnow(); job.error_message = f"{type(exc).__name__}: {exc}"[:4000]; job.finished_at = finished
-            if isinstance(exc, JobDeadlineExceeded):
-                job.status = "FAILED"; job.locked_at = None
-            elif job.attempts < job.max_attempts:
-                job.status = "QUEUED"; job.run_after = utcnow() + timedelta(minutes=min(60, 5 * job.attempts)); job.locked_at = None
+            payload = _execute_with_deadline(job)
+            db.session.refresh(job)
+            finished = utcnow()
+            if job.status == "CANCELLED":
+                refresh.status = "CANCELLED"; refresh.summary = {"reason": job.error_message or "Cancelled"}; refresh.finished_at = finished
+                calc.status = "CANCELLED"; calc.outputs = {"reason": job.error_message or "Cancelled"}; calc.finished_at = finished
             else:
-                job.status = "FAILED"
-            refresh.status = "FAILED"; refresh.error_id = error_id; refresh.summary = {"error": job.error_message}; refresh.finished_at = finished
-            calc.status = "FAILED"; calc.error_id = error_id; calc.outputs = {"error": job.error_message}; calc.finished_at = finished
+                job.status = "DONE"; job.result = payload; job.error_message = ""; job.finished_at = finished; job.locked_at = None
+                refresh.status = "DONE"; refresh.summary = payload; refresh.finished_at = finished; calc.status = "DONE"; calc.outputs = payload; calc.finished_at = finished
+        except Exception as exc:
+            db.session.refresh(job)
+            error_id = uuid.uuid4().hex[:12]; finished = utcnow()
+            if job.status == "CANCELLED":
+                refresh.status = "CANCELLED"; refresh.summary = {"reason": job.error_message or "Cancelled"}; refresh.finished_at = finished
+                calc.status = "CANCELLED"; calc.outputs = {"reason": job.error_message or "Cancelled"}; calc.finished_at = finished
+            else:
+                job.error_message = f"{type(exc).__name__}: {exc}"[:4000]; job.finished_at = finished
+                if isinstance(exc, JobDeadlineExceeded):
+                    job.status = "FAILED"; job.locked_at = None
+                elif job.attempts < job.max_attempts:
+                    job.status = "QUEUED"; job.run_after = utcnow() + timedelta(minutes=min(60, 5 * job.attempts)); job.locked_at = None; job.finished_at = None
+                else:
+                    job.status = "FAILED"; job.locked_at = None
+                refresh.status = "FAILED"; refresh.error_id = error_id; refresh.summary = {"error": job.error_message}; refresh.finished_at = finished
+                calc.status = "FAILED"; calc.error_id = error_id; calc.outputs = {"error": job.error_message}; calc.finished_at = finished
         elapsed = (time.perf_counter() - started) * 1000; calc.elapsed_ms = Decimal(str(round(elapsed, 3))); db.session.commit()
         results.append({"job_id": job.id, "status": job.status, "attempts": job.attempts, "max_attempts": job.max_attempts, "elapsed_ms": round(elapsed, 1), "error": job.error_message})
     return results
+
+
+__all__ = [
+    "enqueue_job", "run_jobs", "cancel_job", "terminate_job_executor",
+    "recover_stale_running_jobs", "compact_queue", "ACTIVE_JOB_STATUSES",
+]
