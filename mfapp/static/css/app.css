@@ -284,7 +284,7 @@ html[data-theme="dark"] .alert-account-email-0171{background:var(--paper)}
 }
 
 
-/* 0.2.0 canonical runtime additions */
+/* Canonical runtime additions */
 .decision-evidence-grid,.evidence-sides,.evidence-path-grid,.triangulation-grid{display:grid;gap:16px}
 .decision-evidence-grid{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);margin:16px 0}
 .evidence-sides,.evidence-path-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -338,7 +338,7 @@ html[data-theme="dark"] .alert-account-email-0171{background:var(--paper)}
 @media(max-width:1100px){.lens-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:700px){.lens-grid,.decision-questions-grid{grid-template-columns:1fr}.coverage-manage-inline{min-width:190px}.report-actions{width:100%}.report-actions .button{flex:1}}
 
-/* 0.2.0 complete analytical surfaces */
+/* Complete analytical surfaces */
 .mature-lenses{grid-template-columns:repeat(7,minmax(0,1fr))}
 .lens-state{text-decoration:none;color:inherit}
 .lens-state:hover{border-color:var(--primary);transform:translateY(-1px)}
