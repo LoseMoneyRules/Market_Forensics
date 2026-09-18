@@ -83,11 +83,14 @@
     const layout=graphLayout(edges,nodeRows);
     if(!layout.names.length)return false;
     const nodeMap=new Map(nodeRows.map(n=>[n.label,n]));
-    const colGap=180,nodeW=150,nodeH=52,top=14,side=10,rowGap=12;
+    const nodeW=150,nodeH=52,top=14,side=10,rowGap=12;
+    const visible=Math.floor(root.getBoundingClientRect().width||0);
+    const targetWidth=Math.max(720,visible>0?visible-24:720);
+    const colGap=layout.maxDepth>0?Math.max(170,(targetWidth-side*2-nodeW)/layout.maxDepth):0;
     const maxRows=Math.max(1,...layout.columns.map(c=>c.length));
-    const width=Math.max(560,side*2+nodeW+(layout.maxDepth*colGap));
+    const width=Math.ceil(side*2+nodeW+(layout.maxDepth*colGap));
     const height=Math.max(150,top*2+maxRows*nodeH+(maxRows-1)*rowGap);
-    const svg=makeSvg('svg',{viewBox:`0 0 ${width} ${height}`,width,height,role:'img','aria-label':(data.flow_type||'Financial')+' flow '+(data.period||'')});
+    const svg=makeSvg('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':(data.flow_type||'Financial')+' flow '+(data.period||'')});
     svg.classList.add('flow-svg');
     const labelFont='11',valueFont='12',labelLine='13';
     const pos=new Map();
