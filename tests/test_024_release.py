@@ -87,10 +87,10 @@ def test_024_command_center_fits_desktop_and_scrolls_only_narrow():
     assert ".coverage-card{overflow:visible}" in css
     assert ".coverage-table{width:100%;min-width:0;table-layout:auto" in css
     assert ".coverage-table th{white-space:nowrap" in css
-    assert ".coverage-table td{padding:10px 6px" in css
+    assert ".coverage-table td{padding:9px 5px" in css
     assert ".coverage-table{width:max-content" not in css
-    assert "@media(max-width:1100px){.coverage-card{overflow-x:auto}.coverage-table{min-width:1080px}" in css
-    assert ".coverage-table th:last-child,.coverage-table td:last-child{width:1%;white-space:nowrap" in css
+    assert "@media(max-width:1100px){.coverage-card{overflow-x:auto}.coverage-table{min-width:1040px}" in css
+    assert ".coverage-table .coverage-manage-col{width:48px;max-width:48px" in css
 
 
 def test_024_alpaca_raw_history_survives_split_adjustment_failure(monkeypatch):
@@ -113,7 +113,7 @@ def test_024_alpaca_raw_history_survives_split_adjustment_failure(monkeypatch):
     assert rows[0]["close_raw"] == rows[0]["close_split_adjusted"] == 220.0
 
 
-def test_024_discovery_filters_penny_short_and_builds_prioritized_long_short(monkeypatch):
+def test_024_discovery_filters_penny_and_requires_forensic_confirmation(monkeypatch):
     import mfapp.market_discovery as md
 
     class FakeResponse:
@@ -129,10 +129,7 @@ def test_024_discovery_filters_penny_short_and_builds_prioritized_long_short(mon
                 {"symbol": "SHORTY", "volume": 4_000_000},
             ]})
         return FakeResponse({
-            "gainers": [
-                {"symbol": "PENNY", "percent_change": 35.0},
-                {"symbol": "SHORTY", "percent_change": 15.0},
-            ],
+            "gainers": [{"symbol": "PENNY", "percent_change": 35.0}, {"symbol": "SHORTY", "percent_change": 15.0}],
             "losers": [{"symbol": "LONGY", "percent_change": -13.0}],
         })
 
@@ -143,7 +140,17 @@ def test_024_discovery_filters_penny_short_and_builds_prioritized_long_short(mon
         "LONGY": {"price": 25.0, "daily_volume": 5_000_000, "dollar_volume": 125_000_000},
         "SHORTY": {"price": 50.0, "daily_volume": 4_000_000, "dollar_volume": 200_000_000},
     })
+    monkeypatch.setattr(md, "_asset_map", lambda symbols, headers, errors: {
+        symbol: {"name": symbol+" Corp", "status":"active", "exchange":"NASDAQ", "tradable":True, "shortable":True}
+        for symbol in symbols
+    })
     monkeypatch.setattr(md, "_coverage_context_map", lambda user_id, symbols: {})
+    monkeypatch.setattr(md, "enrich_forensic_candidates", lambda user_id, pool, context, errors: {
+        "LONGY": {"base": 40.0, "gap_pct": 60.0, "quality":"INTRINSIC", "long_score":40, "short_score":0,
+                  "signals":[{"side":"LONG","label":"OPERATING LEVERAGE","detail":"Op margin +220 bps","points":18}], "snapshot":{}, "source":"TEST"},
+        "SHORTY": {"base": 30.0, "gap_pct": -40.0, "quality":"INTRINSIC", "long_score":0, "short_score":40,
+                   "signals":[{"side":"SHORT","label":"OPERATING DELEVERAGE","detail":"Op margin -220 bps","points":18}], "snapshot":{}, "source":"TEST"},
+    })
 
     result = md.market_scan(1)
     tickers = {row["ticker"] for row in result["candidates"]}
@@ -151,8 +158,8 @@ def test_024_discovery_filters_penny_short_and_builds_prioritized_long_short(mon
     assert result["excluded_breakdown"]["LOW PRICE"] == 1
     assert result["long_candidates"][0]["ticker"] == "LONGY"
     assert result["short_candidates"][0]["ticker"] == "SHORTY"
-    assert result["long_candidates"][0]["priority"] == "P2"
-    assert result["short_candidates"][0]["priority"] == "P2"
+    assert result["long_candidates"][0]["fair_value"] == 40.0
+    assert result["short_candidates"][0]["fair_value"] == 30.0
 
 
 def test_024_discovery_ui_is_two_column_and_priority_first():
@@ -169,9 +176,9 @@ def test_024_financial_flows_have_intrinsic_compact_geometry_and_no_engine_label
     css = Path("mfapp/static/css/app.css").read_text()
     js = Path("mfapp/static/js/flows.js").read_text()
     assert ".flow-canvas{min-height:0" in css
-    assert ".flow-svg{display:block;width:auto;height:auto;max-width:none;min-height:0;margin:0}" in css
-    assert "const colGap=180,nodeW=150,nodeH=52,top=14,side=10,rowGap=12;" in js
-    assert "width,height,role:'img'" in js
+    assert ".flow-svg{display:block;width:100%;height:auto;min-height:0;margin:0}" in css
+    assert "const targetWidth=Math.max(720,visible>0?visible-24:720);" in js
+    assert "viewBox:`0 0 ${width} ${height}`" in js
     assert "calculation_version" not in js
     assert " · engine " not in js
 
@@ -261,9 +268,9 @@ def test_024_price_history_live_contract_is_visible_and_non_disruptive():
 
 
 def test_024_release_identity_and_deep_clean_rules():
-    assert Path("VERSION").read_text().strip() == "0.2.4"
+    assert Path("VERSION").read_text().strip() == "0.2.5"
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert "**State-Version: 0.2.4**" in state
+    assert "**State-Version: 0.2.5**" in state
     assert "Permanent clean-release rule" in state
     assert "Settings is the only user-facing" in state
     assert "Approve → Reopen → Approve" in state
