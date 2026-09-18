@@ -5,8 +5,6 @@
 {% macro pct(v) %}{% if v is not none %}{{ '%+.1f'|format(v|float) }}%{% else %}—{% endif %}{% endmacro %}
 {% block content %}
 <section class="page company-page">
-  {% set company_header_context = security.exchange or 'Validated security' %}
-  {% set company_header_states = [('Research', coverage.research_state), ('Coverage', coverage.status), ('Process', readiness.done ~ '/' ~ readiness.total ~ ' approved')] %}
   {% include "_company_header.html" %}
   {% set section=section %}{% include "_research_tabs.html" %}
 
