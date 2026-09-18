@@ -897,3 +897,40 @@ def test_020_current_price_refresh_contract_is_five_minutes():
     assert '"MARKET_REFRESH"' in workspace
     assert "5 * 60 * 1000" in js
     assert "/price/refresh" in js
+
+
+def test_020_job_pump_spawns_detached_executor_without_running_inline(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, security_id, coverage_id = seed_workspace(app)
+    with app.app_context():
+        from mfapp.jobs import enqueue_job
+        job = enqueue_job(
+            "RECALCULATE",
+            user_id=uid,
+            company_id=company_id,
+            security_id=security_id,
+            payload={"coverage_id": coverage_id},
+            priority=10,
+        )
+        job_id = job.id
+
+    import mfapp.routes_publish as publish_routes
+    spawned = {}
+    def fake_spawn(user_id):
+        spawned["user_id"] = user_id
+        return 43210
+    monkeypatch.setattr(publish_routes, "_spawn_job_runner", fake_spawn)
+
+    client = app.test_client()
+    login_control(client, uid)
+    response = client.post("/jobs/pump", headers={"Accept": "application/json"})
+    assert response.status_code == 202
+    payload = response.get_json()
+    assert payload["spawned"] is True
+    assert payload["pid"] == 43210
+    assert spawned["user_id"] == uid
+
+    with app.app_context():
+        queued = db.session.get(Job, job_id)
+        assert queued.status == "QUEUED"
+        assert queued.started_at is None
