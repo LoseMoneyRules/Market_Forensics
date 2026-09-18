@@ -14,13 +14,13 @@
 **Production:** 0.2.8 on Namecheap  
 **Verified production baseline:** deploy run `35376698729` / deploy #39 = completed / success on main commit `09473a81999b91f2cebfdabd4c35102cef73a3a0`; candidate health + post-cleanup health passed with `version = 0.2.8`, `reports = rich`  
 **Persistent report vendor verification:** deploy #39 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
-**Main release:** 0.2.8 merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; CURRENT_STATE sync at `09473a81999b91f2cebfdabd4c35102cef73a3a0`; VERSION `0.2.8`  
-**Latest verified main CI:** run `35376388768` / #838 = completed / success; release tests, production-minimal startup, rich-report smoke and self-contained reporting-vendor smoke all passed  
-**Active polish:** branch `polish/0.2.8-ui-reports`; same VERSION `0.2.8`; UI/report refinement only, pending CI / merge / redeploy  
-**Release phase:** 0.2.8 is LIVE; current work is a same-version polish and must not be treated as deployed until its own merge + deploy succeed  
-**Branch:** `polish/0.2.8-ui-reports`
+**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; same-version UI/report polish merged through PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; VERSION remains `0.2.8`  
+**Latest verified main CI:** run `35380378348` / #840 = completed / success on `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**0.2.8 polish deploy:** pending a new manual `workflow_dispatch`; deploy #39 is the current production baseline and predates PR #28  
+**Release phase:** 0.2.8 is LIVE; the same-version polish is complete and validated on main but is not yet the production code until a new Namecheap deploy succeeds  
+**Branch:** `main`
 
-Deploy #39 is the authoritative production baseline and confirms that unchanged reporting dependencies are preserved server-side without retransmission. The active 0.2.8 polish does not change the application release number.
+Deploy #39 remains the authoritative production baseline and confirms that unchanged reporting dependencies are preserved server-side without retransmission. The merged polish keeps application VERSION 0.2.8 and now only needs the separate production deployment step.
 ---
 
 ## 0.2.8 release scope
