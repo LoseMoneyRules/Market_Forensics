@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 from math import sqrt
 from typing import Any
 
+from sqlalchemy import and_
+
 from .core_models import (
     Company, Coverage, HistoricalPrice, InvestmentState, MarketSnapshot, Position,
     RiskPlan, Security,
@@ -66,9 +68,17 @@ def _corr(a: dict[date, float], b: dict[date, float]) -> tuple[float | None, int
 def _latest_market_map(security_ids: list[int]) -> dict[int, MarketSnapshot]:
     if not security_ids:
         return {}
-    rows = MarketSnapshot.query.filter(MarketSnapshot.security_id.in_(security_ids)).order_by(
-        MarketSnapshot.security_id.asc(), MarketSnapshot.as_of.desc(), MarketSnapshot.id.desc()
-    ).all()
+    latest_times = db.session.query(
+        MarketSnapshot.security_id.label("security_id"),
+        db.func.max(MarketSnapshot.as_of).label("max_as_of"),
+    ).filter(MarketSnapshot.security_id.in_(security_ids)).group_by(MarketSnapshot.security_id).subquery()
+    rows = MarketSnapshot.query.join(
+        latest_times,
+        and_(
+            MarketSnapshot.security_id == latest_times.c.security_id,
+            MarketSnapshot.as_of == latest_times.c.max_as_of,
+        ),
+    ).order_by(MarketSnapshot.id.desc()).all()
     out: dict[int, MarketSnapshot] = {}
     for row in rows:
         out.setdefault(row.security_id, row)
