@@ -13,7 +13,7 @@ from .secdata import (
     _annual_duration, _annual_instant, _as_decimal,
     _quarter_duration_values, _quarter_instants,
 )
-from .valuation_engine import default_cases, evaluate, metrics_from_history, n
+from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history
 
 FORENSIC_EDGE_PCT = 20.0
 FORENSIC_ENRICH_PER_SIDE = 8
@@ -76,15 +76,26 @@ def _sec_companyfacts(cik: str, headers: dict[str, str]) -> dict[str, Any]:
     return response.json() or {}
 
 
+def _sec_submission(cik: str, headers: dict[str, str]) -> dict[str, Any]:
+    response = requests.get(
+        f"{SEC_DATA}/submissions/CIK{cik}.json",
+        headers=headers,
+        timeout=FORENSIC_TIMEOUT,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"SEC submission HTTP {response.status_code}")
+    return response.json() or {}
+
+
 def _value(record: dict[str, Any] | None) -> float | None:
     d = _as_decimal((record or {}).get("val"))
     return float(d) if d is not None else None
 
 
-def _annual_history(companyfacts: dict[str, Any]) -> list[dict[str, Any]]:
-    duration = {key: _annual_duration(companyfacts, tags) for key, tags in DURATION_TAGS.items()}
-    instant = {key: _annual_instant(companyfacts, tags) for key, tags in INSTANT_TAGS.items()}
-    dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei")
+def _annual_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") -> list[dict[str, Any]]:
+    duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
+    instant = {key: _annual_instant(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
+    dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_shares:
         instant["shares_outstanding"] = dei_shares
 
@@ -118,17 +129,18 @@ def _annual_history(companyfacts: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _quarter_history(companyfacts: dict[str, Any]) -> list[dict[str, Any]]:
-    annual_duration = {key: _annual_duration(companyfacts, tags) for key, tags in DURATION_TAGS.items()}
+def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") -> list[dict[str, Any]]:
+    annual_duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
     q_duration = {
         key: _quarter_duration_values(
             companyfacts, tags, annual_duration[key],
             shares_metric=(key == "diluted_shares"),
+            fiscal_year_end=fiscal_year_end,
         )
         for key, tags in DURATION_TAGS.items()
     }
-    q_instant = {key: _quarter_instants(companyfacts, tags) for key, tags in INSTANT_TAGS.items()}
-    dei_shares = _quarter_instants(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei")
+    q_instant = {key: _quarter_instants(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
+    dei_shares = _quarter_instants(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_shares:
         q_instant["shares_outstanding"] = dei_shares
 
@@ -285,7 +297,7 @@ def _signals(snapshot: dict[str, Any], day_move: float | None) -> tuple[list[dic
     return signals, long_score, short_score
 
 
-def _valuation_from_history(annual: list[dict[str, Any]], current_ttm: dict[str, Any] | None, prior_ttm: dict[str, Any] | None, price: float) -> dict[str, Any]:
+def _valuation_from_history(annual: list[dict[str, Any]], current_ttm: dict[str, Any] | None, prior_ttm: dict[str, Any] | None, price: float, company_type: str = "Generic") -> dict[str, Any]:
     metrics = metrics_from_history(annual)
     if current_ttm and _num(current_ttm.get("revenue")) is not None:
         revenue = _num(current_ttm.get("revenue"))
@@ -311,7 +323,7 @@ def _valuation_from_history(annual: list[dict[str, Any]], current_ttm: dict[str,
             "fcf_margin": _ratio(fcf, revenue, 1.0),
             "operating_margin": _ratio(current_ttm.get("operating_income"), revenue, 1.0),
         })
-    defaults = default_cases(metrics, "Generic")
+    defaults = default_cases(metrics, company_type)
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
     result = evaluate(metrics, cases, defaults["weights"], defaults["horizon_years"], current_price=price, allow_reference_fallback=False)
     base_row = ((result.get("scenarios") or {}).get("BASE") or {})
@@ -358,14 +370,18 @@ def _local_forensics(context: dict[str, Any], price: float, day_move: float | No
 
 
 def _external_forensics(symbol: str, price: float, day_move: float | None, meta: dict[str, str], headers: dict[str, str]) -> dict[str, Any] | None:
+    submission = _sec_submission(meta["cik"], headers)
+    fiscal_year_end = str(submission.get("fiscalYearEnd") or "")
+    sic_description = str(submission.get("sicDescription") or "")
+    company_type = infer_company_type("", sic_description)
     facts = _sec_companyfacts(meta["cik"], headers)
-    annual = _annual_history(facts)
-    quarters = _quarter_history(facts)
+    annual = _annual_history(facts, fiscal_year_end)
+    quarters = _quarter_history(facts, fiscal_year_end)
     if len(annual) < 2:
         return None
     current = _ttm(quarters, 0)
     prior = _ttm(quarters, 4)
-    valuation = _valuation_from_history(annual, current, prior, price)
+    valuation = _valuation_from_history(annual, current, prior, price, company_type)
     if valuation.get("base") is None or valuation.get("gap_pct") is None:
         return None
     if current is None or prior is None:
@@ -376,6 +392,8 @@ def _external_forensics(symbol: str, price: float, day_move: float | None, meta:
         "base": valuation["base"],
         "gap_pct": valuation["gap_pct"],
         "quality": f"FORENSIC BASE · {valuation.get('valuation_methods', 0)} METHODS",
+        "company_type": company_type,
+        "sic_description": sic_description,
         "snapshot": snapshot,
         "signals": signals,
         "long_score": long_score,
