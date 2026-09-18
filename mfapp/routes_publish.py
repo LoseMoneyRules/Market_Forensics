@@ -180,7 +180,7 @@ def discovery_report():
     stream = render_discovery_pdf(scan, branding)
     audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
     db.session.commit()
-    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.0.pdf", max_age=0)
+    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.1.pdf", max_age=0)
 
 
 @bp.get("/company/<ticker>/report/<fmt>")
