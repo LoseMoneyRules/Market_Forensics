@@ -27,11 +27,12 @@
     <div class="panel decision-brief">
       <div class="panel-head"><div><p class="eyebrow">DECISION BRIEF</p><h2>What the evidence says now</h2></div><span class="status-chip">{{ brief.confidence }} confidence</span></div>
       <div class="decision-brief-grid">
-        <div class="action-block"><span>Research action</span><strong>{{ brief.action }}</strong><small>Evidence engine · you approve the process gates</small></div>
+        <div class="action-block"><span>Research conclusion</span><strong>{{ decision_lenses.research_conclusion }}</strong><small>{{ decision_lenses.value }} value · {{ decision_lenses.path }} path · {{ decision_lenses.model_confidence }} model confidence</small></div>
         <div class="brief-metric"><span>Market</span><strong>{{ money(brief.price) }}</strong><small>5-minute refresh while open</small></div>
         <div class="brief-metric"><span>Bear</span><strong>{{ money(brief.bear) }}</strong></div>
         <div class="brief-metric"><span>Base</span><strong>{{ money(brief.base) }}</strong><small>{% if brief.base_gap_pct is not none %}{{ '%+.1f'|format(brief.base_gap_pct) }}% vs market{% else %}Gap pending{% endif %}</small></div>
         <div class="brief-metric"><span>Bull</span><strong>{{ money(brief.bull) }}</strong><small>~{{ brief.horizon_years }}Y horizon · {{ brief.target_year }}</small></div>
+        <div class="brief-metric accent"><span>Expected Value</span><strong>{{ money(valuation.expected_value) }}</strong><small>Probability weighted · scenario model</small></div>
       </div>
       {% if brief.reasons %}<ul class="brief-reasons">{% for reason in brief.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% endif %}
       {% if intelligence.warnings %}<div class="notice amber"><strong>Review before relying on the read.</strong> {{ intelligence.warnings|join(' ') }}</div>{% endif %}
@@ -39,10 +40,10 @@
 
     <div class="decision-evidence-grid">
       <div class="panel">
-        <div class="panel-head"><div><p class="eyebrow">WHY THIS READ</p><h2>{{ intelligence.stance }}</h2></div><span class="status-chip">Evidence score {{ '%+.2f'|format(intelligence.score) }}</span></div>
+        <div class="panel-head"><div><p class="eyebrow">EVIDENCE DIAGNOSTIC</p><h2>Weighted support / opposition</h2></div><span class="status-chip">Evidence score {{ '%+.2f'|format(intelligence.score) }}</span></div>
         <div class="metric-grid">
-          <div><span>BUY threshold</span><strong>+{{ '%.2f'|format(intelligence.buy_threshold) }}</strong><small>Score alone is not enough; valuation and warnings still gate action.</small></div>
-          <div><span>SELL threshold</span><strong>{{ '%.2f'|format(intelligence.sell_threshold) }}</strong><small>Evidence must also support negative valuation asymmetry.</small></div>
+          <div><span>Positive threshold</span><strong>+{{ '%.2f'|format(intelligence.buy_threshold) }}</strong><small>Diagnostic only; the Decision Lenses remain canonical.</small></div>
+          <div><span>Negative threshold</span><strong>{{ '%.2f'|format(intelligence.sell_threshold) }}</strong><small>Diagnostic only; no score can bypass readiness or validation.</small></div>
           <div><span>Validation</span><strong>{{ intelligence.validation_state }}</strong><small>Separate from Research completion.</small></div>
         </div>
         {% if intelligence.blockers %}<div class="decision-blockers">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
