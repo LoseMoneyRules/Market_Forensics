@@ -10,8 +10,11 @@ from .core_models import (
 )
 from .data_providers import latest_snapshot
 from .decision_lenses import build_decision_lenses
-from .decision_support import company_brief, management_engine, tape_series
+from .decision_support import company_brief, management_accountability, management_engine, tape_series
 from .discovery_engine import classify_coverage
+from .management_promises import evaluate_promises
+from .research_synthesis import build_synthesis
+from .triangulation_engine import automatic_triangulation
 from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
@@ -99,7 +102,10 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     from .routes import _intelligence
     intelligence = _intelligence(coverage, company, model, market, valuation, readiness)
     management = management_engine(company.id)
+    management_accountability_rows = management_accountability(company.id)
+    management_promises = evaluate_promises(company.id)
     tape = tape_series(security, 12)
+    triangulation = automatic_triangulation(company.id, coverage.user_id)
     lenses = build_decision_lenses(
         coverage=coverage,
         company=company,
@@ -114,6 +120,10 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
         tape=tape,
     )
     brief = company_brief(company.id, valuation, intelligence, model)
+    synthesis = build_synthesis(
+        coverage=coverage, security=security, company=company, research=research, risk=risk,
+        model=model, market=market, valuation=valuation, intelligence=intelligence, readiness=readiness,
+    )
     discovery_labels = classify_coverage(intelligence, readiness)
 
     payload = _jsonable({
@@ -138,7 +148,16 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
             "reasons": brief.get("reasons") or [],
         },
         "management": management,
+        "management_accountability": management_accountability_rows,
+        "management_promises": [{
+            "metric": row.get("metric"), "target_year": row.get("target_year"), "low": row.get("low"),
+            "high": row.get("high"), "unit": row.get("unit"), "statement": row.get("statement"),
+            "origin": row.get("origin"), "actual": row.get("actual"), "status": row.get("status"),
+        } for row in management_promises],
+        "tape": tape,
         "tape_metrics": (tape.get("metrics") or {}),
+        "triangulation": triangulation,
+        "synthesis": synthesis,
         "discovery_labels": discovery_labels,
         "market_as_of": market.as_of if market else None,
         "market_price": market.price if market else None,
