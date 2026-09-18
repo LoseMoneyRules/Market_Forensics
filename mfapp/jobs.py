@@ -588,9 +588,10 @@ class JobDeadlineExceeded(TimeoutError):
 
 
 def _job_deadline_seconds(job_type: str) -> int | None:
-    # Discovery is intentionally a lightweight radar. If it exceeds this bound,
-    # something is wrong with provider/DB execution and the job must fail fast.
-    return 90 if str(job_type).upper() == "DISCOVERY_SCAN" else None
+    # Discovery has a cheap screen plus a bounded SEC/fair-value shortlist.
+    # It remains background-only and hard bounded, but 90s is no longer a valid
+    # limit once we deliberately verify operating evidence for the finalists.
+    return 300 if str(job_type).upper() == "DISCOVERY_SCAN" else None
 
 
 def _execute_with_deadline(job: Job):
