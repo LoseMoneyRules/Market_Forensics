@@ -697,7 +697,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
 
     if data["mode"] == "full":
         for label,key in [
-            ("Business","business"),("Numbers","numbers"),("Expectations","expectations_summary"),
+            ("Business","business"),("Fundamentals","numbers"),("Expectations","expectations_summary"),
             ("Valuation","valuation_notes"),("Bear Case","bear_case_summary"),("Catalysts","catalysts_summary"),
             ("Financial Flows","flows_summary"),("Management","management_summary"),("Tape / Flows","tape_summary"),
             ("Research invalidation / risk summary","risk_summary"),
