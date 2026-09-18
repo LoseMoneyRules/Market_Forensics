@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from flask import flash, g, redirect, render_template, request, url_for
 
 from .access import audit, require_control_view
 from .autofill import _financial_history, _point_in_time_calibration, prefill_coverage
-from .core_models import FinancialFlow, FinancialPeriod, HistoricalPrice, HistoricalTestRun, HistoricalTestSample, ValuationScenario
+from .core_models import FinancialFlow, FinancialPeriod, HistoricalPrice, HistoricalTestRun, HistoricalTestSample, Job, ValuationScenario
 from .extensions import db
 from .jobs import enqueue_job
 from .routes import SECTIONS, _ctx, bp
@@ -37,6 +37,66 @@ def _reference_price(ctx: dict) -> tuple[float | None, str, bool]:
         if value not in (None, 0):
             return value, f"Historical price cache · {row.trade_date}", True
     return None, "No stored price reference", True
+
+
+def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
+    history = valuation_price_history(ctx["security"].id, 730)
+    today = date.today()
+    cutoff = today - timedelta(days=730)
+    first = date.fromisoformat(history[0]["date"]) if history else None
+    last = date.fromisoformat(history[-1]["date"]) if history else None
+    needs_refresh = (
+        len(history) < 100
+        or first is None
+        or first > cutoff + timedelta(days=75)
+        or last is None
+        or last < today - timedelta(days=10)
+    )
+
+    active = Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.security_id == ctx["security"].id,
+        Job.job_type == "PRICE_HISTORY_REFRESH",
+        Job.status.in_(["QUEUED", "RUNNING"]),
+    ).order_by(Job.id.desc()).first()
+    latest_terminal = Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.security_id == ctx["security"].id,
+        Job.job_type == "PRICE_HISTORY_REFRESH",
+        Job.status.in_(["DONE", "FAILED", "CANCELLED"]),
+        Job.finished_at.is_not(None),
+    ).order_by(Job.finished_at.desc(), Job.id.desc()).first()
+
+    job = active
+    cooldown = False
+    if needs_refresh and job is None and latest_terminal and latest_terminal.finished_at:
+        elapsed = max(0.0, (datetime.now(timezone.utc).replace(tzinfo=None) - latest_terminal.finished_at).total_seconds())
+        window = 15 * 60 if latest_terminal.status in {"FAILED", "CANCELLED"} else 12 * 3600
+        cooldown = elapsed < window
+        if cooldown:
+            job = latest_terminal
+
+    if needs_refresh and active is None and not cooldown:
+        job = enqueue_job(
+            "PRICE_HISTORY_REFRESH",
+            user_id=g.user.id,
+            company_id=ctx["company"].id,
+            security_id=ctx["security"].id,
+            payload={"coverage_id": ctx["coverage"].id, "lookback_years": 3},
+            priority=35,
+        )
+
+    status = {
+        "rows": len(history),
+        "first_date": first.isoformat() if first else None,
+        "last_date": last.isoformat() if last else None,
+        "provider": history[-1].get("provider") if history else None,
+        "needs_refresh": needs_refresh,
+        "job_id": job.id if job else None,
+        "job_status": job.status if job else None,
+        "cooldown": cooldown,
+    }
+    return history, status
 
 
 def _current_model_context(ctx: dict) -> dict:
@@ -70,6 +130,7 @@ def _current_model_context(ctx: dict) -> dict:
             "manual_override": n(inputs.get("manual_override")),
         }
     current_price, reference_price_source, reference_price_stale = _reference_price(ctx)
+    price_history, price_history_status = _price_history_context(ctx)
     result = evaluate(metrics, cases, weights, years, current_price=current_price, fallback_values=fallback_values)
     return {
         "metrics": metrics,
@@ -83,7 +144,8 @@ def _current_model_context(ctx: dict) -> dict:
         "reference_price_source": reference_price_source,
         "reference_price_stale": reference_price_stale,
         "quote_candidates": ((ctx["market"].payload or {}).get("candidates") or []) if ctx.get("market") else [],
-        "price_history": valuation_price_history(ctx["security"].id, 730),
+        "price_history": price_history,
+        "price_history_status": price_history_status,
     }
 
 
