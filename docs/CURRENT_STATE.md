@@ -11,16 +11,17 @@
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.6 on Namecheap  
+**Production:** 0.2.7 on Namecheap  
 **Main code release:** 0.2.7 merged at `ef02e56596da90d3768601994219fca9284a49df` via PR #24  
 **0.2.7 PR CI:** run `35369138874` / run #797 = completed / success  
 **0.2.7 post-merge main CI:** run `35369300915` / run #798 = completed / success on merge commit  
 **CURRENT_STATE sync CI:** run `35369397930` / run #801 = completed / success on clean main state  
-**0.2.6 Namecheap deploy:** run `35363441025` / deploy #35 = completed / success; candidate health + post-cleanup health passed; no rollback  
-**Release phase:** 0.2.7 is in `main`; production deploy pending  
-**Branch:** `main`
+**0.2.7 Namecheap deploy:** run `35369640385` / deploy #36 = completed / success; candidate health + post-cleanup health passed; no rollback  
+**Deploy-vendor hotfix:** PR #25 (`fix/reporting-vendor-cache`) hardens future deploys so unchanged report dependencies are persistent and not retransferred  
+**Release phase:** 0.2.7 is LIVE; deployment-workflow hotfix PR #25 pending merge  
+**Branch:** `fix/reporting-vendor-cache`
 
-0.2.7 is now the authoritative code in main. Production remains 0.2.6 until the 0.2.7 post-merge CI and Namecheap deploy/health gates succeed. Do not describe 0.2.7 as LIVE before that production transition is recorded here.
+0.2.7 is the authoritative code in main and is LIVE on Namecheap. Deploy #36 completed successfully with candidate and post-cleanup production health green. PR #25 does not change the application release or production data; it changes the GitHub→Namecheap transfer mechanism used by future deploys.
 
 ---
 
@@ -442,7 +443,7 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
-**Current phase:** PR #24 merged to `main` at `ef02e56596da90d3768601994219fca9284a49df`; post-merge main CI and state-sync CI are green; Namecheap deploy is pending.
+**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`), with candidate health and post-cleanup health green. PR #25 is a deployment-infrastructure hotfix for future releases; it does not require a production application redeploy.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
@@ -450,18 +451,20 @@ CURRENT_STATE transition rule:
 - immediately after successful Namecheap deploy: update this file on `main` again with the deploy run, production version and production health result;
 - never leave an older production/main statement in this file after either transition.
 
-Required sequence:
+Completed 0.2.7 release sequence:
 
-`0.2.7 branch → PR CI green → merge main → post-merge main CI green → manual Namecheap deploy → production health`
+`0.2.7 branch → PR CI green → merge main → post-merge main CI green → Namecheap deploy #36 → production health green`
+
+Deployment-workflow hotfix sequence:
+
+`PR #25 CI green → merge main → next release deploy reuses persistent report vendor when requirements hash is unchanged`
 
 Do not merge merely because individual fixes look correct.
 
-Do not redeploy 0.2.6 as a substitute for the 0.2.7 corrections after main is advanced.
-
-Do not call 0.2.7 LIVE until the deploy workflow succeeds and production `/health` returns:
+Production health for a release remains mandatory:
 - HTTP 200;
 - `status = ok`;
-- `version = 0.2.7`;
+- release `version` matches VERSION;
 - `architecture = web-native`;
 - `reports = rich`.
 
