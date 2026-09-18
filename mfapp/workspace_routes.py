@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from flask import abort, g, jsonify, redirect, request, url_for
+from flask import abort, g, jsonify, redirect, render_template, request, url_for
 
 from .access import audit, require_control_view
 from .core_models import Job, ResearchGateApproval
@@ -10,6 +10,7 @@ from .data_providers import latest_snapshot
 from .extensions import db
 from .jobs import enqueue_job
 from .readiness import research_readiness
+from .research_cache import patch_research_cache_readiness
 from .routes import _ctx, bp
 from .security import role_required
 
@@ -42,15 +43,23 @@ def approve_research_gate(ticker: str, gate_key: str):
         existing.evidence_hash = gate["evidence_hash"]
         existing.note = str(request.form.get("note") or "")[:240]
         audit("research_gate.approve", "coverage", ctx["coverage"].id, {"gate": gate_key, "evidence_hash": gate["evidence_hash"]})
+    db.session.flush()
+    fresh_readiness = research_readiness(ctx["coverage"])
+    patch_research_cache_readiness(ctx["coverage"].id, fresh_readiness)
     db.session.commit()
-    enqueue_job(
-        "RECALCULATE",
-        user_id=g.user.id,
-        company_id=ctx["company"].id,
-        security_id=ctx["security"].id,
-        payload={"coverage_id": ctx["coverage"].id},
-        priority=95,
-    )
+
+    if "application/json" in str(request.headers.get("Accept") or ""):
+        html = render_template("_process_readiness.html", readiness=fresh_readiness, security=ctx["security"])
+        return jsonify({
+            "ok": True,
+            "gate_key": gate_key,
+            "readiness": {
+                "done": fresh_readiness["done"],
+                "total": fresh_readiness["total"],
+                "ready_to_validate": fresh_readiness["ready_to_validate"],
+            },
+            "html": html,
+        })
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
 
