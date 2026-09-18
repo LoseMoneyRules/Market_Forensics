@@ -15,7 +15,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
-from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.pagesizes import LETTER, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
@@ -491,4 +491,51 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     out.seek(0); return out
 
 
-__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf"]
+def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
+    branding = dict(branding or {})
+    out = BytesIO()
+    doc = SimpleDocTemplate(
+        out,
+        pagesize=landscape(LETTER),
+        rightMargin=.35*inch, leftMargin=.35*inch, topMargin=.35*inch, bottomMargin=.35*inch,
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="MFDiscTitle", parent=styles["Title"], fontSize=17, leading=20, textColor=colors.HexColor("#0b1f33"), alignment=TA_LEFT, spaceAfter=5))
+    styles.add(ParagraphStyle(name="MFDiscBody", parent=styles["BodyText"], fontSize=7.5, leading=9.5, spaceAfter=3))
+    story = []
+    logo = _safe_logo(str(branding.get("logo_url") or ""))
+    if logo:
+        story += [RLImage(logo, width=1.0*inch, height=.34*inch), Spacer(1,3)]
+    story += [
+        Paragraph(escape(str(branding.get("title") or "Market Forensics"))+" · Discovery", styles["MFDiscTitle"]),
+        Paragraph("Market-wide lightweight screen · candidates require deep research before valuation or portfolio use.", styles["MFDiscBody"]),
+    ]
+    candidates = list(scan.get("candidates") or [])[:60]
+    rows = [["#","Ticker","Score","Move","Activity","Evidence lenses"]]
+    for idx,row in enumerate(candidates, start=1):
+        move = f"{float(row.get('move_pct')):+.1f}%" if row.get("move_pct") is not None else "—"
+        activity = f"#{row.get('activity_rank')}" if row.get("activity_rank") else "—"
+        rows.append([str(idx), str(row.get("ticker") or ""), f"{float(row.get('scan_score') or 0):.1f}", move, activity, " · ".join(row.get("lenses") or [])])
+    table = Table(rows, colWidths=[.35*inch,.65*inch,.65*inch,.7*inch,.65*inch,7.25*inch], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),
+        ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+        ("FONTSIZE",(0,0),(-1,-1),6.8),
+        ("GRID",(0,0),(-1,-1),.25,colors.HexColor("#c7d1da")),
+        ("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("LEFTPADDING",(0,0),(-1,-1),3),
+        ("RIGHTPADDING",(0,0),(-1,-1),3),
+        ("TOPPADDING",(0,0),(-1,-1),3),
+        ("BOTTOMPADDING",(0,0),(-1,-1),3),
+    ]))
+    story += [table, Spacer(1,4), Paragraph(
+        escape(f"{branding.get('footer') or 'Lose Money Rules'} · {scan.get('universe_source') or 'Discovery'} · {len(candidates)} candidates"),
+        styles["MFDiscBody"],
+    )]
+    doc.build(story)
+    out.seek(0)
+    return out
+
+
+__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf","render_discovery_pdf"]
