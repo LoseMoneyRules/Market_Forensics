@@ -327,7 +327,9 @@ def test_028_readiness_links_and_coverage_alpha_sort_contract():
     assert "class=\"gate-link\"" in readiness
     assert "section=gate.key" in readiness
     assert 'rows.sort(key=lambda row: str(row["security"].ticker or "").upper())' in routes
-    assert ".gate-link{color:var(--navy);font-weight:750" in css
+    assert ".gate-link{color:var(--navy);font-weight:400" in css
+    state = Path("docs/CURRENT_STATE.md").read_text()
+    assert "use as little bold as possible" in state
     assert Path("VERSION").read_text().strip() == "0.2.8"
 
 
