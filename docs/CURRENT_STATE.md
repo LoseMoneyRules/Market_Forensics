@@ -4,398 +4,458 @@
 >
 > This file is the single source of truth for the active Market Forensics release state.
 > Update it in the SAME PR whenever VERSION, architecture, deployment state, release gates,
-> job execution, data correctness rules, or a material product workflow changes.
+> job execution, provider/data logic, SEC normalization, Discovery, Fundamentals, analytical
+> engines, reports/publication, security, Portfolio/Risk, or a material product workflow changes.
 
-**State-Version: 0.2.5**  
+**State-Version: 0.2.6**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
-**Runtime principle:** FAST UI → bounded background work → stored/materialized results → non-disruptive live updates  
-**Production baseline before this release:** 0.2.4 deployed successfully to Namecheap  
-**Active release:** 0.2.5 candidate
+**Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
+**Production:** 0.2.5 on Namecheap  
+**Main before 0.2.6:** 0.2.5 at `8feeda8c27ac46d5e3c7fd46cfbb0f76b19df52b`  
+**0.2.5 post-merge CI:** run `35356768235` / run #771 = completed / success  
+**0.2.5 Namecheap deploy:** run `35357228878` / deploy #34 = completed / success; candidate health + post-cleanup health passed; no rollback  
+**Active candidate:** 0.2.6 — Local parity recovery  
+**Branch:** `0.2.6`
+
+Production remains on deployed 0.2.5 until 0.2.6 passes every gate.
+
+0.2.5 passed its stated PR/post-merge gates and was deployed successfully. The subsequent V3.1.12-vs-Web
+capability audit found material product regressions that the old smoke tests did not detect
+(Portfolio-before-Research, Local-grade Risk/Position sizing, immutable journal outcomes, and the
+production rich-report dependency contract). Therefore 0.2.5 remains the production baseline while 0.2.6 supersedes it as the active correction candidate.
 
 ---
 
-## 1. What 0.2.5 is
+## 1. Non-negotiable architecture
 
-0.2.5 is a product-quality consolidation release, not a cosmetic patch.
+- Web-native Flask.
+- MariaDB is the only production primary database.
+- V3.1.12 is DNA/reference/accepted-product baseline only; there is no runtime dependency on it.
+- CONTROL is the complete private operating workspace.
+- FRIEND / INSIDER see only explicitly published, non-personalized research.
+- Visibility remains PRIVATE / FRIEND / INSIDER.
+- Never publish personal Portfolio holdings, shares, cost, P/L, position sizing, max loss,
+  private journal, private notes, provider credentials or secrets.
+- Argon2, TOTP/2FA, encrypted provider credentials, secure sessions and least privilege remain mandatory.
+- Production MariaDB and the existing CONTROL account/2FA must never be reset by a release.
+- `CALCULATION_VERSION` remains separate from application VERSION and is never a user-facing release label.
 
-The release is blocked unless all of these are true:
+Normal GET navigation must not execute heavy provider or analytical work.
 
-1. Settings visibly shows the current application version, and Recent Jobs is compact/collapsed by default with the full table revealed only on click.
-2. Discovery is no longer a generic mover/most-active list. A visible Long/Short candidate must have a valid operating equity, meaningful liquidity, a calculable Market Forensics Base fair value, a material price-to-Base gap, and operating evidence confirming the same side.
-3. Research Command Center keeps Price / Base / Gap on one line, keeps Manage narrow, shows Freshness only as relative minutes/hours, and keeps the Process/Validate explanation plain text.
-4. Financial Flows use the full available width, push the final graph column to the right edge, and do not show the old redundant category legend.
-5. Process Readiness Reopen is a real explicit POST action and must never return gate 405.
-6. Numbers is filing-transparent: Revenue columns + FCF line; TTM only from four consecutive fiscal quarters; quarter-level evidence visible; incomplete data explicit; SEC comparative facts period-aware.
-7. Every Research section and core function is release-smoke-tested; a known missing/broken function blocks merge.
+Primary background executor:
 
-Product flow remains:
-
-**Discover → Research → Validate → Portfolio**
-
-Research owns thesis, evidence, valuation, invalidation and monitoring.
-Portfolio owns positions, sizing, exposure and money risk.
-Validation remains a separate point-in-time model-quality step.
-
-V3.1.12 remains reference/DNA only; it is not a runtime dependency.
-
----
-
-## 2. Permanent clean-release rules
-
-Every future release must be consolidated as if the corrected behavior had existed from the start:
-
-- no fix-over-fix CSS;
-- no duplicate old/new component implementations;
-- no alternate company headers;
-- no obsolete release/build labels visible after a version bump;
-- no simple database mutation implemented as a background analytical job;
-- no known regression hidden behind a manual reload or silent fallback;
-- bidirectional interactions must be tested in both directions;
-- desktop layout problems are solved by layout/sizing, not by default horizontal scrolling;
-- heavy provider/analytical work never runs in normal GET navigation or report-export HTTP requests;
-- data that cannot be verified stays missing; it is never invented to make a screen look complete;
-- an empty high-conviction Discovery list is better than a low-quality filled list;
-- release tests encode the current user-visible contract, not obsolete behavior from an older release.
-
----
-
-## 3. Production safety invariants
-
-Do NOT reset or delete MariaDB production data, CONTROL account/user IDs, Argon2 password hashes, TOTP/2FA, encrypted provider credentials, Research/manual edits, Portfolio state, publication history, audit/history, or server configuration.
-
-CONTROL is the complete private research workspace.
-FRIEND / INSIDER see only selectively published, non-personalized research.
-Visibility remains PRIVATE / FRIEND / INSIDER.
-Never publish portfolio shares/cost/P&L/sizing/max-loss/private notes/journal/credentials.
-
-GitHub main is not production.
-Production changes only after the manual Namecheap deployment workflow succeeds.
-
----
-
-## 4. Runtime and job model
-
-Normal navigation reads MariaDB, latest stored quote and materialized caches.
-
-Heavy work runs in background jobs: SEC, FINRA, Discovery forensic scan, historical prices, management scan, triangulation, Tape reconstruction, valuation recalculation, historical validation and portfolio analytics.
-
-Primary executor:
-
-python manage.py run-jobs --limit 5
+`python manage.py run-jobs --limit 5`
 
 Recommended cPanel cadence: every minute.
 
-Job contracts:
-
-- duplicate logical jobs are reused;
-- stale RUNNING jobs recover;
-- CONTROL can cancel active work;
-- committed valid data survives cancellation;
-- visible job scope is ticker / company / GLOBAL;
-- PRICE_HISTORY_REFRESH is ticker-scoped;
-- Process Readiness Approve/Reopen is synchronous and never queued;
-- DISCOVERY_SCAN has a bounded six-minute lease because the final shortlist can perform SEC forensic enrichment;
-- browser fallback may spawn a detached worker, but the HTTP request does not execute heavy work itself.
-
 ---
 
-## 5. Market price and history
+## 2. Product flow and buy-side process
 
-Current quote freshness target: 5 minutes.
+Product flow:
 
-Current quote reads stored data first, reuses active MARKET_REFRESH, applies terminal cooldown, refreshes in background, and never forces a full-page reload.
+**Discover → Research → Validate → Portfolio**
 
-Historical price:
-- roughly two years stored for Valuation;
-- missing/incomplete history queues PRICE_HISTORY_REFRESH;
-- valid Alpaca raw history survives split-adjustment failure;
-- public fallback uses adjusted close when available;
-- provider errors are visible;
-- Valuation live-loads stored rows when the background job completes;
-- missing history is never fabricated.
+Research owns:
+Business, Fundamentals, Expectations, Valuation, Bear Case, Catalysts, Financial Flows,
+Management, Tape / Flows, Monitoring, Decision Journal and Sources / Audit.
 
----
+Portfolio owns:
+real positions, LONG/SHORT side, cost basis, exposure, money risk and position sizing.
 
-## 6. Discovery — Market Forensics contract
+Capital Risk / Position controls must exist only under Portfolio. Research and Validate must never expose
+shares, average cost, loss budget, sizing reference, liquidity/event haircut or max-position controls.
+Research may keep thesis invalidation under Monitoring because that is a research falsification rule, not money-risk sizing.
 
-### Stage 1: investigation funnel
+Validation is separate, point-in-time and walk-forward.
 
-Cheap inputs decide only where to investigate:
+Mandatory buy-side process:
 
-- Alpaca Most Active
-- Alpaca Market Movers
-- IEX snapshot price/volume/day move
-- Alpaca active US-equity metadata
-- materialized Research cache for known names
-
-Fail-closed filters:
-
-- active + tradable operating equity
-- major US exchange
-- no warrants / rights / units / ETFs / ETNs / funds / blank-check shells / preferred / notes
-- new Long price >= $5
-- new Short price >= $10
-- new-name daily volume >= 500k when available
-- new-name daily dollar volume >= $50M
-- Short must be shortable
-
-A price move alone can NEVER appear in the final radar.
-
-### Stage 2: bounded forensic enrichment
-
-Only a bounded shortlist receives deeper work.
-
-Already-covered names use stored Research Base fair value plus normalized SEC operating data.
-
-External names:
-- fetch SEC submissions metadata + Companyfacts;
-- resolve fiscal year from the fact period end and company fiscal-year-end, not a later filing's fy;
-- infer company type from SEC SIC description;
-- build annual + filing-quarter history;
-- calculate a provisional Base with the SAME Market Forensics valuation engine;
-- allow no market/reference-price fallback;
-- require INTRINSIC quality and at least two usable valuation methods.
-
-Final Long:
-- Base gap >= +20%;
-- Long operating score passes threshold and exceeds Short score.
-
-Final Short:
-- Base gap <= -20%;
-- Short operating score passes threshold and exceeds Long score;
-- shortability/actionability rules pass.
-
-Operating forensic signals include revenue acceleration/deterioration, operating leverage/deleverage, FCF-margin inflection/erosion, inventory discipline/build, receivables quality/build, earnings-to-cash conversion, and price/fundamentals disconnect.
-
-Priority:
-- P1 = large fair-value gap + strong confirming operating evidence
-- P2 = qualifying fair-value gap + confirming evidence
-
-There is no filler quota and no P3 filler list.
-If nothing passes, the correct result is an empty radar.
-
-Discovery result contract: **FORENSIC_FAIR_VALUE_V1**.
-Legacy stored scan payloads are not rendered after 0.2.5.
-
-UI stays two columns, Long and Short, as compact lists with Promote/Open Research.
-Each candidate shows current price, our Base, gap, move, forensic score and operating reasons.
-
----
-
-## 7. Numbers — data correctness contract
-
-Numbers is built from normalized SEC filing facts.
-
-### SEC period selection
-
-Companyfacts repeats comparative periods in later filings.
-Do NOT assign a fact to a fiscal year from row['fy'] alone.
+**BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING**
 
 Rules:
-- resolve fiscal year from the fact's own period end;
-- use company fiscal-year-end metadata;
-- keep the latest filing for that exact economic period;
-- annual UI deduplicates legacy stored periods by period end;
-- no destructive cleanup of historical production data is required.
-
-### Quarter / TTM rules
-
-- filing-aware Q1 / Q2 / Q3 / derived Q4;
-- Q2/Q3 YTD differencing only when predecessor exists;
-- Q4 = FY - Q1 - Q2 - Q3 only when all components exist;
-- TTM only from four distinct fiscally consecutive quarters;
-- if a quarter is missing, TTM is withheld;
-- quarterly growth compares the same fiscal quarter one year earlier;
-- data completeness shows annual count, quarter count, current basis and missing core fields.
-
-Core fields: Revenue, Gross Profit, Operating Income, Net Income, CFO, CapEx, FCF.
-
-Visualization:
-- Revenue = columns
-- FCF = line
-- TTM enters only when its four-quarter sequence is valid
-- forecast Revenue is visually distinct
-- margins and working-capital remain separate context
-
-Missing SEC facts remain missing; the UI does not fill them cosmetically.
+- numerical invalidation thresholds are fixed before investment and are not rewritten after the fact;
+- ADD ON EVIDENCE, NOT ON PRICE;
+- actively search for evidence against the thesis;
+- surface confirmation bias, thesis drift and narrative fitting;
+- Bear / Base / Bull remain mathematically auditable;
+- price target / fair value is a primary product output;
+- missing data stays missing rather than being cosmetically filled.
 
 ---
 
-## 8. Research Command Center
+## 3. Permanent parity rule
 
-Desktop rules:
+A web release may improve or supersede a Local V3.1.12 capability, but it may not silently remove it.
 
-- Price / Base / Base gap never wrap;
+For every accepted Local capability, the Web must be classifiable as one of:
+- PRESERVED;
+- IMPROVED;
+- SUPERSEDED by an explicitly equivalent or stronger web-native capability.
+
+A feature is not considered present merely because a page returns HTTP 200 or a module exists.
+Release gates must prove the user workflow and calculation actually work.
+
+No patch-on-patch CSS, duplicate old/new implementations, silent workarounds, refresh-dependent fixes,
+or apparent controls with non-functional backends.
+
+---
+
+## 4. 0.2.6 — Local parity recovery
+
+### Research Command Center
+
+The canonical table remains:
+Security · Research conclusion · Value / Path · Model confidence · Price · Base · Base gap ·
+Process · Validate · Freshness · Next action · Lens · Manage.
+
+Typography contract:
+- ticker and column titles may be bold;
+- body values are not bold;
+- Price / Base / Gap stay on one line;
 - numeric cells use tabular numbers;
-- Manage is a narrow action-width column;
-- Freshness is only Xm or X.Xh, never a timestamp;
-- horizontal scroll is only a narrow-screen fallback;
-- Bear/Bull do not repeat in the table;
-- note below table is plain text: Process = approved Research gates. Validate = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).
+- Manage stays narrow;
+- Freshness is only Xm / X.Xh;
+- no full timestamps;
+- Bear/Bull are not duplicated in the Command Center.
+
+The explanatory note remains plain text:
+`Process = approved Research gates. Validate = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).`
+
+### Fundamentals — canonical replacement for Numbers
+
+The canonical Research route is now:
+`/company/<ticker>/fundamentals`
+
+The old `/company/<ticker>/numbers` route is compatibility-only and permanently redirects to Fundamentals.
+The stored ResearchState field may remain `numbers` internally to preserve production data; this is not a user-facing name.
+
+Fundamentals keeps all 0.2.5 filing-correctness rules:
+- fiscal year derived from economic period end + real fiscal-year-end;
+- latest filing for the same economic period;
+- annual period de-duplication by period end;
+- Q1/Q2/Q3 filing-aware;
+- Q2/Q3 YTD differencing only with predecessor;
+- Q4 only from FY - Q1 - Q2 - Q3 when components exist;
+- TTM only from four fiscally consecutive quarters;
+- same-quarter YoY comparisons;
+- explicit completeness/missing fields;
+- missing facts remain missing.
+
+Core filing fields remain:
+Revenue, Gross Profit, Operating Income, Net Income, CFO, CapEx and FCF.
+
+Restored Local forensic metrics:
+- Gross Margin;
+- Operating Margin;
+- FCF Margin;
+- CFO / Net Income;
+- DSO;
+- DIO;
+- DPO;
+- Cash Conversion Cycle;
+- Inventory / Revenue;
+- Receivables / Revenue;
+- diluted/outstanding share-count YoY;
+- ROIC only when Operating Income, Pretax, Tax, Debt, Cash and Equity are actually available.
+
+ROIC does NOT use the Local 21% default-tax fallback when tax facts are missing.
+
+Working Capital chart:
+- Inventory = left scale;
+- Receivables = right scale;
+- independent axes are intentional because different balance-sheet magnitudes must not flatten one series.
+
+### Financial Flows
+
+Location remains Research → Financial Flows, with Income Statement and Cash Flow tabs.
+
+The renderer:
+- uses full available desktop width;
+- keeps signed negatives signed;
+- never creates fake positive ribbons;
+- keeps the final graph column at the usable right edge;
+- uses taller nodes so a two-line label cannot cover the numeric value;
+- has no obsolete category legend;
+- uses a ledger representation on mobile;
+- exposes no internal build/calculation version.
+
+### Portfolio — independent from Research again
+
+A real position can exist before a thesis or Coverage row exists.
+
+Portfolio add/edit requires:
+- validated ticker;
+- LONG / SHORT side;
+- shares > 0;
+- average cost;
+- optional exposure tags;
+- optional private notes.
+
+Creating a Portfolio position must NOT automatically create Research/Coverage.
+
+If Research already exists, Portfolio links to it.
+If Research does not exist, the position remains fully usable as PORTFOLIO ONLY and Research can be started later.
+
+Removing a holding:
+- removes the current Position;
+- preserves Research;
+- preserves money-risk history;
+- preserves audit/history;
+- sets an attached Research investment state back to WATCHLIST.
+
+Portfolio analytics include:
+- gross market value;
+- Long value;
+- Short value;
+- net exposure;
+- side-aware P/L;
+- gross position weights;
+- concentration HHI;
+- risk-limit breaches;
+- manual shared-factor exposure from tags;
+- cached/background pairwise correlations.
+
+### Risk / Position
+
+Research thesis invalidation and Portfolio money risk are separate.
+
+Research `RiskPlan` keeps thesis invalidation and pre-investment thesis discipline.
+
+New private `PortfolioRiskPlan` is user+security scoped and stores:
+- max portfolio loss budget %;
+- sizing reference price;
+- liquidity/event haircut %;
+- max position cap %;
+- correlation/factor notes;
+- portfolio/thesis kill-switch;
+- entry/add/trim/exit conditions;
+- private notes.
+
+Sizing math preserves the accepted Local model:
+
+`loss_to_reference = abs(current_price - sizing_reference_price) / current_price`
+
+`adjusted_loss = loss_to_reference + liquidity_event_haircut`
+
+`suggested_position = min(max_position_cap, risk_budget / adjusted_loss)`
+
+The sizing reference is explicitly NOT the thesis invalidation price.
+
+Existing 0.2.5 money-risk values are copied into the new PortfolioRiskPlan by an additive,
+non-destructive migration. The old Research RiskPlan is not deleted or rewritten.
+
+### Decision Journal
+
+The original decision record is immutable after commit.
+
+A committed Decision Journal entry freezes:
+- decision;
+- Research state;
+- investment state;
+- thesis snapshot;
+- valuation snapshot;
+- Research invalidation snapshot;
+- evidence for;
+- evidence against;
+- bias/discipline notes.
+
+Outcome, post-mortem and lessons are appended later in separate `DecisionOutcome` rows.
+Appending an outcome never rewrites the original DecisionJournal or decision snapshot.
 
 ---
 
-## 9. Process Readiness
+## 5. Reports — production contract
 
-Canonical mutation endpoints are explicit POST routes:
+CONTROL reports remain:
+- Executive PDF;
+- Full PDF;
+- Full Word;
+- Discovery landscape PDF.
 
-- /company/<ticker>/readiness/<gate>/approve
-- /company/<ticker>/readiness/<gate>/revoke
+The rich PDF/Word stack is now a first-class production dependency:
+- `requirements.txt` includes `requirements-reporting.txt`;
+- the deploy payload vendors the report runtime into `mfapp/_reporting_vendor`, so Namecheap does not depend on a forgotten manual cPanel pip step;
+- `app.py` loads that private report runtime before importing the application;
+- the production-minimal smoke must report `reports = rich`;
+- candidate production `/health` must also report `reports = rich`;
+- a deployment without the rich report backend is a failed candidate and must not be declared LIVE.
 
-Approve → Reopen → Approve must all return success through the partial-update UI.
+The internal stdlib fallback may remain as defensive error containment, but it no longer qualifies a
+production release as healthy.
+
+Report exports must never expose private Portfolio shares/cost/P&L/sizing/private notes/journal data.
+Report requests read stored/materialized data and do not perform heavy provider work synchronously.
+
+---
+
+## 6. Discovery — forensic contract retained
+
+Discovery result contract remains **FORENSIC_FAIR_VALUE_V1**.
+Legacy pre-0.2.5 Discovery payloads are rejected.
+
+Stage 1 only identifies where to investigate using cheap sources:
+- Alpaca Most Active / Movers;
+- IEX snapshot;
+- asset metadata;
+- stored Research cache.
+
+Fail-closed universe rules remain:
+- active/tradable operating equity;
+- major US exchange;
+- no warrants, rights, units, ETFs, ETNs, funds, blank-check/SPAC shells, preferreds or notes;
+- new Long >= $5;
+- new Short >= $10;
+- new-name volume >= 500k when available;
+- new-name dollar volume >= $50M;
+- Short must be shortable.
+
+Stage 2 is a bounded forensic enrichment.
+External names use SEC submissions + Companyfacts, actual fiscal-year-end, SIC/company type,
+annual and quarterly filing history, and the same Market Forensics valuation engine.
+
+A final Long requires Base gap >= +20% and confirming Long operating evidence.
+A final Short requires Base gap <= -20%, confirming deterioration and shortability/actionability.
+Base must be INTRINSIC with at least two usable valuation methods; no market/reference fallback.
+
+There is no filler quota. Zero candidates is a valid and preferred result when nothing qualifies.
+
+---
+
+## 7. Process Readiness
+
+Canonical state-mutation endpoints remain:
+- `/company/<ticker>/readiness/<gate>/approve`
+- `/company/<ticker>/readiness/<gate>/revoke`
+
+Approve → Reopen → Approve must work without:
+- HTTP 405;
+- RECALCULATE job;
+- mandatory page reload.
+
 A 405 is a release blocker.
 
-Mutation is synchronous, patches cached readiness immediately, creates no RECALCULATE job, and shows inline errors.
+The old `numbers` gate key is migrated non-destructively to canonical `fundamentals`.
 
 ---
 
-## 10. Financial Flows
+## 8. Additive 0.2.6 production migration
 
-Location: Research → Financial Flows.
+0.2.6 adds tables; it does not rebuild or reset production data:
+- `mf_position_profile`;
+- `mf_portfolio_risk_plan`;
+- `mf_decision_outcome`.
 
-Rules:
-- Income Statement and Cash Flow share one renderer;
-- signed negatives stay signed;
-- full available desktop width is used;
-- final graph column sits at the right edge of the available diagram width;
-- no artificial minimum-height box;
-- no old Operating/bridge/Profit/retained cash/Cost/distribution/loss legend below the diagram;
-- mobile uses ledger representation;
-- no visible internal engine/build version.
+Migration key:
+`release_0_2_6_local_web_parity`
+
+The migration:
+- creates PositionProfile for existing holdings;
+- infers LONG/SHORT from the current stored investment state when possible;
+- copies existing monetary RiskPlan values into PortfolioRiskPlan;
+- renames stored Research gate approval `numbers` → `fundamentals`;
+- records the migration;
+- does not delete the legacy Research RiskPlan;
+- does not reset users, passwords, TOTP, encrypted secrets, Research, Portfolio positions,
+  publication history or audit history.
+
+`db.create_all()` creates additive tables before the migration runs.
 
 ---
 
-## 11. Settings and visible version
+## 9. Settings, versioning and UI invariants
 
-Settings is the ONLY user-facing version surface and must show current VERSION clearly.
+Settings is the ONLY normal user-facing application-version surface.
 
 Recent Jobs:
 - collapsed by default;
-- compact summary shows running / queued / failed / cancelled;
-- click reveals full table;
-- full table retains target, status, attempts, errors and cancellation controls.
+- compact running / queued / failed / cancelled summary;
+- click expands full list;
+- ticker/target, status, attempts, errors and cancellation controls remain.
 
-Do not show release/build/calculation-version identifiers in Research, Audit, Financial Flows, Trace, reports, report filenames, publication pages, normal navigation/header/footer.
+Never show CALCULATION_VERSION to users.
 
-Internal DB lineage and /health may keep machine-readable metadata.
+Workflow health assertions read VERSION dynamically; do not hardcode a 0.2.x release in deployment health logic.
 
----
-
-## 12. Canonical Research workflow
-
-**Overview → Business → Numbers → Expectations → Valuation → Bear Case → Catalysts → Financial Flows → Management → Tape / Flows → Monitoring → Decision Journal → Sources / Audit**
-
-Canonical conclusions:
-- RESEARCH INCOMPLETE
-- READY TO VALIDATE
-- LONG READY
-- LONG WATCH
-- SHORT READY
-- SHORT WATCH
-- DATA REVIEW
-- NO EDGE · WAIT
-
-One literal _company_header.html component is mandatory across Research sections, Valuation, Financial Flows, Validate and Portfolio security.
-
-Manual analyst edits are sacred.
+Permanent UI rules:
+- never purple;
+- institutional blue;
+- readable typography is a release gate: normal UI 13–14 px, forms 14 px, micro-metadata no smaller than 12 px, chart labels 12–14 px;
+- real dark mode;
+- real light mode;
+- centralized semantic colors;
+- one canonical company header;
+- one mobile navigation;
+- desktop layout problems are not solved merely by horizontal scrolling;
+- footer = Lose Money Rules.
 
 ---
 
-## 13. Reports and publication
+## 10. 0.2.6 release gates
 
-CONTROL reports:
-- Executive PDF
-- Full PDF
-- Full Word
-- Discovery landscape PDF
+Before merge, all of the following must pass:
 
-Report requests read stored/materialized data, never run heavy calculations synchronously, and fall back to valid PDF/DOCX if rich rendering or optional stored data fails.
+1. Python syntax.
+2. JavaScript syntax.
+3. workflow YAML.
+4. all baseline/regression tests.
+5. 0.2.1–0.2.5 tests updated only where 0.2.6 intentionally changes the contract.
+6. dedicated `tests/test_026_parity.py`.
+7. every Research section returns without 500.
+8. Fundamentals is canonical and old Numbers route redirects.
+9. SEC comparative-period and four-consecutive-quarter TTM correctness remains green.
+10. Working Capital uses two independent scales.
+11. Command Center body has no bold except ticker.
+12. Financial Flow two-line node labels leave the value visible.
+13. Portfolio can add a validated real holding before Research exists.
+14. Portfolio-only security detail works.
+15. LONG/SHORT P/L and exposure are side-aware.
+16. remove Position preserves Research and money-risk history.
+17. Risk/Position sizing reproduces the accepted downside formula.
+18. 0.2.6 migration preserves old RiskPlan and existing holdings.
+19. Decision Journal outcome/post-mortem is append-only.
+20. rich PDF and Word renderer is installed by production requirements.
+21. production-minimal smoke requires `reports = rich`.
+22. candidate Namecheap `/health` requires `reports = rich`.
+23. report/publication privacy boundaries remain green.
+24. Discovery FORENSIC_FAIR_VALUE_V1 tests remain green.
+25. Approve → Reopen → Approve remains green with no RECALCULATE.
+26. Settings is the only visible version surface.
+27. VERSION == State-Version == 0.2.6.
 
-Publication remains PRIVATE / FRIEND / INSIDER.
-
----
-
-## 14. UI / mobile
-
-- canonical responsive navigation
-- institutional blue; never purple
-- centralized semantic colors
-- real light/dark themes
-- mobile Research tabs usable
-- backdrop / Escape / resize reset
-- responsive forms/tables/charts
-- desktop tables fit available content width unless viewport is genuinely narrow
-- footer: Lose Money Rules
-
-Broken mobile navigation blocks release.
-
----
-
-## 15. 0.2.5 release gates
-
-Before merge:
-
-1. Python syntax
-2. JavaScript syntax
-3. workflow YAML
-4. all baseline tests
-5. 0.2.1–0.2.4 regression tests updated only where old behavior is intentionally obsolete
-6. dedicated 0.2.5 regression suite
-7. production-minimal startup smoke
-8. every Research section GET returns HTTP 200 in release smoke
-9. explicit approve/revoke endpoints pass Approve → Reopen → Approve
-10. gate mutation creates no RECALCULATE job
-11. Settings version + collapsed Recent Jobs
-12. Command Center numeric-nowrap / compact Manage / relative Freshness / plain note
-13. Financial Flow full-width / no redundant legend
-14. SEC comparative-period resolver tests
-15. consecutive-quarter TTM tests including missing-quarter rejection
-16. Numbers Revenue-column + FCF-line
-17. Numbers quarterly evidence + completeness
-18. Discovery rejects penny/invalid/non-operating securities before forensic work
-19. Discovery final candidate requires Base fair value + operating confirmation
-20. Discovery rejects legacy pre-forensic payloads
-21. Discovery may validly return zero candidates
-22. report export tests
-23. mobile navigation tests
-24. no user-facing old release/build labels
-25. VERSION == State-Version == 0.2.5
-
-After merge:
-
-26. main CI green
-
-Production:
-
-27. manual Namecheap deploy
-28. candidate /health HTTP 200
-29. version = 0.2.5
-30. architecture = web-native
-31. automatic rollback if candidate health fails
-
-Only after production health succeeds is 0.2.5 LIVE.
+The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ---
 
-## 16. Development / deployment state
-
-Production remains on deployed 0.2.4 until 0.2.5 passes every gate.
-
-0.2.5 branch: 0.2.5.
+## 11. Merge / deploy state
 
 Required sequence:
 
-0.2.5 branch → PR CI green → merge main → post-merge main CI green → manual Namecheap deploy → production /health confirms 0.2.5.
+`0.2.6 branch → PR CI green → merge main → post-merge main CI green → manual Namecheap deploy → production health`
 
-Do NOT call 0.2.5 deployed merely because it exists in GitHub or main.
+Do not merge merely because individual fixes look correct.
+
+Do not redeploy 0.2.5 as a substitute for the 0.2.6 corrections.
+
+Do not call 0.2.6 LIVE until the deploy workflow succeeds and production `/health` returns:
+- HTTP 200;
+- `status = ok`;
+- `version = 0.2.6`;
+- `architecture = web-native`;
+- `reports = rich`.
+
+If candidate health fails, deployment must fail/rollback rather than silently accepting a degraded report backend.
 
 ---
 
-## 17. Mandatory update rule
+## 12. Mandatory update rule
 
-Every future release PR MUST update this file when VERSION, deployment state, architecture, workflows, jobs, price/history behavior, provider logic, SEC normalization, Discovery logic, analytical engines, reports/publication, security assumptions, visible-version policy, known production issue, or next-release work changes.
+Every future release PR MUST update this file in the same PR whenever VERSION, architecture,
+deployment state, workflow, jobs, provider/data logic, SEC normalization, Discovery, Fundamentals,
+analytical engines, Portfolio/Risk, report/publication, security, visible-version policy, release gates,
+or product workflow changes.
 
 If VERSION and State-Version differ, CI must fail.
 
-This file is the concise handoff; release-specific tests and PR evidence are the detailed audit.
+This file is the concise handoff; release tests and the Local/Web parity matrix contain detailed evidence.

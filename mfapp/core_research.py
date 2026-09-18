@@ -211,6 +211,40 @@ class Position(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
     security = db.relationship("Security", backref="positions")
 
+class PositionProfile(db.Model):
+    """Portfolio-only metadata kept independent from Research/Coverage."""
+    __tablename__ = "mf_position_profile"
+    __table_args__ = (UniqueConstraint("user_id", "security_id", name="uq_mf_position_profile_user_security"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    security_id = db.Column(db.Integer, db.ForeignKey("mf_security.id"), nullable=False, index=True)
+    side = db.Column(db.String(8), nullable=False, default="LONG")
+    tags = db.Column(db.Text, nullable=False, default="")
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class PortfolioRiskPlan(db.Model):
+    """Money-risk and position-sizing rules. Thesis invalidation remains in RiskPlan/Research."""
+    __tablename__ = "mf_portfolio_risk_plan"
+    __table_args__ = (UniqueConstraint("user_id", "security_id", name="uq_mf_portfolio_risk_user_security"),)
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    security_id = db.Column(db.Integer, db.ForeignKey("mf_security.id"), nullable=False, index=True)
+    risk_budget_pct = db.Column(db.Numeric(12, 6))
+    sizing_reference_price = db.Column(db.Numeric(24, 8))
+    event_liquidity_haircut_pct = db.Column(db.Numeric(12, 6))
+    max_position_pct = db.Column(db.Numeric(12, 6))
+    correlation_notes = db.Column(db.Text, nullable=False, default="")
+    kill_switch = db.Column(db.Text, nullable=False, default="")
+    entry_conditions = db.Column(db.Text, nullable=False, default="")
+    add_conditions = db.Column(db.Text, nullable=False, default="")
+    trim_conditions = db.Column(db.Text, nullable=False, default="")
+    exit_conditions = db.Column(db.Text, nullable=False, default="")
+    notes = db.Column(db.Text, nullable=False, default="")
+    updated_by = db.Column(db.Integer, db.ForeignKey("user.id"))
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class DecisionJournal(db.Model):
     __tablename__ = "mf_decision_journal"
     id = db.Column(db.Integer, primary_key=True)
@@ -226,3 +260,19 @@ class DecisionJournal(db.Model):
     evidence_against = db.Column(db.Text, nullable=False, default="")
     bias_notes = db.Column(db.Text, nullable=False, default="")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
+
+
+class DecisionOutcome(db.Model):
+    """Append-only outcome/post-mortem records; the original decision snapshot is never rewritten."""
+    __tablename__ = "mf_decision_outcome"
+    id = db.Column(db.Integer, primary_key=True)
+    journal_id = db.Column(db.Integer, db.ForeignKey("mf_decision_journal.id"), nullable=False, index=True)
+    coverage_id = db.Column(db.Integer, db.ForeignKey("mf_coverage.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    outcome = db.Column(db.Text, nullable=False, default="")
+    post_mortem = db.Column(db.Text, nullable=False, default="")
+    lessons = db.Column(db.Text, nullable=False, default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
+    journal = db.relationship("DecisionJournal", backref=db.backref("outcomes", lazy="select"))
+
+

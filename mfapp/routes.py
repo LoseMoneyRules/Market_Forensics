@@ -18,7 +18,7 @@ from .jobs import enqueue_job
 from .data_providers import latest_snapshot, provider_status
 from .models import AuditEvent, Invite, User
 from .core_models import (
-    Alert, BearCaseItem, Catalyst, Company, Coverage, DataQualityIssue, DecisionJournal,
+    Alert, BearCaseItem, Catalyst, Company, Coverage, DataQualityIssue, DecisionJournal, DecisionOutcome,
     Event, Expectation, FinancialFlow, FinancialPeriod, InvestmentState, Job,
     ManagementAssessment, MarketSnapshot, MonitoringHistory, MonitoringRule, Position, Provenance,
     Publication, RefreshRun, ResearchState, ResearchVersion, RiskPlan, Security,
@@ -33,13 +33,13 @@ from .research_synthesis import build_synthesis
 from .research_cache import latest_research_cache, latest_cache_map
 from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
-from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
+from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
 from .symbols import validate_ticker
 
 bp = Blueprint("web", __name__)
 
 SECTIONS = [
-    ("overview", "Overview"), ("business", "Business"), ("numbers", "Numbers"),
+    ("overview", "Overview"), ("business", "Business"), ("fundamentals", "Fundamentals"),
     ("expectations", "Expectations"), ("valuation", "Valuation"), ("bear-case", "Bear Case"),
     ("catalysts", "Catalysts"), ("financial-flows", "Financial Flows"),
     ("management", "Management"), ("tape", "Tape / Flows"), ("monitoring", "Monitoring"),
@@ -47,7 +47,7 @@ SECTIONS = [
 ]
 SECTION_KEYS = {key for key, _ in SECTIONS}
 RESEARCH_FIELDS = {
-    "business": "business", "numbers": "numbers", "expectations": "expectations",
+    "business": "business", "fundamentals": "numbers", "expectations": "expectations",
     "bear-case": "bear_case_summary", "catalysts": "catalysts_summary",
     "management": "management_summary", "tape": "tape_summary", "financial-flows": "flows_summary",
 }
@@ -525,24 +525,19 @@ def add_coverage():
     require_control_view(); ticker = str(request.form.get("ticker") or "").strip().upper(); validation = validate_ticker(ticker)
     if not validation.valid:
         flash(validation.message or "Ticker not found / symbol not recognized.", "error"); return redirect(request.referrer or url_for("web.dashboard"))
-    security = Security.query.filter(db.func.upper(Security.ticker) == ticker, Security.active.is_(True)).order_by(Security.is_primary.desc()).first()
-    if security:
-        existing = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
-        if existing:
-            if str(existing.status or "").upper() == "ARCHIVED":
-                existing.status = "MONITOR"
-                existing.research_state = existing.research_state if existing.research_state != "ARCHIVED" else "UNDER_REVIEW"
-                existing.updated_at = utcnow()
-                audit("coverage.restore", "coverage", existing.id, {"ticker": ticker})
-                db.session.commit()
-                flash(f"{ticker} restored to active Coverage.", "success")
-                return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
-            flash("Ticker already exists in Coverage.", "error"); return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
-    else:
-        company = Company(legal_name=validation.name or ticker, display_name=validation.name or ticker); db.session.add(company); db.session.flush()
-        security = Security(company_id=company.id, ticker=ticker, exchange=validation.exchange, security_type=validation.instrument_type or "COMMON_STOCK",
-                            currency=validation.currency or "USD", provider_symbol=ticker.replace(".", "-"), validation_source=validation.source, validated_at=utcnow())
-        db.session.add(security); db.session.flush()
+    security, _ = ensure_security_from_validation(validation)
+    existing = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if existing:
+        if str(existing.status or "").upper() == "ARCHIVED":
+            existing.status = "MONITOR"
+            existing.research_state = existing.research_state if existing.research_state != "ARCHIVED" else "UNDER_REVIEW"
+            existing.updated_at = utcnow()
+            audit("coverage.restore", "coverage", existing.id, {"ticker": ticker})
+            db.session.commit()
+            flash(f"{ticker} restored to active Coverage.", "success")
+            return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
+        flash("Ticker already exists in Coverage.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
     coverage = Coverage(user_id=g.user.id, security_id=security.id, status="MONITOR", research_state="UNRATED")
     db.session.add(coverage); db.session.flush(); ensure_workspace(coverage, g.user.id)
     audit("coverage.create", "coverage", coverage.id, {"ticker": ticker, "validation_source": validation.source}); db.session.commit()
@@ -598,6 +593,8 @@ def company_default(ticker):
 @login_required
 def company_section(ticker, section):
     require_control_view()
+    if section == "numbers":
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="fundamentals"), code=301)
     if section not in SECTION_KEYS: abort(404)
     ctx = _ctx(ticker); company = ctx["company"]; coverage = ctx["coverage"]; extra = {}
     cache = ctx.get("research_cache") or {}
@@ -628,7 +625,7 @@ def company_section(ticker, section):
             (ctx["decision_lenses"].get("implied_expectations") or {})
             or {"available": False, "classification": "CALCULATING" if ctx.get("cache_pending") else "UNAVAILABLE", "drivers": [], "errors": []}
         )
-    elif section == "numbers":
+    elif section == "fundamentals":
         financials = annual_rows(company.id, 15)
         quarterly_financials = quarterly_rows(company.id, 12)
         current_financial = current_row(company.id)
@@ -698,6 +695,7 @@ def company_section(ticker, section):
         })
     elif section == "journal":
         extra["journal_rows"] = DecisionJournal.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionJournal.created_at.desc()).all()
+        extra["journal_outcomes"] = DecisionOutcome.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionOutcome.created_at.desc()).all()
         extra["snapshots"] = Snapshot.query.filter_by(coverage_id=coverage.id).order_by(Snapshot.created_at.desc()).limit(20).all()
         extra["journal_prefill"] = journal_prefill(ctx["intelligence"], ctx["valuation"], ctx["model"])
     elif section == "audit":

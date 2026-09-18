@@ -107,9 +107,17 @@ def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None =
         "fcf_growth_pct": pct_change(current.get("fcf"), previous.get("fcf")),
         "net_debt": None,
         "net_debt_to_fcf": None,
+        "cfo_to_net_income": ratio(current.get("cfo"), current.get("net_income"), 1.0),
         "fcf_to_net_income": ratio(current.get("fcf"), current.get("net_income"), 1.0),
+        "inventory_to_revenue_pct": ratio(current.get("inventory"), revenue, 100.0),
+        "receivables_to_revenue_pct": ratio(current.get("receivables"), revenue, 100.0),
+        "share_count_growth_pct": pct_change(
+            current.get("diluted_shares") if current.get("diluted_shares") is not None else current.get("shares_outstanding"),
+            previous.get("diluted_shares") if previous.get("diluted_shares") is not None else previous.get("shares_outstanding"),
+        ),
         "asset_turnover": ratio(revenue, current.get("assets"), 1.0),
         "working_capital": None,
+        "roic_pct": None,
         "calculation_version": CALCULATION_VERSION,
     }
     if metrics["dso"] is not None and metrics["dio"] is not None and metrics["dpo"] is not None:
@@ -119,7 +127,21 @@ def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None =
         metrics["net_debt"] = (debt or 0.0) - (cash or 0.0)
         if fcf not in (None, 0) and fcf > 0: metrics["net_debt_to_fcf"] = metrics["net_debt"] / fcf
     rec, inv, pay = number(current.get("receivables")), number(current.get("inventory")), number(current.get("payables"))
-    if rec is not None or inv is not None or pay is not None: metrics["working_capital"] = (rec or 0.0) + (inv or 0.0) - (pay or 0.0)
+    if rec is not None or inv is not None or pay is not None:
+        metrics["working_capital"] = (rec or 0.0) + (inv or 0.0) - (pay or 0.0)
+
+    # Local V3.1.12 exposed ROIC. The web version keeps that signal only when
+    # every required filing fact is actually present; unlike the Local fallback,
+    # it does not invent a default tax rate when pretax/tax are missing.
+    operating_income = number(current.get("operating_income"))
+    pretax_income = number(current.get("pretax_income"))
+    income_tax = number(current.get("income_tax"))
+    equity = number(current.get("equity"))
+    if operating_income is not None and pretax_income not in (None, 0) and income_tax is not None and debt is not None and cash is not None and equity is not None:
+        tax_rate = max(0.0, min(0.35, income_tax / pretax_income))
+        invested_capital = debt + equity - cash
+        if invested_capital > 0:
+            metrics["roic_pct"] = operating_income * (1.0 - tax_rate) / invested_capital * 100.0
     return metrics
 
 

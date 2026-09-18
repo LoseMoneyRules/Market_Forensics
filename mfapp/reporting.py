@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import requests
 
 from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessment, Source
+from .current_financials import annual_rows, current_row
 from .extensions import db
 from .models import UserPreference
 from .management_promises import evaluate_promises
@@ -106,12 +107,31 @@ def _plain_research_lines(data: dict[str, Any]) -> list[str]:
         lines.append(f"• {row.get('label') or 'Evidence'} — {row.get('detail') or ''}")
     if data.get("mode") == "full":
         for label,key in [
-            ("BUSINESS","business"),("NUMBERS","numbers"),("EXPECTATIONS","expectations_summary"),
+            ("BUSINESS","business"),("FUNDAMENTALS","numbers"),("EXPECTATIONS","expectations_summary"),
             ("VALUATION","valuation_notes"),("BEAR CASE","bear_case_summary"),("CATALYSTS","catalysts_summary"),
             ("FINANCIAL FLOWS","flows_summary"),("MANAGEMENT","management_summary"),("TAPE / FLOWS","tape_summary"),
             ("RESEARCH INVALIDATION","risk_summary"),
         ]:
             lines += ["", label, _txt(data.get(key)) or "—"]
+        fundamentals=data.get("fundamentals_history") or []
+        if fundamentals:
+            story.append(Paragraph("Fundamentals history",styles["MFH2"]))
+            rows=[["Period","Revenue","Op %","FCF","Inv/Rev","Rec/Rev","CFO/NI","Shares YoY"]]
+            for row in fundamentals[-8:]:
+                rows.append([
+                    str(row.get("period") or "—"),
+                    _money(row.get("revenue")),
+                    _pct(row.get("operating_margin_pct")),
+                    _money(row.get("fcf")),
+                    _pct(row.get("inventory_to_revenue_pct")),
+                    _pct(row.get("receivables_to_revenue_pct")),
+                    (f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"),
+                    _pct(row.get("share_count_growth_pct")),
+                ])
+            ft=Table(rows,colWidths=[.55*inch,1.0*inch,.6*inch,.95*inch,.75*inch,.75*inch,.7*inch,.75*inch])
+            ft.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.5)]))
+            story += [ft,Spacer(1,6)]
+
         tri=data.get("triangulation") or {}
         if tri.get("available"):
             lines += ["", "AUTOMATIC TRIANGULATION", f"{tri.get('method')} · SIC {tri.get('sic') or '—'}"]
@@ -138,7 +158,7 @@ def _pdf_escape(text: str) -> str:
 
 def _fallback_pdf(lines: list[str], *, landscape_page: bool = False) -> BytesIO:
     width,height=(792,612) if landscape_page else (612,792)
-    margin=42; font_size=9; leading=13
+    margin=42; font_size=11; leading=15
     usable=max(20,int((height-2*margin)/leading))
     wrapped: list[str] = []
     wrap_width=125 if landscape_page else 92
@@ -182,7 +202,7 @@ def _fallback_docx(lines: list[str]) -> BytesIO:
         rpr="<w:rPr><w:b/></w:rPr>" if bold else ""
         return f'<w:p><w:r>{rpr}<w:t xml:space="preserve">{safe}</w:t></w:r></w:p>'
     body=[]
-    heading_words={"RESEARCH LENSES","THESIS","COUNTER-EVIDENCE","MARKET VIEW","OUR VARIANT","EVIDENCE FOR","EVIDENCE AGAINST","BUSINESS","NUMBERS","EXPECTATIONS","VALUATION","BEAR CASE","CATALYSTS","FINANCIAL FLOWS","MANAGEMENT","TAPE / FLOWS","RESEARCH INVALIDATION","AUTOMATIC TRIANGULATION","MANAGEMENT PROMISES VS ACTUALS","SOURCES"}
+    heading_words={"RESEARCH LENSES","THESIS","COUNTER-EVIDENCE","MARKET VIEW","OUR VARIANT","EVIDENCE FOR","EVIDENCE AGAINST","BUSINESS","FUNDAMENTALS","EXPECTATIONS","VALUATION","BEAR CASE","CATALYSTS","FINANCIAL FLOWS","MANAGEMENT","TAPE / FLOWS","RESEARCH INVALIDATION","AUTOMATIC TRIANGULATION","MANAGEMENT PROMISES VS ACTUALS","SOURCES"}
     for idx,line in enumerate(lines):
         body.append(p(line, bold=(idx<3 or str(line).upper() in heading_words)))
     document='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+        ''.join(body)+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>'
@@ -305,6 +325,9 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
     tape = dict(cache.get("tape") or {})
     implied = dict((decision_lenses.get("implied_expectations") or {}))
 
+    annual_fundamentals = annual_rows(company.id, 8)
+    current_fundamental = current_row(company.id)
+
     branding = dict(branding or {})
     return {
         "branding": {
@@ -314,6 +337,27 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
             "logo_url": str(branding.get("logo_url") or ""),
         },
         "mode": "executive" if str(mode).lower() == "executive" else "full",
+        "fundamentals_history": [{
+            "period": f"FY{row.get('fiscal_year')}",
+            "revenue": row.get("revenue"),
+            "operating_margin_pct": (row.get("metrics") or {}).get("operating_margin_pct"),
+            "fcf": row.get("fcf"),
+            "fcf_margin_pct": (row.get("metrics") or {}).get("fcf_margin_pct"),
+            "inventory_to_revenue_pct": (row.get("metrics") or {}).get("inventory_to_revenue_pct"),
+            "receivables_to_revenue_pct": (row.get("metrics") or {}).get("receivables_to_revenue_pct"),
+            "cfo_to_net_income": (row.get("metrics") or {}).get("cfo_to_net_income"),
+            "share_count_growth_pct": (row.get("metrics") or {}).get("share_count_growth_pct"),
+            "roic_pct": (row.get("metrics") or {}).get("roic_pct"),
+        } for row in reversed(annual_fundamentals)],
+        "current_fundamentals": {
+            "period": (current_fundamental or {}).get("period_label"),
+            "revenue": (current_fundamental or {}).get("revenue"),
+            "operating_margin_pct": ((current_fundamental or {}).get("metrics") or {}).get("operating_margin_pct"),
+            "fcf": (current_fundamental or {}).get("fcf"),
+            "fcf_margin_pct": ((current_fundamental or {}).get("metrics") or {}).get("fcf_margin_pct"),
+            "cfo_to_net_income": ((current_fundamental or {}).get("metrics") or {}).get("cfo_to_net_income"),
+            "roic_pct": ((current_fundamental or {}).get("metrics") or {}).get("roic_pct"),
+        },
         "ticker": security.ticker,
         "company": company.display_name,
         "sector": company.sector or "",
@@ -523,7 +567,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     p = doc.add_paragraph(subtitle)
-    p.runs[0].font.size = Pt(10)
+    p.runs[0].font.size = Pt(11)
 
     table = doc.add_table(rows=2, cols=6)
     table.style = "Table Grid"
@@ -577,12 +621,32 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
 
     if data["mode"] == "full":
         for label,key in [
-            ("Business","business"),("Numbers","numbers"),("Expectations","expectations_summary"),
+            ("Business","business"),("Fundamentals","numbers"),("Expectations","expectations_summary"),
             ("Valuation","valuation_notes"),("Bear Case","bear_case_summary"),("Catalysts","catalysts_summary"),
             ("Financial Flows","flows_summary"),("Management","management_summary"),("Tape / Flows","tape_summary"),
             ("Research invalidation / risk summary","risk_summary"),
         ]:
             _docx_add_heading(doc,label,1); _docx_add_text(doc,data[key])
+
+        fundamentals = data.get("fundamentals_history") or []
+        if fundamentals:
+            _docx_add_heading(doc, "Fundamentals history", 1)
+            tf = doc.add_table(rows=1, cols=8); tf.style = "Table Grid"
+            for i,v in enumerate(["Period","Revenue","Op margin","FCF","Inv/Rev","Rec/Rev","CFO/NI","Shares YoY"]):
+                tf.cell(0,i).text = v
+            for row in fundamentals[-8:]:
+                cells = tf.add_row().cells
+                vals = [
+                    row.get("period") or "—",
+                    _money(row.get("revenue")),
+                    _pct(row.get("operating_margin_pct")),
+                    _money(row.get("fcf")),
+                    _pct(row.get("inventory_to_revenue_pct")),
+                    _pct(row.get("receivables_to_revenue_pct")),
+                    (f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"),
+                    _pct(row.get("share_count_growth_pct")),
+                ]
+                for i,v in enumerate(vals): cells[i].text = str(v)
 
         if data["expectations"]:
             _docx_add_heading(doc,"Expectation variants",1)
@@ -640,8 +704,8 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     doc=SimpleDocTemplate(out,pagesize=LETTER,rightMargin=.55*inch,leftMargin=.55*inch,topMargin=.5*inch,bottomMargin=.5*inch)
     styles=getSampleStyleSheet()
     styles.add(ParagraphStyle(name="MFTitle",parent=styles["Title"],fontSize=18,leading=21,textColor=colors.HexColor("#0b1f33"),alignment=TA_LEFT,spaceAfter=6))
-    styles.add(ParagraphStyle(name="MFH2",parent=styles["Heading2"],fontSize=11,leading=14,textColor=colors.HexColor("#1f4e79"),spaceBefore=8,spaceAfter=4))
-    styles.add(ParagraphStyle(name="MFBody",parent=styles["BodyText"],fontSize=8.7,leading=11,spaceAfter=5))
+    styles.add(ParagraphStyle(name="MFH2",parent=styles["Heading2"],fontSize=13,leading=16,textColor=colors.HexColor("#1f4e79"),spaceBefore=8,spaceAfter=4))
+    styles.add(ParagraphStyle(name="MFBody",parent=styles["BodyText"],fontSize=10.5,leading=14,spaceAfter=5))
     brand = data.get("branding") or {}
     story=[]
     logo = _safe_logo(str(brand.get("logo_url") or ""))
@@ -657,7 +721,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
         [_money(data["market_price"]),_money(data["bear"]),_money(data["base"]),_money(data["bull"]),_pct(data["base_gap_pct"]),data["validation_state"]],
     ]
     t=Table(grid,colWidths=[1.05*inch]*6)
-    t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#b8c4ce")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5)]))
+    t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#b8c4ce")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9.5),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5)]))
     story += [t,Spacer(1,8)]
     chart = _valuation_chart_png(data)
     story += [RLImage(chart, width=6.6*inch, height=1.52*inch), Spacer(1,6)]
@@ -671,7 +735,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     story.append(Paragraph("Research lenses",styles["MFH2"]))
     lens_rows=[["Lens","State"]]+[[str(r.get("label") or r.get("key") or ""),str(r.get("state") or "")] for r in (data.get("decision_lenses") or [])]
     lens_table=Table(lens_rows,colWidths=[2.6*inch,3.9*inch])
-    lens_table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8)]))
+    lens_table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9.5)]))
     story += [lens_table,Spacer(1,6)]
     implied=data.get("implied_expectations") or {}
     if implied.get("available"):
@@ -686,7 +750,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
                 str(row.get("read") or ""),
             ])
         tt=Table(rows,colWidths=[2.35*inch,1.35*inch,1.35*inch,1.45*inch])
-        tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7.5)]))
+        tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9)]))
         story += [tt,Spacer(1,6)]
 
     story.append(Paragraph("Evidence for / against",styles["MFH2"]))
@@ -697,7 +761,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
 
     if data["mode"] == "full":
         for label,key in [
-            ("Business","business"),("Numbers","numbers"),("Expectations","expectations_summary"),
+            ("Business","business"),("Fundamentals","numbers"),("Expectations","expectations_summary"),
             ("Valuation","valuation_notes"),("Bear Case","bear_case_summary"),("Catalysts","catalysts_summary"),
             ("Financial Flows","flows_summary"),("Management","management_summary"),("Tape / Flows","tape_summary"),
             ("Research invalidation / risk summary","risk_summary"),
@@ -718,7 +782,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
                 promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
                 rows.append([str(row.get("target_year") or ""),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")])
             tt=Table(rows,colWidths=[.55*inch,1.45*inch,1.9*inch,1.15*inch,.85*inch])
-            tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7)]))
+            tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9)]))
             story += [tt,Spacer(1,6)]
 
         tape=data.get("tape_metrics") or {}
@@ -772,7 +836,7 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     )
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="MFDiscTitle", parent=styles["Title"], fontSize=17, leading=20, textColor=colors.HexColor("#0b1f33"), alignment=TA_LEFT, spaceAfter=5))
-    styles.add(ParagraphStyle(name="MFDiscBody", parent=styles["BodyText"], fontSize=7.5, leading=9.5, spaceAfter=3))
+    styles.add(ParagraphStyle(name="MFDiscBody", parent=styles["BodyText"], fontSize=9.5, leading=12, spaceAfter=3))
     story = []
     logo = _safe_logo(str(branding.get("logo_url") or ""))
     if logo:
@@ -792,7 +856,7 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
         ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),
         ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),
         ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-        ("FONTSIZE",(0,0),(-1,-1),6.8),
+        ("FONTSIZE",(0,0),(-1,-1),8.8),
         ("GRID",(0,0),(-1,-1),.25,colors.HexColor("#c7d1da")),
         ("VALIGN",(0,0),(-1,-1),"TOP"),
         ("LEFTPADDING",(0,0),(-1,-1),3),

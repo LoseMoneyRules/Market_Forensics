@@ -61,7 +61,7 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
             bool(research and _text(research.thesis) and _text(research.counter_evidence) and _text(research.variant_us)),
         ),
         _gate("Business", "business", {"text": _text(research.business if research else ""), "company": company.display_name if company else ""}, bool(research and _text(research.business))),
-        _gate("Numbers", "numbers", {"annual_periods": annual_count, "quarter_periods": quarter_count, "text": _text(research.numbers if research else "")}, annual_count >= 2 and bool(research and _text(research.numbers))),
+        _gate("Fundamentals", "fundamentals", {"annual_periods": annual_count, "quarter_periods": quarter_count, "text": _text(research.numbers if research else "")}, annual_count >= 2 and bool(research and _text(research.numbers))),
         _gate("Expectations", "expectations", {"structured": expectation_count, "text": _text(research.expectations if research else ""), "base_inputs": (scenario_rows.get("BASE").inputs if scenario_rows.get("BASE") else {})}, expectation_count > 0 or bool(research and _text(research.expectations))),
         _gate("Valuation", "valuation", {"bear": valuation.get("bear"), "base": valuation.get("base"), "bull": valuation.get("bull"), "quality": ((model.assumptions or {}).get("latest_engine_result") or {}).get("quality") if model else None}, all(valuation.get(k) is not None for k in ("bear", "base", "bull"))),
         _gate("Bear Case", "bear-case", {"structured": bear_count, "text": _text(research.bear_case_summary if research else "")}, bear_count > 0 or bool(research and _text(research.bear_case_summary))),

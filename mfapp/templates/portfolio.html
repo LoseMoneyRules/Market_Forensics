@@ -3,33 +3,53 @@
 {% block content %}
 <section class="page">
   <div class="page-head split">
-    <div><p class="eyebrow">PRIVATE CAPITAL</p><h1>Portfolio</h1><p>Research decides whether an idea deserves capital. Portfolio decides how much capital and how it is managed.</p></div>
+    <div>
+      <p class="eyebrow">PRIVATE CAPITAL</p>
+      <h1>Portfolio</h1>
+      <p>Your real holdings are independent from Research. Add a position first if needed; attach the thesis later.</p>
+    </div>
   </div>
+
+  <form class="panel stack portfolio-position-editor" method="post" action="{{ url_for('web.save_portfolio_position') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="panel-head">
+      <div><p class="eyebrow">POSITION</p><h2>Add / edit real position</h2><p class="muted">Ticker validation is mandatory. A Research file is not required.</p></div>
+      <button class="button primary" type="submit">Save position</button>
+    </div>
+    <div class="form-grid four">
+      <label>Ticker<input name="ticker" maxlength="16" autocomplete="off" required placeholder="NKE"></label>
+      <label>Side<select name="side"><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select></label>
+      <label>Shares<input name="shares" inputmode="decimal" required placeholder="100"></label>
+      <label>Average cost<input name="avg_cost" inputmode="decimal" required placeholder="50.00"></label>
+    </div>
+    <label>Exposure tags<input name="tags" placeholder="consumer, China, rates, AI capex"></label>
+    <label>Private position notes<textarea name="notes" rows="3"></textarea></label>
+  </form>
+
   <div class="kpi-grid">
-    <div class="kpi"><span>Market value</span><strong>&#36;{{ '{:,.0f}'.format(totals['market_value']) }}</strong></div>
+    <div class="kpi"><span>Gross value</span><strong>&#36;{{ '{:,.0f}'.format(totals['market_value']) }}</strong></div>
+    <div class="kpi"><span>Long value</span><strong>&#36;{{ '{:,.0f}'.format(totals['long_value']) }}</strong></div>
+    <div class="kpi"><span>Short value</span><strong>&#36;{{ '{:,.0f}'.format(totals['short_value']) }}</strong></div>
+    <div class="kpi"><span>Net exposure</span><strong>{{ '+' if totals['net_exposure'] >= 0 else '' }}&#36;{{ '{:,.0f}'.format(totals['net_exposure']) }}</strong></div>
     <div class="kpi"><span>Total P/L</span><strong>{{ '+' if totals['pnl'] >= 0 else '' }}&#36;{{ '{:,.0f}'.format(totals['pnl']) }}</strong></div>
-    <div class="kpi"><span>Top position</span><strong>{{ '%.1f'|format(totals['top_weight_pct']) }}%</strong><small>Current concentration</small></div>
-    <div class="kpi"><span>Validated positions</span><strong>{{ totals['validated_positions'] }}/{{ totals['positions'] }}</strong><small>{{ '%.0f'|format(totals['validated_pct']) }}%</small></div>
-    <div class="kpi"><span>Concentration HHI</span><strong>{{ '%.3f'|format(totals['concentration_hhi']) }}</strong><small>0 diversified → 1 concentrated</small></div>
+    <div class="kpi"><span>Top position</span><strong>{{ '%.1f'|format(totals['top_weight_pct']) }}%</strong><small>Gross portfolio weight</small></div>
   </div>
+
   {% if totals.risk_breaches %}
   <div class="notice amber"><strong>POSITION LIMIT BREACH.</strong> {% for b in totals.risk_breaches %}{{ b.ticker }} {{ '%.1f'|format(b.weight_pct) }}% vs max {{ '%.1f'|format(b.max_position_pct) }}%{% if not loop.last %} · {% endif %}{% endfor %}</div>
-  {% endif %}
-  {% if totals.correlations %}
-  <div class="panel">
-    <div class="panel-head"><div><p class="eyebrow">PORTFOLIO RISK</p><h2>Highest pairwise correlations</h2><p class="muted">Based on overlapping daily split-adjusted returns in stored price history. Correlation is descriptive, not a position instruction.</p></div></div>
-    <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Pair</th><th>Correlation</th><th>Samples</th></tr></thead><tbody>{% for pair in totals.correlations[:10] %}<tr><td><strong>{{ pair.left }} / {{ pair.right }}</strong></td><td>{{ '%+.2f'|format(pair.correlation) }}</td><td>{{ pair.samples }}</td></tr>{% endfor %}</tbody></table></div>
-  </div>
   {% endif %}
 
   <div class="table-card scroll">
     <table class="data-table numeric">
-      <thead><tr><th>Security</th><th>Position state</th><th>Validation</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>Weight</th><th>P/L</th><th>Base</th><th>Risk</th></tr></thead>
+      <thead>
+        <tr><th>Security</th><th>Side</th><th>Research</th><th>Validation</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>Weight</th><th>P/L</th><th>Base</th><th>Risk / Position</th><th>Manage</th></tr>
+      </thead>
       <tbody>
       {% for row in rows %}
       <tr>
         <td><a class="ticker-link" href="{{ url_for('web.portfolio_security', ticker=row.security.ticker) }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td>
-        <td>{{ row.investment.state if row.investment else 'NO_POSITION' }}</td>
+        <td>{{ row.side }}</td>
+        <td>{{ row.coverage.status if row.coverage else 'NOT STARTED' }}</td>
         <td><span class="status-chip">{{ row.readiness.validation.state }}</span></td>
         <td>{{ '{:,.3f}'.format(row.position.shares|float) }}</td>
         <td>&#36;{{ '{:,.2f}'.format(row.position.avg_cost|float) }}</td>
@@ -38,13 +58,43 @@
         <td>{% if row.weight_pct is not none %}{{ '%.1f'|format(row.weight_pct) }}%{% else %}—{% endif %}</td>
         <td class="{{ 'ok-text' if row.pnl is not none and row.pnl >= 0 else 'danger-text' if row.pnl is not none else '' }}">{% if row.pnl is not none %}{{ '+' if row.pnl >= 0 else '' }}&#36;{{ '{:,.0f}'.format(row.pnl) }}{% else %}—{% endif %}</td>
         <td>{% if row.valuation.base is not none %}&#36;{{ '%.2f'|format(row.valuation.base) }}{% else %}—{% endif %}</td>
-        <td>{% if row.risk and row.risk.max_position_pct is not none %}max {{ '%.1f'|format(row.risk.max_position_pct|float) }}%{% else %}<span class="muted">not set</span>{% endif %}</td>
+        <td>
+          {% if row.risk %}
+            max {{ '%.1f'|format(row.risk.max_position_pct|float) }}%
+            {% if row.sizing.suggested_position_pct is not none %}<small class="block">sizing {{ '%.1f'|format(row.sizing.suggested_position_pct) }}%</small>{% endif %}
+          {% else %}<span class="muted">not set</span>{% endif %}
+        </td>
+        <td>
+          <div class="button-row compact">
+            <a class="button micro" href="{{ url_for('web.portfolio_security', ticker=row.security.ticker) }}">Open</a>
+            <form method="post" action="{{ url_for('web.remove_position', ticker=row.security.ticker) }}" onsubmit="return confirm('Remove {{ row.security.ticker }} from Portfolio? Research and risk history will be preserved.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="button micro danger" type="submit">Remove</button>
+            </form>
+          </div>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="11" class="empty-cell">No private positions stored. Open a researched security from Coverage and add it from its Portfolio page after review.</td></tr>
+      <tr><td colspan="13" class="empty-cell">No positions recorded. Add a real holding above — no thesis is required first.</td></tr>
       {% endfor %}
       </tbody>
     </table>
+  </div>
+
+  <div class="two-col">
+    <div class="panel">
+      <div class="panel-head"><div><p class="eyebrow">EXPOSURE</p><h2>Manual factor map</h2><p class="muted">Tags expose shared drivers that sector labels can hide.</p></div></div>
+      {% if totals.factor_exposure %}
+      <div class="table-card embedded"><table class="data-table numeric"><thead><tr><th>Factor</th><th>Gross value</th><th>Share of tagged gross</th></tr></thead><tbody>{% for item in totals.factor_exposure %}<tr><td>{{ item.tag }}</td><td>&#36;{{ '{:,.0f}'.format(item.market_value) }}</td><td>{{ '%.1f'|format(item.gross_pct) }}%</td></tr>{% endfor %}</tbody></table></div>
+      {% else %}<p class="muted">Add exposure tags to positions to build this map.</p>{% endif %}
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div><p class="eyebrow">PORTFOLIO RISK</p><h2>Highest pairwise correlations</h2><p class="muted">Stored split-adjusted daily returns. Descriptive only.</p></div></div>
+      {% if totals.correlations %}
+      <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Pair</th><th>Correlation</th><th>Samples</th></tr></thead><tbody>{% for pair in totals.correlations[:10] %}<tr><td>{{ pair.left }} / {{ pair.right }}</td><td>{{ '%+.2f'|format(pair.correlation) }}</td><td>{{ pair.samples }}</td></tr>{% endfor %}</tbody></table></div>
+      {% else %}<p class="muted">Correlation analytics will appear after enough price history is stored.</p>{% endif %}
+    </div>
   </div>
 </section>
 {% endblock %}

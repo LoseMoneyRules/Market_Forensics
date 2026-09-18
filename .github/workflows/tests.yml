@@ -44,7 +44,7 @@ jobs:
           if [ -z "${MF_ENCRYPTION_KEY:-}" ]; then export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"; fi
           pytest -q
 
-      - name: Production-minimal startup and report fallback smoke
+      - name: Production-minimal startup and rich report smoke
         run: |
           set -euo pipefail
           python -m venv /tmp/mf-prod-min
@@ -67,7 +67,7 @@ jobs:
           assert response.status_code == 200, response.data
           release_version = open("VERSION", encoding="utf-8").read().strip()
           assert response.get_json()["version"] == release_version
-          assert report_backend_status()["backend"] == "stdlib-fallback"
+          assert report_backend_status()["backend"] == "rich"
           data = {
               "branding": {"title":"Market Forensics","footer":"Lose Money Rules"},
               "ticker":"TEST","company":"Production Minimal Smoke","action":"DATA REVIEW",
@@ -79,4 +79,20 @@ jobs:
           assert render_pdf(data).getvalue().startswith(b"%PDF-")
           assert render_docx(data).getvalue().startswith(b"PK")
           print("production-minimal smoke ok")
+          PY
+
+      - name: Self-contained reporting vendor smoke
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mf-report-vendor
+          python -m pip install -q --no-cache-dir --no-compile --target /tmp/mf-report-vendor -r requirements-reporting.txt
+          test -d /tmp/mf-report-vendor/docx
+          test -d /tmp/mf-report-vendor/reportlab
+          PYTHONPATH=/tmp/mf-report-vendor python -S - <<'PY'
+          import docx
+          import reportlab
+          from docx import Document
+          from reportlab.pdfgen import canvas
+          assert Document is not None and canvas is not None
+          print("self-contained report vendor ok")
           PY

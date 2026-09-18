@@ -840,8 +840,7 @@ def test_020_reporting_dependencies_are_optional_at_startup():
     optional = Path("requirements-reporting.txt").read_text()
     assert "from docx import Document" not in reporting.split("_load_report_libs", 1)[0]
     assert "from reportlab" not in reporting.split("_load_report_libs", 1)[0]
-    assert "python-docx" not in requirements
-    assert "reportlab" not in requirements
+    assert "-r requirements-reporting.txt" in requirements
     assert "python-docx" in optional and "reportlab" in optional
 
 

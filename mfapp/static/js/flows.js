@@ -83,7 +83,7 @@
     const layout=graphLayout(edges,nodeRows);
     if(!layout.names.length)return false;
     const nodeMap=new Map(nodeRows.map(n=>[n.label,n]));
-    const nodeW=150,nodeH=52,top=14,side=10,rowGap=12;
+    const nodeW=150,nodeH=68,top=14,side=10,rowGap=12;
     const visible=Math.floor(root.getBoundingClientRect().width||0);
     const targetWidth=Math.max(720,visible>0?visible-24:720);
     const colGap=layout.maxDepth>0?Math.max(170,(targetWidth-side*2-nodeW)/layout.maxDepth):0;
@@ -92,7 +92,7 @@
     const height=Math.max(150,top*2+maxRows*nodeH+(maxRows-1)*rowGap);
     const svg=makeSvg('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':(data.flow_type||'Financial')+' flow '+(data.period||'')});
     svg.classList.add('flow-svg');
-    const labelFont='11',valueFont='12',labelLine='13';
+    const labelFont='13',valueFont='14',labelLine='15';
     const pos=new Map();
     layout.columns.forEach((col,ci)=>{
       const total=col.length*nodeH+Math.max(0,col.length-1)*rowGap;

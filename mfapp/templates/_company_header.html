@@ -3,9 +3,9 @@
     <div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>{{ security.exchange or 'Validated security' }}</span></div>
     <h1>{{ company.display_name }}</h1>
     <div class="company-states">
-      <span>Research <strong>{{ coverage.research_state if coverage is defined else '—' }}</strong></span>
-      <span>Coverage <strong>{{ coverage.status if coverage is defined else '—' }}</strong></span>
-      <span>Process <strong>{% if readiness is defined %}{{ readiness.done }}/{{ readiness.total }} approved{% else %}—{% endif %}</strong></span>
+      <span>Research <strong>{{ coverage.research_state if coverage is defined and coverage else 'NOT STARTED' }}</strong></span>
+      <span>Coverage <strong>{{ coverage.status if coverage is defined and coverage else 'PORTFOLIO ONLY' }}</strong></span>
+      <span>Process <strong>{% if readiness is defined and readiness %}{{ readiness.done }}/{{ readiness.total }} approved{% else %}—{% endif %}</strong></span>
     </div>
   </div>
   <div class="company-actions">
