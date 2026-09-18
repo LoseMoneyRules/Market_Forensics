@@ -147,24 +147,71 @@ def market_scan(user_id: int) -> dict[str, Any]:
     for symbol, item in by_symbol.items():
         context = dict(local_context.get(symbol) or {})
         local = list(context.get("discovery_labels") or [])
+        move = _n(item.get("move_pct"))
+        base_gap = _n(context.get("base_gap_pct"))
+        reasons: list[str] = []
+        if item.get("activity_rank"):
+            reasons.append(f"Most active #{item['activity_rank']}")
+        if move is not None:
+            reasons.append(f"Market mover {move:+.1f}%")
 
-        # Market-only lens: this does not assert a short thesis; it promotes a
-        # large downside dislocation into the research queue.
-        if item.get("move_pct") is not None and float(item["move_pct"]) <= -8:
-            local.append("POTENTIAL SHORT")
+        side = "RESEARCH"
+        target_status = "TARGET UNKNOWN"
+        if context.get("cache_ready") and base_gap is not None:
+            reasons.append(f"Stored Base gap {base_gap:+.1f}%")
+            if abs(base_gap) <= 7.5:
+                side = "NO EDGE"
+                target_status = "AT / NEAR BASE"
+                item["scan_score"] = max(0.0, item["scan_score"] - 30.0)
+                local.append("AT / NEAR BASE")
+            elif base_gap >= 15.0:
+                side = "LONG"
+                target_status = "ROOM TO BASE"
+                item["scan_score"] += min(20.0, base_gap / 3.0)
+                local.append("LONG VALUE GAP")
+            elif base_gap <= -15.0:
+                side = "SHORT"
+                target_status = "ABOVE BASE"
+                item["scan_score"] += min(20.0, abs(base_gap) / 3.0)
+                local.append("SHORT VALUE GAP")
+            elif base_gap > 0:
+                side = "LONG WATCH"
+                target_status = "LIMITED ROOM"
+            else:
+                side = "SHORT WATCH"
+                target_status = "LIMITED ROOM"
+        elif move is not None and move <= -8.0:
+            side = "LONG LEAD"
+            local.append("DOWNSIDE DISLOCATION")
+            reasons.append("Needs intrinsic-value check")
+        elif move is not None and move >= 8.0:
+            side = "SHORT LEAD"
+            local.append("UPSIDE DISLOCATION")
+            reasons.append("Needs overvaluation check")
 
         item["known_context"] = context
         item["in_coverage"] = bool(context)
+        item["base_gap_pct"] = base_gap
+        item["research_side"] = side
+        item["target_status"] = target_status
+        item["why_found"] = reasons
         item["lenses"] = list(dict.fromkeys(local + item["lenses"]))
         if local:
-            item["scan_score"] += min(25.0, len(local) * 6.0)
+            item["scan_score"] += min(18.0, len(local) * 4.0)
         if not context:
             item["lenses"].append("DEEP RESEARCH REQUIRED")
         elif not context.get("cache_ready"):
             item["lenses"].append("RESEARCH CACHE UPDATING")
-        item["scan_score"] = round(item["scan_score"], 2)
+        item["scan_score"] = round(max(0.0, item["scan_score"]), 2)
 
-    candidates = sorted(by_symbol.values(), key=lambda row: row["scan_score"], reverse=True)[:120]
+    side_order = {
+        "LONG": 0, "SHORT": 0, "LONG LEAD": 1, "SHORT LEAD": 1,
+        "LONG WATCH": 2, "SHORT WATCH": 2, "RESEARCH": 3, "NO EDGE": 4,
+    }
+    candidates = sorted(
+        by_symbol.values(),
+        key=lambda row: (side_order.get(row.get("research_side"), 3), -row["scan_score"], row["ticker"]),
+    )[:120]
     return {
         "configured": True,
         "candidates": candidates,
@@ -172,6 +219,9 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "universe_source": "Alpaca most-active + market-movers screeners",
         "candidate_count": len(candidates),
         "known_enriched": sum(1 for row in candidates if row.get("known_context")),
+        "long_count": sum(1 for row in candidates if str(row.get("research_side") or "").startswith("LONG")),
+        "short_count": sum(1 for row in candidates if str(row.get("research_side") or "").startswith("SHORT")),
+        "no_edge_count": sum(1 for row in candidates if row.get("research_side") == "NO EDGE"),
         "enrichment_mode": "BATCH_CACHE_ONLY",
     }
 

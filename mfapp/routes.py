@@ -389,7 +389,18 @@ def dashboard():
     rows, cache_building = _cached_coverage_rows(g.user.id)
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
-    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts, cache_building=cache_building)
+    coverage_ids = [alert.coverage_id for alert in alerts if alert.coverage_id]
+    ticker_by_coverage = {}
+    if coverage_ids:
+        mapped = (
+            db.session.query(Coverage.id, Security.ticker)
+            .join(Security, Coverage.security_id == Security.id)
+            .filter(Coverage.id.in_(coverage_ids))
+            .all()
+        )
+        ticker_by_coverage = {int(coverage_id): str(ticker).upper() for coverage_id, ticker in mapped}
+    alert_items = [{"alert": alert, "ticker": ticker_by_coverage.get(alert.coverage_id)} for alert in alerts]
+    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts, alert_items=alert_items, cache_building=cache_building)
 
 
 @bp.get("/discovery")
