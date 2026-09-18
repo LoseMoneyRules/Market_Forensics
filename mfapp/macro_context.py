@@ -18,7 +18,7 @@ SERIES = {
     "credit": {"id": "BAMLH0A0HYM2", "label": "US high-yield OAS", "unit": "%", "mode": "LEVEL"},
     "usd": {"id": "DTWEXBGS", "label": "Trade-weighted USD", "unit": "index", "mode": "INDEX"},
     "oil": {"id": "DCOILWTICO", "label": "WTI crude", "unit": "$/bbl", "mode": "INDEX"},
-    "inflation": {"id": "CPIAUCSL", "label": "US CPI", "unit": "index", "mode": "INDEX"},
+    "inflation": {"id": "CPIAUCSL", "label": "US CPI inflation", "unit": "% YoY", "mode": "YOY_RATE"},
     "industrial": {"id": "INDPRO", "label": "US industrial production", "unit": "index", "mode": "INDEX"},
     "consumer": {"id": "RSAFS", "label": "US retail sales", "unit": "$m", "mode": "INDEX"},
 }
@@ -28,6 +28,8 @@ DEFAULT_EXPOSURES = {
     "credit": "FALLING",
     "industrial": "RISING",
 }
+
+_GLOBAL_MACRO_CACHE: dict[str, Any] = {"fetched_at": None, "factors": None, "errors": None}
 
 EXPOSURE_RULES = [
     (("apparel", "footwear", "retail", "consumer", "restaurant", "beverage"),
@@ -59,7 +61,7 @@ def _n(value: Any) -> float | None:
     return out if isfinite(out) else None
 
 
-def _fetch_series(series_id: str) -> dict[str, Any]:
+def _fetch_series(series_id: str, mode: str = "INDEX") -> dict[str, Any]:
     response = requests.get(
         FRED_GRAPH,
         params={"id": series_id},
@@ -79,10 +81,34 @@ def _fetch_series(series_id: str) -> dict[str, Any]:
 
     latest_date, latest = rows[-1]
     latest_day = datetime.fromisoformat(latest_date).date()
+
+    def point_at_or_before(day) -> tuple[str, float]:
+        eligible = [(d, v) for d, v in rows if datetime.fromisoformat(d).date() <= day]
+        return eligible[-1] if eligible else rows[0]
+
     def prior_value(days: int) -> float:
-        cutoff = latest_day - timedelta(days=days)
-        eligible = [(d, v) for d, v in rows if datetime.fromisoformat(d).date() <= cutoff]
-        return eligible[-1][1] if eligible else rows[0][1]
+        return point_at_or_before(latest_day - timedelta(days=days))[1]
+
+    if mode == "YOY_RATE":
+        def yoy_at(day) -> float | None:
+            d0, v0 = point_at_or_before(day)
+            base_day = datetime.fromisoformat(d0).date() - timedelta(days=365)
+            _, v1 = point_at_or_before(base_day)
+            return ((v0 / v1 - 1.0) * 100.0) if v1 not in (None, 0) else None
+
+        latest_yoy = yoy_at(latest_day)
+        prior_3_yoy = yoy_at(latest_day - timedelta(days=90))
+        prior_12_yoy = yoy_at(latest_day - timedelta(days=365))
+        return {
+            "series_id": series_id,
+            "as_of": latest_date,
+            "value": latest_yoy,
+            "change_3m": (latest_yoy - prior_3_yoy) if latest_yoy is not None and prior_3_yoy is not None else None,
+            "change_12m": (latest_yoy - prior_12_yoy) if latest_yoy is not None and prior_12_yoy is not None else None,
+            "change_3m_pct": None,
+            "change_12m_pct": None,
+        }
+
     prior_3 = prior_value(90)
     prior_12 = prior_value(365)
     return {
@@ -97,7 +123,7 @@ def _fetch_series(series_id: str) -> dict[str, Any]:
 
 
 def _trend(row: dict[str, Any], mode: str) -> str:
-    if mode == "LEVEL":
+    if mode in {"LEVEL", "YOY_RATE"}:
         delta = _n(row.get("change_3m"))
         threshold = 0.15
     else:
@@ -122,14 +148,29 @@ def refresh_macro_context(company_id: int) -> dict[str, Any]:
     if company is None:
         raise RuntimeError("Company not found")
 
-    factors = {}
-    errors = []
-    for key, spec in SERIES.items():
-        try:
-            row = _fetch_series(spec["id"])
-            factors[key] = {**spec, **row, "trend": _trend(row, spec["mode"])}
-        except Exception as exc:
-            errors.append(f"{spec['id']}: {type(exc).__name__}")
+    now = utcnow()
+    cached_at = _GLOBAL_MACRO_CACHE.get("fetched_at")
+    use_cache = bool(
+        cached_at and isinstance(cached_at, datetime)
+        and (now - cached_at).total_seconds() < 15 * 60
+        and _GLOBAL_MACRO_CACHE.get("factors")
+    )
+    if use_cache:
+        factors = dict(_GLOBAL_MACRO_CACHE.get("factors") or {})
+        errors = list(_GLOBAL_MACRO_CACHE.get("errors") or [])
+    else:
+        factors = {}
+        errors = []
+        for key, spec in SERIES.items():
+            try:
+                row = _fetch_series(spec["id"], spec["mode"])
+                factors[key] = {**spec, **row, "trend": _trend(row, spec["mode"])}
+            except Exception as exc:
+                errors.append(f"{spec['id']}: {type(exc).__name__}")
+        if factors:
+            _GLOBAL_MACRO_CACHE["fetched_at"] = now
+            _GLOBAL_MACRO_CACHE["factors"] = dict(factors)
+            _GLOBAL_MACRO_CACHE["errors"] = list(errors)
 
     if not factors:
         raise RuntimeError("Macro refresh returned no usable FRED factors")
