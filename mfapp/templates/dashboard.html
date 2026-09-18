@@ -39,11 +39,11 @@
         <td><strong>{{ row.decision_lenses.value }}</strong> · {{ row.decision_lenses.path }}</td>
         <td>{{ row.decision_lenses.model_confidence }}</td>
         <td class="coverage-number-col">{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
-        <td class="coverage-number-col">{% if row.valuation.base is not none %}<strong>&#36;{{ '%.2f'|format(row.valuation.base) }}</strong>{% else %}—{% endif %}</td>
-        <td class="coverage-number-col">{% if row.intelligence.base_gap_pct is not none %}<strong>{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%</strong>{% else %}—{% endif %}</td>
+        <td class="coverage-number-col">{% if row.valuation.base is not none %}&#36;{{ '%.2f'|format(row.valuation.base) }}{% else %}—{% endif %}</td>
+        <td class="coverage-number-col">{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td>
         <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
         <td><span class="status-chip" title="Latest point-in-time walk-forward validation status">{{ row.readiness.validation.state }}</span></td>
-        <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}<strong>{{ '%.0f'|format(row.freshness_hours*60) }}m</strong>{% else %}<strong>{{ '%.1f'|format(row.freshness_hours) }}h</strong>{% endif %}</td>
+        <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}{{ '%.0f'|format(row.freshness_hours*60) }}m{% else %}{{ '%.1f'|format(row.freshness_hours) }}h{% endif %}</td>
         <td><strong>{{ row.next_action }}</strong></td>
         <td><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
         <td class="coverage-manage-col">
@@ -56,7 +56,7 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="command-table-note"><strong>Process</strong> = approved Research gates. <strong>Validate</strong> = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).</p>
+  <p class="command-table-note">Process = approved Research gates. Validate = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).</p>
   {% else %}<div class="empty-state"><h2>No coverage yet</h2><p>Add a validated ticker or use Discovery to create the first research file.</p></div>{% endif %}
 
   {% if alert_items %}<div class="panel command-exceptions"><div class="panel-head"><h2>Exceptions</h2></div>{% for item in alert_items %}{% set alert=item.alert %}<div class="list-row"><div class="exception-copy">{% if item.ticker %}<a class="exception-ticker" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">{{ item.ticker }}</a>{% endif %}<strong>{{ alert.title }}</strong><p>{{ alert.body }}</p></div><span class="status-chip">{{ alert.severity }}</span></div>{% endfor %}</div>{% endif %}
