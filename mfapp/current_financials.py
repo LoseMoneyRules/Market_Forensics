@@ -73,10 +73,24 @@ def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
     return rows
 
 
+def _quarter_sequence_value(row: dict[str, Any]) -> int | None:
+    quarter = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}.get(str(row.get("period_type") or "").upper())
+    try:
+        fiscal_year = int(row.get("fiscal_year"))
+    except (TypeError, ValueError):
+        return None
+    return fiscal_year * 4 + quarter if quarter else None
+
+
 def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
     if len(rows) < 4:
         return None
     rows = sorted(rows[:4], key=lambda x: x.get("period_end") or "")
+    sequence = [_quarter_sequence_value(row) for row in rows]
+    if any(value is None for value in sequence) or len(set(sequence)) != 4:
+        return None
+    if any(sequence[idx] - sequence[idx - 1] != 1 for idx in range(1, 4)):
+        return None
     first_end = date.fromisoformat(rows[0]["period_end"])
     last_end = date.fromisoformat(rows[-1]["period_end"])
     if (last_end - first_end).days > 370:
@@ -126,6 +140,32 @@ def history_with_current(company_id: int, annual_limit: int = 15) -> list[dict[s
         if current.get("period_end") != latest_end:
             annual.append(current)
     return annual
+
+
+def numbers_completeness(company_id: int) -> dict[str, Any]:
+    quarters = quarterly_rows(company_id, 12)
+    annual = annual_rows(company_id, 5)
+    current = current_row(company_id)
+    core = ("revenue", "gross_profit", "operating_income", "net_income", "cfo", "capex", "fcf")
+    missing_current = [field for field in core if not current or n(current.get(field)) is None]
+    latest_quarters = quarters[:4]
+    quarter_gaps = []
+    if len(latest_quarters) < 4:
+        quarter_gaps.append(f"Only {len(latest_quarters)} stored quarter(s) are available for current TTM.")
+    else:
+        ordered = sorted(latest_quarters, key=lambda row: row.get("period_end") or "")
+        seq = [_quarter_sequence_value(row) for row in ordered]
+        if any(value is None for value in seq) or any(seq[idx] - seq[idx - 1] != 1 for idx in range(1, len(seq))):
+            quarter_gaps.append("Latest four stored quarters are not a consecutive fiscal sequence; TTM is withheld.")
+    return {
+        "annual_count": len(annual),
+        "quarter_count": len(quarters),
+        "current_basis": current.get("period_type") if current else None,
+        "current_label": current.get("period_label") if current else None,
+        "missing_current_fields": missing_current,
+        "quarter_gaps": quarter_gaps,
+        "ttm_ready": bool(current and current.get("period_type") == "TTM"),
+    }
 
 
 def forecast_rows(company_id: int, model: ValuationModel | None, years: int = 3, scenario_name: str = "BASE") -> list[dict[str, Any]]:
@@ -183,4 +223,4 @@ def scenario_forecasts(company_id: int, model: ValuationModel | None, years: int
     return {name: forecast_rows(company_id, model, years, name) for name in ("BEAR", "BASE", "BULL")}
 
 
-__all__ = ["annual_rows", "quarterly_rows", "current_row", "history_with_current", "forecast_rows", "scenario_forecasts"]
+__all__ = ["annual_rows", "quarterly_rows", "current_row", "history_with_current", "numbers_completeness", "forecast_rows", "scenario_forecasts"]
