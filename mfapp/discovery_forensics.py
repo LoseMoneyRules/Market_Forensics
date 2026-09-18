@@ -302,7 +302,11 @@ def _valuation_from_history(annual: list[dict[str, Any]], current_ttm: dict[str,
             "shares": shares,
             "basis_usable": shares not in (None, 0),
             "basis_issue": "" if shares not in (None, 0) else "No usable current share denominator.",
-            "revenue_growth": (_pct_change(revenue, (prior_ttm or {}).get("revenue")) or 0.0) / 100.0 if prior_ttm else metrics.get("revenue_growth"),
+            "revenue_growth": (
+                (_pct_change(revenue, (prior_ttm or {}).get("revenue")) / 100.0)
+                if prior_ttm and _pct_change(revenue, (prior_ttm or {}).get("revenue")) is not None
+                else metrics.get("revenue_growth")
+            ),
             "net_margin": _ratio(net_income, revenue, 1.0),
             "fcf_margin": _ratio(fcf, revenue, 1.0),
             "operating_margin": _ratio(current_ttm.get("operating_income"), revenue, 1.0),
@@ -310,12 +314,17 @@ def _valuation_from_history(annual: list[dict[str, Any]], current_ttm: dict[str,
     defaults = default_cases(metrics, "Generic")
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
     result = evaluate(metrics, cases, defaults["weights"], defaults["horizon_years"], current_price=price, allow_reference_fallback=False)
-    base = ((result.get("scenarios") or {}).get("BASE") or {}).get("fair_value")
+    base_row = ((result.get("scenarios") or {}).get("BASE") or {})
+    base = base_row.get("fair_value")
+    methods = sum(1 for key in ("pe", "ev_sales", "fcf_yield") if _num(base_row.get(key)) is not None)
+    if result.get("quality") != "INTRINSIC" or methods < 2:
+        base = None
     gap = ((float(base) / price - 1.0) * 100.0) if base is not None and price else None
     return {
         "base": base,
         "gap_pct": gap,
         "quality": result.get("quality"),
+        "valuation_methods": methods,
         "metrics": metrics,
     }
 
@@ -327,6 +336,11 @@ def _local_forensics(context: dict[str, Any], price: float, day_move: float | No
     quarters = list(reversed(quarterly_rows(company_id, 8)))
     current = _ttm(quarters, 0)
     prior = _ttm(quarters, 4)
+    if current is None and len(annual) >= 2:
+        current, prior = annual[-1], annual[-2]
+    annual = list(reversed(annual_rows(company_id, 4)))
+    if current is None and len(annual) >= 2:
+        current, prior = annual[-1], annual[-2]
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
     stored_base = _num((context.get("valuation") or {}).get("base"))
@@ -383,10 +397,29 @@ def enrich_forensic_candidates(
     known = [row for row in candidates if local_context.get(str(row.get("ticker") or "").upper())]
     unknown = [row for row in candidates if not local_context.get(str(row.get("ticker") or "").upper())]
 
-    # Limit unknown SEC work symmetrically so Discovery remains a bounded background job.
-    long_unknown = sorted([r for r in unknown if (_num(r.get("move_pct")) or 0) < 0], key=lambda r: (_num(r.get("move_pct")) or 0))[:FORENSIC_ENRICH_PER_SIDE]
-    short_unknown = sorted([r for r in unknown if (_num(r.get("move_pct")) or 0) > 0], key=lambda r: -(_num(r.get("move_pct")) or 0))[:FORENSIC_ENRICH_PER_SIDE]
-    selected_unknown = long_unknown + short_unknown
+    # Bound SEC work but do not require a dramatic price move: operating inflections
+    # can lead price. Mix downside/upside dislocations with the most-active names.
+    by_downside = sorted(
+        unknown,
+        key=lambda r: (_num(r.get("move_pct")) if _num(r.get("move_pct")) is not None else 999.0),
+    )[:FORENSIC_ENRICH_PER_SIDE]
+    by_upside = sorted(
+        unknown,
+        key=lambda r: -(_num(r.get("move_pct")) if _num(r.get("move_pct")) is not None else -999.0),
+    )[:FORENSIC_ENRICH_PER_SIDE]
+    by_activity = sorted(
+        unknown,
+        key=lambda r: (int(r.get("activity_rank") or 9999), -(_num(r.get("dollar_volume")) or 0.0)),
+    )[:FORENSIC_ENRICH_PER_SIDE]
+    selected_unknown = []
+    seen: set[str] = set()
+    for row in by_downside + by_upside + by_activity:
+        symbol = str(row.get("ticker") or "").upper()
+        if symbol and symbol not in seen:
+            selected_unknown.append(row)
+            seen.add(symbol)
+        if len(selected_unknown) >= FORENSIC_ENRICH_PER_SIDE * 2:
+            break
 
     ticker_map: dict[str, dict[str, str]] = {}
     if selected_unknown and headers:
