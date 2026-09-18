@@ -95,19 +95,33 @@ def refresh_price(ticker: str):
     recent = None
     cooldown = False
     retry_after_seconds = 0
+    active = None
     if not fresh:
-        recent = _recent_market_refresh(g.user.id, ctx["security"].id)
-        if recent and recent.finished_at:
-            elapsed = max(0.0, (utcnow() - recent.finished_at).total_seconds())
-            window = 60 if recent.status == "FAILED" else 5 * 60
-            cooldown = elapsed < window
-            retry_after_seconds = max(0, int(window - elapsed)) if cooldown else 0
-        if not cooldown:
-            job = enqueue_job(
-                "MARKET_REFRESH", user_id=g.user.id, company_id=ctx["company"].id,
-                security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10,
+        active = (
+            Job.query.filter(
+                Job.user_id == g.user.id,
+                Job.security_id == ctx["security"].id,
+                Job.job_type == "MARKET_REFRESH",
+                Job.status.in_(["QUEUED", "RUNNING"]),
             )
-    reused = bool(job and getattr(job, "_mf_reused", False))
+            .order_by(Job.id.desc())
+            .first()
+        )
+        if active:
+            job = active
+        else:
+            recent = _recent_market_refresh(g.user.id, ctx["security"].id)
+            if recent and recent.finished_at:
+                elapsed = max(0.0, (utcnow() - recent.finished_at).total_seconds())
+                window = 60 if recent.status == "FAILED" else 5 * 60
+                cooldown = elapsed < window
+                retry_after_seconds = max(0, int(window - elapsed)) if cooldown else 0
+            if not cooldown:
+                job = enqueue_job(
+                    "MARKET_REFRESH", user_id=g.user.id, company_id=ctx["company"].id,
+                    security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10,
+                )
+    reused = bool(job and (active is not None or getattr(job, "_mf_reused", False)))
     queued = bool(job and not reused)
     status = "FRESH" if fresh else ("COOLDOWN" if cooldown else ("REUSED" if reused else "QUEUED"))
     return jsonify({
