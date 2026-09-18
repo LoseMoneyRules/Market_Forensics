@@ -18,11 +18,11 @@
 **Production:** 0.2.8 on Namecheap  
 **Verified production baseline:** deploy run `35385879326` / deploy #42 = completed / success on main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; candidate health + post-cleanup health passed with `version = 0.2.8`, `architecture = web-native`, `database = primary`, `reports = rich`  
 **Persistent report vendor verification:** deploy #42 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
-**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; UI/report polish PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; data-completeness/layout polish PR #29 at `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; readiness-links/alphabetical-Coverage PR #30 at `e225e1af5990b8102bf98138cb508c1e7347ab26`; Business partial-peer hotfix PR #31 at `20c9048dadd7efe33e32c162f8bfeae0f75bdfba`; minimal-bold/live-conclusion PR #32 at `54964d3d37db0a4bc6453422caae3fbb16e84755`; canonical operating-model docs PR #33 at `dc0468737905779face4b36bfa598f2ad3ae5159`; VERSION remains `0.2.8`  
-**Latest verified main CI:** run `35388122115` / #858 = completed / success on `dc0468737905779face4b36bfa598f2ad3ae5159`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**0.2.8 production deploy:** deploy #42 includes PR #29 + PR #30 through main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; PR #31 + PR #32 are merged/tested on main but not yet deployed  
-**Release phase:** 0.2.8 through PR #30 is LIVE; PR #31 + PR #32 are complete and validated on main and need one new Namecheap deploy  
-**Branch:** `release/0.2.9-tape-v2-clean` (release candidate; production remains 0.2.8 until explicit deploy)
+**Main release:** 0.2.9 merged through PR #34 at `352dce5410e930b70b4dc9e7edff12eb676c4223`; 0.2.9 restores Tape Engine V2 / Large-Whale positioning / Tape charts while preserving the accepted 0.2.8 UI outside Tape  
+**Latest verified main CI:** run `35394852070` / #927 = completed / success on `352dce5410e930b70b4dc9e7edff12eb676c4223`; Python syntax, workflow YAML, JavaScript syntax, 0.2.8 baseline + 0.2.9 Tape regression contracts, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**0.2.8 production deploy:** deploy #42 remains the authoritative production baseline through main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; PR #31, PR #32, PR #33 and PR #34 are not yet deployed  
+**Release phase:** 0.2.9 is complete and validated on main; production remains 0.2.8 until one explicit Namecheap deploy  
+**Branch:** `main`
 
 Deploy #42 is the authoritative production baseline. PR #31 does not change VERSION or architecture. After the next deploy, existing old/partial peer-overlay cache payloads must render safely without requiring a recalculation; future recalculations also write the complete peer-overlay schema.
 ---
