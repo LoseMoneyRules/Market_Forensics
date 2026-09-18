@@ -283,18 +283,20 @@
     const button = form.querySelector('button[type="submit"]');
     const prior = button?.textContent || '';
     if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+    const formData = new FormData(form);
+    if (event.submitter?.name) formData.set(event.submitter.name, event.submitter.value);
     try {
       const response = await fetch(form.action, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {Accept: 'application/json', 'X-CSRFToken': csrf},
-        body: new FormData(form),
+        body: formData,
         cache: 'no-store'
       });
-      if (!response.ok) throw new Error('gate '+response.status);
-      const payload = await response.json();
+      const payload = await response.json().catch(()=>({}));
+      if (!response.ok || !payload?.ok) throw new Error(payload?.message || ('gate '+response.status));
       const current = document.querySelector('[data-process-readiness]');
-      if (!payload?.ok || !payload?.html || !current) throw new Error('gate response');
+      if (!payload?.html || !current) throw new Error('gate response');
       const shell = document.createElement('div');
       shell.innerHTML = payload.html.trim();
       const next = shell.firstElementChild;
@@ -302,8 +304,16 @@
       current.replaceWith(next);
       applySemanticStatuses(next);
       dirty = false;
-    } catch (_) {
+    } catch (error) {
       if (button) { button.disabled = false; button.textContent = prior; }
+      const row = form.closest('.gate-row');
+      let note = row?.querySelector('.gate-inline-error');
+      if (!note && row) {
+        note = document.createElement('small');
+        note.className = 'gate-inline-error';
+        row.appendChild(note);
+      }
+      if (note) note.textContent = error?.message || 'Unable to update readiness.';
     }
   });
 
