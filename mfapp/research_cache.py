@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -30,7 +30,7 @@ def utcnow() -> datetime:
 def _jsonable(value: Any) -> Any:
     if isinstance(value, Decimal):
         return float(value)
-    if isinstance(value, (datetime,)):
+    if isinstance(value, (date, datetime)):
         return value.isoformat()
     if isinstance(value, dict):
         return {str(k): _jsonable(v) for k, v in value.items()}
