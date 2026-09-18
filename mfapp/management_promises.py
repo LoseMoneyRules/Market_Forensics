@@ -106,10 +106,13 @@ def store_promises(company_id: int, promises: list[dict[str, Any]], *, source_id
     stored = 0
     source = db.session.get(Source, source_id) if source_id else None
     event_date = (source.published_at if source and source.published_at else None) or (source.retrieved_at if source and source.retrieved_at else None) or utcnow()
+    existing_fingerprints = {
+        str((event.payload or {}).get("fingerprint") or "")
+        for event in Event.query.filter_by(company_id=company_id, event_type="MANAGEMENT_PROMISE").all()
+    }
     for row in promises:
         fp = str(row.get("fingerprint") or "")
-        existing = Event.query.filter_by(company_id=company_id, event_type="MANAGEMENT_PROMISE").all()
-        if any(str((event.payload or {}).get("fingerprint") or "") == fp for event in existing):
+        if fp in existing_fingerprints:
             continue
         payload = dict(row)
         payload["status"] = "PENDING"
@@ -121,6 +124,7 @@ def store_promises(company_id: int, promises: list[dict[str, Any]], *, source_id
             event_date=event_date,
             payload=payload,
         ))
+        existing_fingerprints.add(fp)
         stored += 1
     if stored:
         db.session.commit()
