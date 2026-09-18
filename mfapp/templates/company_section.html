@@ -264,6 +264,16 @@
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='tape') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Flow interpretation</h2><button class="button primary">Save</button></div><textarea name="text" rows="8">{{ research.tape_summary|clean_auto }}</textarea></form>
 
   {% elif section == 'monitoring' %}
+    <div class="panel monitoring-exceptions">
+      <div class="panel-head"><div><p class="eyebrow">EXCEPTIONS FIRST</p><h2>What changed / needs attention</h2></div><span class="status-chip">{{ monitor_exceptions|length + monitor_alerts|length }}</span></div>
+      {% if monitor_exceptions %}
+        {% for x in monitor_exceptions %}<div class="list-row"><div><strong>{{ x.rule.name }}</strong><p>{{ x.rule.metric }} · observed {{ x.history.observed_value or '—' }} · {{ x.history.note or 'Threshold exception' }}</p></div><span class="status-chip">{{ x.history.status }}</span></div>{% endfor %}
+      {% endif %}
+      {% if monitor_alerts %}
+        {% for a in monitor_alerts[:10] %}<div class="list-row"><div><strong>{{ a.title }}</strong><p>{{ a.body }}</p></div><span class="status-chip">{{ a.severity }}</span></div>{% endfor %}
+      {% endif %}
+      {% if not monitor_exceptions and not monitor_alerts %}<p class="muted">No active exception is stored. Keep the routine schedule below secondary to thesis-changing evidence.</p>{% endif %}
+    </div>
     <form class="panel stack thesis-invalidation" method="post" action="{{ url_for('web.save_thesis_invalidation', ticker=security.ticker) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="panel-head"><div><p class="eyebrow">THESIS INVALIDATION</p><h2>What makes the research wrong?</h2><p class="muted">Research rule, not portfolio sizing. Once locked, it cannot be rewritten retroactively.</p></div><span class="status-chip">{{ 'LOCKED' if risk.invalidation_locked_at else 'OPEN' }}</span></div>
