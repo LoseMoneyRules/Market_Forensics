@@ -42,6 +42,49 @@ def utcnow() -> datetime:
 def latest_market_snapshot(security_id: int) -> MarketSnapshot | None:
     return MarketSnapshot.query.filter_by(security_id=security_id).order_by(MarketSnapshot.as_of.desc(), MarketSnapshot.id.desc()).first()
 
+def ensure_security_from_validation(validation) -> tuple[Security, bool]:
+    """Return/create the canonical Security for a validated symbol without creating Coverage."""
+    ticker = str(validation.ticker or "").strip().upper()
+    security = (
+        Security.query.filter(db.func.upper(Security.ticker) == ticker)
+        .order_by(Security.active.desc(), Security.is_primary.desc(), Security.id.asc())
+        .first()
+    )
+    if security is not None:
+        security.active = True
+        if validation.exchange and not security.exchange:
+            security.exchange = validation.exchange
+        if validation.currency and not security.currency:
+            security.currency = validation.currency
+        if validation.instrument_type and not security.security_type:
+            security.security_type = validation.instrument_type
+        security.validation_source = validation.source or security.validation_source
+        security.validated_at = utcnow()
+        return security, False
+
+    company = Company(
+        legal_name=validation.name or ticker,
+        display_name=validation.name or ticker,
+    )
+    db.session.add(company)
+    db.session.flush()
+    security = Security(
+        company_id=company.id,
+        ticker=ticker,
+        exchange=validation.exchange or "",
+        security_type=validation.instrument_type or "COMMON_STOCK",
+        currency=validation.currency or "USD",
+        provider_symbol=ticker.replace(".", "-"),
+        validation_source=validation.source or "",
+        validated_at=utcnow(),
+        active=True,
+        is_primary=True,
+    )
+    db.session.add(security)
+    db.session.flush()
+    return security, True
+
+
 
 def coverage_for_ticker(user_id: int, ticker: str) -> Coverage | None:
     return (
