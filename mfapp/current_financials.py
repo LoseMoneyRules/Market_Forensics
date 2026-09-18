@@ -59,7 +59,10 @@ def annual_rows(company_id: int, limit: int = 15) -> list[dict[str, Any]]:
 
 
 def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
-    periods = FinancialPeriod.query.filter(FinancialPeriod.company_id == company_id, FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"])).order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()).limit(max(4, limit)).all()
+    periods = FinancialPeriod.query.filter(
+        FinancialPeriod.company_id == company_id,
+        FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"]),
+    ).order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()).limit(max(8, limit)).all()
     rows: list[dict[str, Any]] = []
     seen: set[date] = set()
     for period in periods:
@@ -70,7 +73,13 @@ def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
             continue
         seen.add(period.end_date)
         rows.append(_period_row(period, normalized))
-    return rows
+
+    lookup = {(row.get("fiscal_year"), row.get("period_type")): row for row in rows}
+    for row in rows:
+        prior = lookup.get(((row.get("fiscal_year") or 0) - 1, row.get("period_type"))) or {}
+        row["metrics"] = financial_metrics(row, prior)
+        row["comparison_basis"] = "SAME_QUARTER_PRIOR_YEAR" if prior else "NO_PRIOR_QUARTER"
+    return rows[:max(4, limit)]
 
 
 def _quarter_sequence_value(row: dict[str, Any]) -> int | None:
