@@ -443,6 +443,30 @@ def test_028_gate_readiness_updates_research_conclusion_without_heavy_recalc(tmp
         assert cache.payload["decision_lenses"]["research_conclusion"] == "READY TO VALIDATE"
 
 
+def test_028_canonical_operating_model_contract():
+    operating = Path("docs/HOW_MARKET_FORENSICS_WORKS.md").read_text()
+    state = Path("docs/CURRENT_STATE.md").read_text()
+
+    for rule in (
+        "ADD ON EVIDENCE, NOT ON PRICE.",
+        "APPROVED · EVIDENCE CHANGED",
+        "RESEARCH INCOMPLETE",
+        "READY TO VALIDATE",
+        "LONG READY",
+        "SHORT READY",
+        "Missing data stays missing",
+        "Research and Portfolio remain separate",
+        "use as little bold as possible",
+        "Zero candidates is a valid output",
+        "Known validation inconsistency",
+    ):
+        assert rule in operating
+
+    assert "HOW_MARKET_FORENSICS_WORKS.md" in state
+    assert "canonical product/decision-system contract" in state
+    assert Path("VERSION").read_text().strip() == "0.2.8"
+
+
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():
     flow = build_income_statement_flow({
         "period_label": "FY2025",
