@@ -195,7 +195,7 @@ def readiness(coverage: Coverage) -> dict[str, Any]:
     source_count = Source.query.filter_by(company_id=company.id).count() if company else 0
     gates = [
         ("Business", bool(research and research.business.strip())),
-        ("Numbers", bool(research and research.numbers.strip())),
+        ("Fundamentals", bool(research and research.numbers.strip())),
         ("Expectations", bool(research and research.expectations.strip()) or expectation_count > 0),
         ("Valuation", all(valuation.get(k) is not None for k in ("bear", "base", "bull"))),
         ("Bear case", bool(research and research.bear_case_summary.strip()) or BearCaseItem.query.filter_by(coverage_id=coverage.id).count() > 0),
