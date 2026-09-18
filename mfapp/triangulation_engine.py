@@ -280,7 +280,20 @@ def apply_peer_valuation_overlay(valuation: dict[str, Any], triangulation: dict[
     except (TypeError, ValueError, ArithmeticError):
         base = peer = None
     if not cross.get("eligible") or base in (None, 0) or peer in (None, 0):
-        out["peer_overlay"] = {"applied": False, "reason": "Insufficient peer valuation evidence.", **cross}
+        # Keep a stable overlay schema even when the peer cross-check is not
+        # eligible. Business must be renderable for a newly added company with
+        # partial peer evidence, and older cached payloads may be incomplete.
+        out["peer_overlay"] = {
+            "applied": False,
+            "weight": 0.0,
+            "uncapped_factor": 1.0,
+            "applied_factor": 1.0,
+            "intrinsic_base": base,
+            "peer_estimate": peer,
+            "forensic_base": out.get("base"),
+            "reason": "Insufficient peer valuation evidence.",
+            **cross,
+        }
         return out
 
     peer_count = int(cross.get("peer_count") or 0)
