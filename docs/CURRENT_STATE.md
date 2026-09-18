@@ -7,7 +7,7 @@
 > job execution, provider/data logic, SEC normalization, Discovery, Fundamentals, analytical
 > engines, reports/publication, security, Portfolio/Risk, or a material product workflow changes.
 
-**State-Version: 0.2.6**  
+**State-Version: 0.2.7**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
@@ -18,7 +18,7 @@
 **Active candidate:** 0.2.6 — Local parity recovery  
 **Branch:** `0.2.6`
 
-Production remains on deployed 0.2.5 until 0.2.6 passes every gate.
+0.2.6 production baseline was successfully deployed before 0.2.7 work began.
 
 0.2.5 passed its stated PR/post-merge gates and was deployed successfully. The subsequent V3.1.12-vs-Web
 capability audit found material product regressions that the old smoke tests did not detect
@@ -26,6 +26,23 @@ capability audit found material product regressions that the old smoke tests did
 production rich-report dependency contract). Therefore 0.2.5 remains the production baseline while 0.2.6 supersedes it as the active correction candidate.
 
 ---
+
+## 0.2.7 release scope
+
+0.2.6 production baseline was verified before any 0.2.7 modification: main commit `6ecc385b29445db2a3940451f071a2425cd4f3c3`, VERSION `0.2.6`, CI #787 successful, Deploy #35 successful. CURRENT_STATE had still described production as 0.2.5; that stale statement is corrected here.
+
+0.2.7 is a deep research-integrity release, not a UI-only patch:
+- Report exports are fail-safe at the HTTP request boundary. Rich PDF/Word remains preferred; dependency-free PDF/DOCX emergency artifacts are served if branding/render/audit persistence fails. Audit failure cannot turn a valid download into HTTP 500.
+- Fundamentals always exposes Current basis, Gross Margin and ROIC. Missing filing inputs stay missing and are explained; no ROIC is guessed.
+- Expectations has a current observed basis strip: Revenue growth, Gross Margin, Operating Margin, FCF Margin, Cash Quality (CFO/NI) and ROIC.
+- Settings Refresh Runs is collapsed like Recent Jobs.
+- Research Command Center removes Discover/Portfolio shortcuts, moves Refresh stale/all under the Process/Validate legend, removes bold from Research Conclusion, and gives Next Action/Lens/Manage safe wrapping/width.
+- Readiness is served from live DB state rather than the heavy research cache. Monitoring accepts a locked thesis invalidation or active monitoring rules as evidence. Decision Journal closes as soon as a persisted journal exists.
+- Research gate approvals are monotonic: changed evidence is flagged as changed/stale for review but an approval does not silently reopen until CONTROL explicitly reopens/revokes it.
+- Business adds sourced macro FOR/AGAINST evidence from background FRED context (rates, credit, USD, oil, inflation, industrial production, retail sales) mapped to explicit sector sensitivities. Macro fetching never runs during normal GET navigation.
+- Automatic triangulation now builds a peer fair-value cross-check from P/E, EV/Sales and FCF yield where evidence permits. It can influence forensic fair value only with >=2 peers and >=2 valuation methods, at an explicit 15–20% weight and a maximum +/-10% scenario shift. Intrinsic values remain stored/auditable and peer-only valuation is never allowed.
+- 0.2.7 has dedicated regression coverage in `tests/test_027_deep_release.py`.
+
 
 ## 1. Non-negotiable architecture
 
