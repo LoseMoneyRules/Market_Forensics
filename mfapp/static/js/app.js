@@ -170,7 +170,7 @@
     const y=(v)=>pad.t+(h-pad.t-pad.b)*(1-(v-min)/(max-min));
     ctx.font='13px system-ui'; ctx.fillStyle=css('--muted','#6d7a86'); ctx.strokeStyle=css('--line','#d9e0e6'); ctx.lineWidth=1;
     for(let i=0;i<4;i++){const yy=pad.t+(h-pad.t-pad.b)*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();const val=max-(max-min)*i/3;ctx.fillText(percent?val.toFixed(1)+'%':compact(val),5,yy+4)}
-    rows.forEach((row,i)=>{if(i%Math.max(1,Math.ceil(rows.length/6))===0||i===rows.length-1)ctx.fillText(String(row.label||row.date||row.week_start||''),Math.max(pad.l,x(i)-18),h-10)});
+    rows.forEach((row,i)=>{if(i%Math.max(1,Math.ceil(rows.length/6))===0||i===rows.length-1)ctx.fillText(String(row.label||row.date||''),Math.max(pad.l,x(i)-18),h-10)});
     defs.forEach((d)=>{ctx.strokeStyle=d.color;ctx.lineWidth=d.width||2.2;ctx.setLineDash(d.dash?[6,5]:[]);ctx.beginPath();let started=false;rows.forEach((row,i)=>{const v=Number(row[d.key]);if(!Number.isFinite(v))return;const xx=x(i),yy=y(v);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)});ctx.stroke();ctx.setLineDash([]);});
   }
   function barChart(canvas, rows, key, opts={}) {
@@ -410,7 +410,7 @@
     document.querySelectorAll('canvas[data-mf-chart="tape-cumulative-flow"]').forEach((node)=>lineChart(node,parseData(node),[{key:'cumulative_5d',label:'5D Large Flow',color:primary},{key:'cumulative_20d',label:'20D Large Flow',color:accent}],false));
     document.querySelectorAll('canvas[data-mf-chart="tape-scores"]').forEach((node)=>lineChart(node,parseData(node),[{key:'absorption',label:'Absorption',color:accent},{key:'short_pressure',label:'Short Pressure',color:css('--mf-chart-bear','#a04444')},{key:'net_tape',label:'Net Tape',color:primary}],false));
     document.querySelectorAll('canvas[data-mf-chart="tape-whale"]').forEach((node)=>barChart(node,parseData(node),'net_whale',{signed:true}));
-    document.querySelectorAll('canvas[data-mf-chart="tape-ats"]').forEach((node)=>lineChart(node,parseData(node),[{key:'ats_share_pct',label:'ATS share %',color:secondary}],true));
+    document.querySelectorAll('canvas[data-mf-chart="tape-ats"]').forEach((node)=>lineChart(node,parseData(node).map(r=>({...r,label:r.week_start||r.date||''})),[{key:'ats_share_pct',label:'ATS share %',color:secondary}],true));
     document.querySelectorAll('canvas[data-mf-chart="valuation"]').forEach(valuationChart);
   }
   renderCharts();
