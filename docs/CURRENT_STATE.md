@@ -12,16 +12,16 @@
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
 **Production:** 0.2.8 on Namecheap  
-**Verified production baseline:** deploy run `35376698729` / deploy #39 = completed / success on main commit `09473a81999b91f2cebfdabd4c35102cef73a3a0`; candidate health + post-cleanup health passed with `version = 0.2.8`, `reports = rich`  
-**Persistent report vendor verification:** deploy #39 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
+**Verified production baseline:** deploy run `35380547531` / deploy #40 = completed / success on main commit `371af002bf9a74f9b302a7489a1b93624c6042ea`; candidate health + post-cleanup health passed with `version = 0.2.8`, `reports = rich`  
+**Persistent report vendor verification:** deploy #40 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
 **Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; same-version UI/report polish merged through PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; VERSION remains `0.2.8`  
 **Latest verified main CI:** run `35380378348` / #840 = completed / success on `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**0.2.8 polish deploy:** pending a new manual `workflow_dispatch`; deploy #39 is the current production baseline and predates PR #28  
+**0.2.8 polish deploy:** deploy #40 includes PR #28 / current main through `371af002bf9a74f9b302a7489a1b93624c6042ea`  
 **Active second polish:** branch `polish/0.2.8-data-ui-2`; VERSION remains `0.2.8`; data-completeness recovery + small layout corrections, pending CI / merge / deploy  
-**Release phase:** 0.2.8 is LIVE; PR #28 is validated on main but not yet known deployed, and the second same-version polish is still a candidate branch  
+**Release phase:** 0.2.8 + PR #28 polish are LIVE; the second same-version polish is still a candidate branch  
 **Branch:** `polish/0.2.8-data-ui-2`
 
-Deploy #39 remains the authoritative production baseline. The active second polish does not change VERSION or architecture and must not be treated as production until its own merge and Namecheap deploy succeed.
+Deploy #40 is the authoritative production baseline. The active second polish does not change VERSION or architecture and must not be treated as production until its own merge and Namecheap deploy succeed.
 ---
 
 ## 0.2.8 release scope
