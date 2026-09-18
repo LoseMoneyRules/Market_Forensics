@@ -255,11 +255,20 @@ def _cached_tape_for_months(tape: dict, months: int) -> dict:
         "short_5d_pct": None, "short_20d_pct": None, "put_call_oi": None, "put_open_interest": None,
         "call_open_interest": None, "borrow_status": "unknown", "borrow_fee_pct": None, "borrow_fee_source": "",
         "borrow_fee_as_of": None, "shortable": None, "locate_price": None, "locate_available_qty": None,
-        "absorption": None, "price_resilience": None, "long_demand": None, "bear_pressure": None,
-        "battle_intensity": None, "net_tape": None, "rank_score": None, "regime": "MIXED", "confidence": "LOW",
+        "institutional_flow": None, "absorption": None, "price_resilience": None, "long_demand": None, "bear_pressure": None,
+        "battle_intensity": None, "net_tape": None, "rank_score": None, "rank": "—", "forensic_regime": "LOW DATA",
+        "machine_read": "Evidence is incomplete; do not force a tape regime.", "data_confidence": 0,
+        "flow_feed": "", "flow_feed_scope": "", "flow_source_status": "", "flow_method": "", "flow_confidence_pct": None,
+        "large_threshold": None, "very_large_threshold": None, "whale_threshold": None,
+        "large_share_pct": None, "whale_share_pct": None,
+        "large_buy": None, "large_sell": None, "net_large": None, "very_large_buy": None, "very_large_sell": None,
+        "net_very_large": None, "whale_buy": None, "whale_sell": None, "net_whale": None,
+        "regime": "MIXED", "confidence": "LOW",
     }
     base = {
-        "months": months, "market": [], "short_interest": [], "short_volume": [], "positioning": {},
+        "months": months, "market": [], "daily_market": [], "short_interest": [], "short_volume": [],
+        "institutional_flow": [], "ats": [], "tape_daily": [], "what_changed": [], "what_would_change_regime": [],
+        "positioning": {},
         "metrics": metric_defaults | dict((tape or {}).get("metrics") or {}),
     } | dict(tape or {})
     base["metrics"] = metric_defaults | dict((tape or {}).get("metrics") or {})
@@ -274,10 +283,10 @@ def _cached_tape_for_months(tape: dict, months: int) -> dict:
     cutoff_iso = cutoff.isoformat()
     out = dict(tape)
     out["months"] = months
-    for key in ("market", "short_interest", "short_volume"):
+    for key in ("market", "daily_market", "short_interest", "short_volume", "institutional_flow", "ats", "tape_daily"):
         rows = list(tape.get(key) or [])
         date_key = "date"
-        out[key] = [row for row in rows if str(row.get(date_key) or row.get("settlement_date") or row.get("trade_date") or "") >= cutoff_iso]
+        out[key] = [row for row in rows if str(row.get(date_key) or row.get("settlement_date") or row.get("trade_date") or row.get("week_start") or "") >= cutoff_iso]
     return out
 
 
