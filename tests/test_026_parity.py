@@ -335,4 +335,4 @@ def test_026_version_and_state_are_locked():
     state = Path("docs/CURRENT_STATE.md").read_text()
     assert "**State-Version: 0.2.6**" in state
     assert "Local parity recovery" in state
-    assert "Production remains on deployed 0.2.4 until 0.2.6 passes every gate." in state
+    assert "Production remains on deployed 0.2.5 until 0.2.6 passes every gate." in state
