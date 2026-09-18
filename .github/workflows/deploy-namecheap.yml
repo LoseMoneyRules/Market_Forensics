@@ -58,7 +58,7 @@ jobs:
           health = app.test_client().get('/health')
           assert health.status_code == 200, health.data
           payload = health.get_json()
-          assert payload['status'] == 'ok' and payload['version'] == '0.2.0'
+          assert payload['status'] == 'ok' and payload['version'] == '0.2.1'
           assert payload['reports'] == 'stdlib-fallback'
           data = {
               'branding':{'title':'Market Forensics','footer':'Lose Money Rules'},
