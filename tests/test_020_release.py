@@ -147,10 +147,10 @@ def seed_fast_cache(app, coverage_id, company_id, *, conclusion="LONG WATCH"):
 
 def test_020_health_identity_and_calculation_version(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
-    assert app.config["VERSION"] == "0.2.1"
+    assert app.config["VERSION"] == "0.2.2"
     response = app.test_client().get("/health")
     assert response.status_code == 200
-    assert response.get_json()["version"] == "0.2.1"
+    assert response.get_json()["version"] == "0.2.2"
     assert response.get_json()["architecture"] == "web-native"
     assert CALCULATION_VERSION == "0.2.0"
     metrics = financial_metrics({"revenue": 110, "fcf": 12}, {"revenue": 100, "fcf": 10})
@@ -655,8 +655,11 @@ def test_020_market_wide_discovery_uses_screeners_without_guessing_fair_value(tm
         assert "PRICE DISLOCATION" in aaa["lenses"]
         assert "DEEP RESEARCH REQUIRED" in aaa["lenses"]
         bbb = next(row for row in result["candidates"] if row["ticker"] == "BBB")
-        assert "POTENTIAL SHORT" in bbb["lenses"]
-        assert "base_gap_pct" not in aaa or not aaa.get("known_context")
+        assert bbb["research_side"] == "LONG LEAD"
+        assert "DOWNSIDE DISLOCATION" in bbb["lenses"]
+        assert aaa["research_side"] == "SHORT LEAD"
+        assert aaa["target_status"] == "TARGET UNKNOWN"
+        assert not aaa.get("known_context")
 
 
 def test_020_report_branding_is_persisted_and_rejects_non_https_logo(tmp_path, monkeypatch):

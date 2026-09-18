@@ -89,6 +89,9 @@
     const height=Math.max(300,top*2+maxRows*nodeH+(maxRows-1)*rowGap);
     const svg=makeSvg('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':(data.flow_type||'Financial')+' flow '+(data.period||'')});
     svg.classList.add('flow-svg');
+    const visibleWidth=Math.max(0,root.getBoundingClientRect().width-36);
+    const visualScale=Math.max(1,visibleWidth/width);
+    const labelFont=(11/visualScale).toFixed(2),valueFont=(13/visualScale).toFixed(2),labelLine=(14/visualScale).toFixed(2);
     const pos=new Map();
     layout.columns.forEach((col,ci)=>{
       const total=col.length*nodeH+Math.max(0,col.length-1)*rowGap;
@@ -107,11 +110,11 @@
       const p=pos.get(name),meta=nodeMap.get(name)||{},role=String(meta.role||'').toUpperCase();
       const group=makeSvg('g',{'data-flow-node':name}), rect=makeSvg('rect',{x:p.x,y:p.y,width:nodeW,height:nodeH,rx:10,fill:css('--flow-node-bg',css('--white','#fff')),stroke:deduction.test(name)?css('--semantic-negative-line','#d8b9b9'):positive.test(name)?css('--semantic-positive-line','#b8d6c6'):css('--line','#d9e0e6'),'stroke-width':role==='ANCHOR'?2:1});
       group.appendChild(rect);
-      const label=makeSvg('text',{x:p.x+12,y:p.y+22,fill:css('--navy','#0b1f33'),'font-size':11,'font-weight':650});
-      wrapText(name).forEach((line,i)=>{const t=makeSvg('tspan',{x:p.x+12,dy:i?'14':'0'});t.textContent=line;label.appendChild(t)});group.appendChild(label);
+      const label=makeSvg('text',{x:p.x+12,y:p.y+22,fill:css('--navy','#0b1f33'),'font-size':labelFont,'font-weight':650});
+      wrapText(name).forEach((line,i)=>{const t=makeSvg('tspan',{x:p.x+12,dy:i?labelLine:'0'});t.textContent=line;label.appendChild(t)});group.appendChild(label);
       const incoming=(layout.incoming.get(name)||[]).reduce((s,e)=>s+Math.abs(Number(e.value)||0),0),outgoing=(layout.outgoing.get(name)||[]).reduce((s,e)=>s+Math.abs(Number(e.value)||0),0);
       const value=Number.isFinite(Number(meta.value))?Number(meta.value):Math.max(incoming,outgoing);
-      const val=makeSvg('text',{x:p.x+12,y:p.y+nodeH-12,fill:css('--muted','#6d7a86'),'font-size':13,'font-weight':650});val.textContent=fmt(value);group.appendChild(val);
+      const val=makeSvg('text',{x:p.x+12,y:p.y+nodeH-12,fill:css('--muted','#6d7a86'),'font-size':valueFont,'font-weight':650});val.textContent=fmt(value);group.appendChild(val);
       svg.appendChild(group);
     });
     const scroll=make('div','flow-diagram-scroll');scroll.appendChild(svg);root.appendChild(scroll);
@@ -156,9 +159,11 @@
   }
 
   document.querySelectorAll('.flow-tab').forEach(button=>button.addEventListener('click',()=>{
-    document.querySelectorAll('.flow-tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.flow-tab').forEach(x=>{x.classList.remove('active');x.setAttribute('aria-selected','false')});
     document.querySelectorAll('.flow-panel').forEach(x=>x.classList.remove('active'));
-    button.classList.add('active');document.getElementById(button.dataset.flowTarget)?.classList.add('active');
+    button.classList.add('active');button.setAttribute('aria-selected','true');
+    const panel=document.getElementById(button.dataset.flowTarget);panel?.classList.add('active');
+    const root=panel?.querySelector('.flow-canvas');if(root)window.requestAnimationFrame(()=>render(root));
   }));
   const renderAll=()=>document.querySelectorAll('.flow-canvas').forEach(root=>render(root));
   window.MFRenderFlow=render;

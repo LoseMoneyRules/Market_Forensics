@@ -30,7 +30,7 @@
 
   {% if rows %}
   <div class="table-card scroll"><table class="data-table coverage-table">
-    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th>Price</th><th>Bear</th><th>Base</th><th>Bull</th><th>Base gap</th><th>Process</th><th>Validate</th><th>Freshness</th><th>Next action</th><th>Lens</th><th>Manage</th></tr></thead>
+    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th>Price</th><th>Base</th><th>Base gap</th><th>Process</th><th>Validate</th><th>Freshness</th><th>Next action</th><th>Lens</th><th>Manage</th></tr></thead>
     <tbody>
     {% for row in rows %}
       <tr>
@@ -39,10 +39,8 @@
         <td><strong>{{ row.decision_lenses.value }}</strong> · {{ row.decision_lenses.path }}</td>
         <td>{{ row.decision_lenses.model_confidence }}</td>
         <td>{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
-        <td>{% if row.valuation.bear is not none %}&#36;{{ '%.2f'|format(row.valuation.bear) }}{% else %}—{% endif %}</td>
         <td>{% if row.valuation.base is not none %}<strong>&#36;{{ '%.2f'|format(row.valuation.base) }}</strong>{% else %}—{% endif %}</td>
-        <td>{% if row.valuation.bull is not none %}&#36;{{ '%.2f'|format(row.valuation.bull) }}{% else %}—{% endif %}</td>
-        <td>{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td>
+        <td>{% if row.intelligence.base_gap_pct is not none %}<strong>{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%</strong>{% else %}—{% endif %}</td>
         <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
         <td><span class="status-chip">{{ row.readiness.validation.state }}</span></td>
         <td>{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}<strong>{{ '%.0f'|format(row.freshness_hours*60) }}m</strong>{% elif row.freshness_hours < 48 %}<strong>{{ '%.1f'|format(row.freshness_hours) }}h</strong>{% else %}<strong>{{ '%.1f'|format(row.freshness_hours/24) }}d</strong>{% endif %}<small class="block">Research {{ row.coverage.updated_at }}</small></td>
@@ -60,6 +58,6 @@
   </table></div>
   {% else %}<div class="empty-state"><h2>No coverage yet</h2><p>Add a validated ticker or use Discovery to create the first research file.</p></div>{% endif %}
 
-  {% if alerts %}<div class="panel"><div class="panel-head"><h2>Exceptions</h2></div>{% for alert in alerts %}<div class="list-row"><div><strong>{{ alert.title }}</strong><p>{{ alert.body }}</p></div><span class="status-chip">{{ alert.severity }}</span></div>{% endfor %}</div>{% endif %}
+  {% if alert_items %}<div class="panel command-exceptions"><div class="panel-head"><h2>Exceptions</h2></div>{% for item in alert_items %}{% set alert=item.alert %}<div class="list-row"><div class="exception-copy">{% if item.ticker %}<a class="exception-ticker" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">{{ item.ticker }}</a>{% endif %}<strong>{{ alert.title }}</strong><p>{{ alert.body }}</p></div><span class="status-chip">{{ alert.severity }}</span></div>{% endfor %}</div>{% endif %}
 </section>
 {% endblock %}
