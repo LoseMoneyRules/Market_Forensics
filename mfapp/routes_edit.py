@@ -172,6 +172,30 @@ def add_management_promise(ticker):
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section="management"))
 
 
+@bp.post("/company/<ticker>/tape/borrow-fee")
+@role_required("CONTROL")
+def add_borrow_fee(ticker):
+    require_control_view()
+    ctx = _ctx(ticker)
+    fee = dec(request.form.get("annualized_fee_pct"))
+    source = str(request.form.get("source") or "").strip()
+    note = str(request.form.get("note") or "").strip()
+    if fee is None or fee < 0 or not source:
+        flash("Borrow fee needs a non-negative annualized % and a source.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="tape"))
+    db.session.add(Event(
+        company_id=ctx["company"].id,
+        event_type="BORROW_FEE_OBSERVATION",
+        title=f"{ctx['security'].ticker} borrow fee observation",
+        event_date=utcnow(),
+        payload={"annualized_fee_pct": float(fee), "source": source[:180], "note": note[:1000], "actor_user_id": g.user.id},
+    ))
+    audit("tape.borrow_fee.add", "company", ctx["company"].id, {"ticker": ctx["security"].ticker, "annualized_fee_pct": float(fee), "source": source[:180]})
+    db.session.commit()
+    flash("Borrow fee observation saved.", "success")
+    return redirect(url_for("web.company_section", ticker=ticker.upper(), section="tape"))
+
+
 @bp.post("/company/<ticker>/monitoring")
 @role_required("CONTROL")
 def add_monitoring(ticker):
