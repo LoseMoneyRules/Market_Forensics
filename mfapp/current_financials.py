@@ -44,12 +44,18 @@ def _period_row(period: FinancialPeriod, normalized: NormalizedFinancial) -> dic
 
 
 def annual_rows(company_id: int, limit: int = 15) -> list[dict[str, Any]]:
-    periods = FinancialPeriod.query.filter_by(company_id=company_id, period_type="FY").order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()).limit(max(1, limit)).all()
+    periods = FinancialPeriod.query.filter_by(company_id=company_id, period_type="FY").order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()).limit(max(2, limit * 2)).all()
     rows: list[dict[str, Any]] = []
+    seen: set[date] = set()
     for period in periods:
+        if period.end_date in seen:
+            continue
         normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
         if normalized:
+            seen.add(period.end_date)
             rows.append(_period_row(period, normalized))
+        if len(rows) >= max(1, limit):
+            break
     chronological = list(reversed(rows))
     previous: dict[str, Any] = {}
     for row in chronological:
