@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import requests
 
 from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessment, Source
+from .current_financials import annual_rows, current_row
 from .extensions import db
 from .models import UserPreference
 from .management_promises import evaluate_promises
@@ -112,6 +113,25 @@ def _plain_research_lines(data: dict[str, Any]) -> list[str]:
             ("RESEARCH INVALIDATION","risk_summary"),
         ]:
             lines += ["", label, _txt(data.get(key)) or "—"]
+        fundamentals=data.get("fundamentals_history") or []
+        if fundamentals:
+            story.append(Paragraph("Fundamentals history",styles["MFH2"]))
+            rows=[["Period","Revenue","Op %","FCF","Inv/Rev","Rec/Rev","CFO/NI","Shares YoY"]]
+            for row in fundamentals[-8:]:
+                rows.append([
+                    str(row.get("period") or "—"),
+                    _money(row.get("revenue")),
+                    _pct(row.get("operating_margin_pct")),
+                    _money(row.get("fcf")),
+                    _pct(row.get("inventory_to_revenue_pct")),
+                    _pct(row.get("receivables_to_revenue_pct")),
+                    (f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"),
+                    _pct(row.get("share_count_growth_pct")),
+                ])
+            ft=Table(rows,colWidths=[.55*inch,1.0*inch,.6*inch,.95*inch,.75*inch,.75*inch,.7*inch,.75*inch])
+            ft.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),6.5)]))
+            story += [ft,Spacer(1,6)]
+
         tri=data.get("triangulation") or {}
         if tri.get("available"):
             lines += ["", "AUTOMATIC TRIANGULATION", f"{tri.get('method')} · SIC {tri.get('sic') or '—'}"]
@@ -305,6 +325,9 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
     tape = dict(cache.get("tape") or {})
     implied = dict((decision_lenses.get("implied_expectations") or {}))
 
+    annual_fundamentals = annual_rows(company.id, 8)
+    current_fundamental = current_row(company.id)
+
     branding = dict(branding or {})
     return {
         "branding": {
@@ -314,6 +337,27 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
             "logo_url": str(branding.get("logo_url") or ""),
         },
         "mode": "executive" if str(mode).lower() == "executive" else "full",
+        "fundamentals_history": [{
+            "period": f"FY{row.get('fiscal_year')}",
+            "revenue": row.get("revenue"),
+            "operating_margin_pct": (row.get("metrics") or {}).get("operating_margin_pct"),
+            "fcf": row.get("fcf"),
+            "fcf_margin_pct": (row.get("metrics") or {}).get("fcf_margin_pct"),
+            "inventory_to_revenue_pct": (row.get("metrics") or {}).get("inventory_to_revenue_pct"),
+            "receivables_to_revenue_pct": (row.get("metrics") or {}).get("receivables_to_revenue_pct"),
+            "cfo_to_net_income": (row.get("metrics") or {}).get("cfo_to_net_income"),
+            "share_count_growth_pct": (row.get("metrics") or {}).get("share_count_growth_pct"),
+            "roic_pct": (row.get("metrics") or {}).get("roic_pct"),
+        } for row in reversed(annual_fundamentals)],
+        "current_fundamentals": {
+            "period": (current_fundamental or {}).get("period_label"),
+            "revenue": (current_fundamental or {}).get("revenue"),
+            "operating_margin_pct": ((current_fundamental or {}).get("metrics") or {}).get("operating_margin_pct"),
+            "fcf": (current_fundamental or {}).get("fcf"),
+            "fcf_margin_pct": ((current_fundamental or {}).get("metrics") or {}).get("fcf_margin_pct"),
+            "cfo_to_net_income": ((current_fundamental or {}).get("metrics") or {}).get("cfo_to_net_income"),
+            "roic_pct": ((current_fundamental or {}).get("metrics") or {}).get("roic_pct"),
+        },
         "ticker": security.ticker,
         "company": company.display_name,
         "sector": company.sector or "",
@@ -583,6 +627,26 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
             ("Research invalidation / risk summary","risk_summary"),
         ]:
             _docx_add_heading(doc,label,1); _docx_add_text(doc,data[key])
+
+        fundamentals = data.get("fundamentals_history") or []
+        if fundamentals:
+            _docx_add_heading(doc, "Fundamentals history", 1)
+            tf = doc.add_table(rows=1, cols=8); tf.style = "Table Grid"
+            for i,v in enumerate(["Period","Revenue","Op margin","FCF","Inv/Rev","Rec/Rev","CFO/NI","Shares YoY"]):
+                tf.cell(0,i).text = v
+            for row in fundamentals[-8:]:
+                cells = tf.add_row().cells
+                vals = [
+                    row.get("period") or "—",
+                    _money(row.get("revenue")),
+                    _pct(row.get("operating_margin_pct")),
+                    _money(row.get("fcf")),
+                    _pct(row.get("inventory_to_revenue_pct")),
+                    _pct(row.get("receivables_to_revenue_pct")),
+                    (f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"),
+                    _pct(row.get("share_count_growth_pct")),
+                ]
+                for i,v in enumerate(vals): cells[i].text = str(v)
 
         if data["expectations"]:
             _docx_add_heading(doc,"Expectation variants",1)
