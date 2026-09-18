@@ -302,8 +302,43 @@
     <div class="two-col"><div class="panel"><h2>Approved/active rules</h2>{% for r in monitor_rules %}<div class="monitor-rule"><div class="list-row"><div><strong>{{ r.name }}</strong><p>{{ r.metric }} {{ r.operator }} {{ r.threshold_value or r.threshold_text }} {{ r.unit }}</p></div><span class="status-chip">{{ r.severity }}</span></div><form class="inline-observation" method="post" action="{{ url_for('web.update_monitoring', ticker=security.ticker, rule_id=r.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="observed_value" placeholder="Observed"><select name="status"><option>OK</option><option selected>WATCH</option><option>FAIL</option></select><input name="note" placeholder="Observation"><button class="button small">Record</button></form></div>{% else %}<p class="muted">No manually committed rules. The proposed schedule above is guidance until you add/lock rules.</p>{% endfor %}</div><form class="panel stack" method="post" action="{{ url_for('web.add_monitoring', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>Add / commit rule</h2><label>Name<input name="name" required></label><label>Metric<input name="metric"></label><div class="form-grid two"><label>Operator<input name="operator" value="NOTE"></label><label>Numeric threshold<input name="threshold_value"></label></div><label>Text threshold<input name="threshold_text"></label><div class="form-grid two"><label>Unit<input name="unit"></label><label>Severity<select name="severity"><option>INFO</option><option selected>WATCH</option><option>FAIL</option></select></label></div><label class="checkbox"><input type="checkbox" name="locked_pre_investment" value="1"> Lock pre-investment invalidation threshold</label><button class="button primary">Add rule</button></form></div>
 
   {% elif section == 'journal' %}
-    <div class="two-col"><form class="panel stack" method="post" action="{{ url_for('web.add_journal', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><div><p class="eyebrow">DECISION JOURNAL</p><h2>Evidence snapshot</h2><p class="muted">Prefilled from the current engine; edit it before committing.</p></div><button class="button primary">Commit entry</button></div><label>Decision<input name="decision" value="{{ journal_prefill.decision }}"></label><label>Evidence for<textarea name="evidence_for" rows="7">{{ journal_prefill.evidence_for }}</textarea></label><label>Evidence against<textarea name="evidence_against" rows="7">{{ journal_prefill.evidence_against }}</textarea></label><label>Bias / discipline notes<textarea name="bias_notes" rows="6">{{ journal_prefill.bias_notes }}</textarea></label><div class="form-grid two"><label>Outcome later<textarea name="outcome" rows="3"></textarea></label><label>Post-mortem later<textarea name="post_mortem" rows="3"></textarea></label></div><label>Lessons later<textarea name="lessons" rows="3"></textarea></label></form><div class="panel"><h2>Journal history</h2>{% for j in journal_rows %}<div class="list-row"><div><strong>{{ j.created_at.strftime('%Y-%m-%d') }} · {{ j.decision }}</strong><p>{{ j.evidence_for[:180] if j.evidence_for else 'No evidence-for note' }}</p></div><span class="status-chip">{{ j.research_state }}</span></div>{% else %}<p class="muted">No committed journal entry yet.</p>{% endfor %}</div></div>
-
+    <div class="two-col">
+      <form class="panel stack" method="post" action="{{ url_for('web.add_journal', ticker=security.ticker) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="panel-head"><div><p class="eyebrow">DECISION JOURNAL</p><h2>Freeze the decision</h2><p class="muted">The original evidence, valuation and invalidation snapshot becomes immutable. Outcomes are appended later.</p></div><button class="button primary">Commit entry</button></div>
+        <label>Decision<input name="decision" value="{{ journal_prefill.decision }}"></label>
+        <label>Evidence for<textarea name="evidence_for" rows="7">{{ journal_prefill.evidence_for }}</textarea></label>
+        <label>Evidence against<textarea name="evidence_against" rows="7">{{ journal_prefill.evidence_against }}</textarea></label>
+        <label>Bias / discipline notes<textarea name="bias_notes" rows="6">{{ journal_prefill.bias_notes }}</textarea></label>
+      </form>
+      <div class="panel">
+        <div class="panel-head"><div><p class="eyebrow">HISTORY</p><h2>Frozen decisions + appended outcomes</h2></div></div>
+        {% for j in journal_rows %}
+          <div class="journal-entry">
+            <div class="list-row"><div><strong>{{ j.created_at.strftime('%Y-%m-%d') }} · {{ j.decision }}</strong><p>{{ j.evidence_for[:180] if j.evidence_for else 'No evidence-for note' }}</p></div><span class="status-chip">{{ j.research_state }}</span></div>
+            {% set outcomes = journal_outcomes|selectattr('journal_id','equalto',j.id)|list %}
+            {% for o in outcomes %}
+              <div class="journal-outcome">
+                <small>{{ o.created_at.strftime('%Y-%m-%d %H:%M') }} · APPENDED OUTCOME</small>
+                {% if o.outcome %}<p><strong>Outcome:</strong> {{ o.outcome }}</p>{% endif %}
+                {% if o.post_mortem %}<p><strong>Post-mortem:</strong> {{ o.post_mortem }}</p>{% endif %}
+                {% if o.lessons %}<p><strong>Lessons:</strong> {{ o.lessons }}</p>{% endif %}
+              </div>
+            {% endfor %}
+            <details class="journal-outcome-editor">
+              <summary>Append outcome / post-mortem</summary>
+              <form class="stack" method="post" action="{{ url_for('web.add_journal_outcome', ticker=security.ticker, journal_id=j.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label>Outcome<textarea name="outcome" rows="3"></textarea></label>
+                <label>Post-mortem<textarea name="post_mortem" rows="3"></textarea></label>
+                <label>Lessons<textarea name="lessons" rows="3"></textarea></label>
+                <button class="button small" type="submit">Append without rewriting decision</button>
+              </form>
+            </details>
+          </div>
+        {% else %}<p class="muted">No committed journal entry yet.</p>{% endfor %}
+      </div>
+    </div>
   {% elif section == 'audit' %}
     <div class="two-col"><div class="panel"><div class="panel-head"><h2>Sources</h2><span class="status-chip">{{ sources|length }}</span></div>{% for s in sources[:40] %}<div class="list-row"><div><strong>{{ s.provider }} · {{ s.source_type }}</strong><p>{{ s.title }} · {{ s.retrieved_at }}</p></div>{% if s.url %}<a class="button micro" href="{{ s.url }}" target="_blank" rel="noopener">Open</a>{% endif %}</div>{% else %}<p class="muted">No sources stored.</p>{% endfor %}</div><div class="panel"><div class="panel-head"><h2>Refresh audit</h2></div>{% for r in refresh_runs %}<div class="list-row"><div><strong>{{ r.refresh_type }}</strong><p>{{ r.started_at }}{% if r.finished_at %} → {{ r.finished_at }}{% endif %}</p></div><span class="status-chip">{{ r.status }}</span></div>{% else %}<p class="muted">No refresh runs.</p>{% endfor %}</div></div>
     <details class="panel"><summary><strong>Field provenance</strong></summary><div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Field</th><th>Provider</th><th>Period</th><th>Notes</th></tr></thead><tbody>{% for p in provenance %}<tr><td>{{ p.field_name }}</td><td>{{ p.provider }}</td><td>{{ p.financial_period_id or '—' }}</td><td>{{ p.notes }}</td></tr>{% endfor %}</tbody></table></div></details>
