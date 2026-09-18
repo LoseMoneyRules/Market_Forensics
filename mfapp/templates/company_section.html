@@ -15,6 +15,7 @@
       <div class="company-market"><span>Current price · refreshes every 5 min</span><strong data-live-price>{% if market %}${{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</strong><small data-live-price-meta>{% if market %}<i class="live-dot"></i>{{ market.provider }} · {{ market.as_of.strftime('%Y-%m-%d %H:%M') }}{% else %}<i class="live-dot stale"></i>No stored quote{% endif %}</small></div>
       <div class="report-actions">
         <a class="button" href="{{ url_for('web.research_report', ticker=security.ticker, fmt='pdf', mode='executive') }}">Executive PDF</a>
+        <a class="button" href="{{ url_for('web.research_report', ticker=security.ticker, fmt='pdf', mode='full') }}">Full PDF</a>
         <a class="button" href="{{ url_for('web.research_report', ticker=security.ticker, fmt='docx', mode='full') }}">Full Word</a>
       </div>
       <form method="post" action="{{ url_for('web.snapshot_company', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Publish research</button><small class="action-hint">One publication · role-specific view</small></form>
