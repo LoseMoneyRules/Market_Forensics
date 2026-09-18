@@ -32,6 +32,7 @@
 - Expectations has a current observed basis strip: Revenue growth, Gross Margin, Operating Margin, FCF Margin, Cash Quality (CFO/NI) and ROIC.
 - Settings Refresh Runs is collapsed like Recent Jobs.
 - Research Command Center removes Discover/Portfolio shortcuts, moves Refresh stale/all under the Process/Validate legend, removes bold from Research Conclusion, and gives Next Action/Lens/Manage safe wrapping/width.
+- Overview Evidence Diagnostic is consolidated into the canonical FOR / AGAINST panel. Each visible signal shows its signed contribution weight; only the small summed diagnostic score remains. Threshold/validation cards are removed from this panel because they duplicate canonical Decision Lenses, readiness and Validate state.
 - Readiness is served from live DB state rather than the heavy research cache. Monitoring accepts a locked thesis invalidation or active monitoring rules as evidence. Decision Journal closes as soon as a persisted journal exists.
 - Research gate approvals are monotonic: changed evidence is flagged as changed/stale for review but an approval does not silently reopen until CONTROL explicitly reopens/revokes it.
 - Business adds sourced macro FOR/AGAINST evidence from background FRED context (rates, credit, USD, oil, inflation, industrial production, retail sales) mapped to explicit sector sensitivities. Macro fetching never runs during normal GET navigation.
@@ -432,6 +433,12 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 ---
 
 ## 11. Merge / deploy state
+
+CURRENT_STATE transition rule:
+- on PR/branch: document the current production baseline and candidate;
+- immediately when the release is merged to `main`: update this file on `main` to record the actual main commit and mark deploy as pending;
+- immediately after successful Namecheap deploy: update this file on `main` again with the deploy run, production version and production health result;
+- never leave an older production/main statement in this file after either transition.
 
 Required sequence:
 
