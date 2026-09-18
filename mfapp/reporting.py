@@ -106,7 +106,7 @@ def _plain_research_lines(data: dict[str, Any]) -> list[str]:
         lines.append(f"• {row.get('label') or 'Evidence'} — {row.get('detail') or ''}")
     if data.get("mode") == "full":
         for label,key in [
-            ("BUSINESS","business"),("NUMBERS","numbers"),("EXPECTATIONS","expectations_summary"),
+            ("BUSINESS","business"),("FUNDAMENTALS","numbers"),("EXPECTATIONS","expectations_summary"),
             ("VALUATION","valuation_notes"),("BEAR CASE","bear_case_summary"),("CATALYSTS","catalysts_summary"),
             ("FINANCIAL FLOWS","flows_summary"),("MANAGEMENT","management_summary"),("TAPE / FLOWS","tape_summary"),
             ("RESEARCH INVALIDATION","risk_summary"),
@@ -182,7 +182,7 @@ def _fallback_docx(lines: list[str]) -> BytesIO:
         rpr="<w:rPr><w:b/></w:rPr>" if bold else ""
         return f'<w:p><w:r>{rpr}<w:t xml:space="preserve">{safe}</w:t></w:r></w:p>'
     body=[]
-    heading_words={"RESEARCH LENSES","THESIS","COUNTER-EVIDENCE","MARKET VIEW","OUR VARIANT","EVIDENCE FOR","EVIDENCE AGAINST","BUSINESS","NUMBERS","EXPECTATIONS","VALUATION","BEAR CASE","CATALYSTS","FINANCIAL FLOWS","MANAGEMENT","TAPE / FLOWS","RESEARCH INVALIDATION","AUTOMATIC TRIANGULATION","MANAGEMENT PROMISES VS ACTUALS","SOURCES"}
+    heading_words={"RESEARCH LENSES","THESIS","COUNTER-EVIDENCE","MARKET VIEW","OUR VARIANT","EVIDENCE FOR","EVIDENCE AGAINST","BUSINESS","FUNDAMENTALS","EXPECTATIONS","VALUATION","BEAR CASE","CATALYSTS","FINANCIAL FLOWS","MANAGEMENT","TAPE / FLOWS","RESEARCH INVALIDATION","AUTOMATIC TRIANGULATION","MANAGEMENT PROMISES VS ACTUALS","SOURCES"}
     for idx,line in enumerate(lines):
         body.append(p(line, bold=(idx<3 or str(line).upper() in heading_words)))
     document='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+        ''.join(body)+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>'
@@ -577,7 +577,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
 
     if data["mode"] == "full":
         for label,key in [
-            ("Business","business"),("Numbers","numbers"),("Expectations","expectations_summary"),
+            ("Business","business"),("Fundamentals","numbers"),("Expectations","expectations_summary"),
             ("Valuation","valuation_notes"),("Bear Case","bear_case_summary"),("Catalysts","catalysts_summary"),
             ("Financial Flows","flows_summary"),("Management","management_summary"),("Tape / Flows","tape_summary"),
             ("Research invalidation / risk summary","risk_summary"),
