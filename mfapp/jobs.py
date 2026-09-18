@@ -486,7 +486,7 @@ def _stale(user_id: int) -> dict[str, Any]:
 
 
 def _store_finra_bundle(security: Security, bundle: dict[str, Any]) -> dict[str, Any]:
-    result = {"daily_rows": 0, "short_interest_rows": 0, "threshold_rows": 0, "api_configured": bool(bundle.get("api_configured")), "errors": bundle.get("errors") or []}
+    result = {"daily_rows": 0, "short_interest_rows": 0, "threshold_rows": 0, "ats_rows": 0, "api_configured": bool(bundle.get("api_configured")), "errors": bundle.get("errors") or []}
     daily = list(bundle.get("daily_short_volume") or [])
     if daily:
         source = Source(company_id=security.company_id, provider="FINRA", source_type="REGSHO_DAILY_SHORT_VOLUME", title=f"{security.ticker} FINRA daily short-sale volume", url=FINRA_DAILY_CDN + "/", retrieved_at=utcnow(), meta={"rows": len(daily)})
@@ -499,6 +499,10 @@ def _store_finra_bundle(security: Security, bundle: dict[str, Any]) -> dict[str,
     if threshold:
         source = Source(company_id=security.company_id, provider="FINRA", source_type="THRESHOLD_HISTORY", title=f"{security.ticker} FINRA threshold history", url="https://api.finra.org/data/group/otcMarket/name/thresholdList", retrieved_at=utcnow(), meta={"rows": len(threshold)})
         db.session.add(source); db.session.flush(); db.session.add(Event(company_id=security.company_id, source_id=source.id, event_type="FINRA_THRESHOLD_HISTORY", title=f"{security.ticker} FINRA threshold-list refresh", event_date=utcnow(), payload={"rows": threshold[-120:]})); result["threshold_rows"] = len(threshold)
+    ats = list(bundle.get("weekly_otc") or [])
+    if ats:
+        source = Source(company_id=security.company_id, provider="FINRA", source_type="OTC_WEEKLY_SUMMARY", title=f"{security.ticker} FINRA ATS / non-ATS weekly summary", url="https://api.finra.org/data/group/otcMarket/name/weeklySummary", retrieved_at=utcnow(), meta={"rows": len(ats), "delayed": True})
+        db.session.add(source); db.session.flush(); db.session.add(Event(company_id=security.company_id, source_id=source.id, event_type="FINRA_ATS_SERIES", title=f"{security.ticker} FINRA ATS / non-ATS refresh", event_date=utcnow(), payload={"rows": ats[-60:], "delayed": True})); result["ats_rows"] = len(ats)
     db.session.commit(); return result
 
 
@@ -566,7 +570,7 @@ def _execute(job: Job) -> dict[str, Any]:
         db.session.add(Event(
             company_id=security.company_id,
             event_type="ALPACA_POSITIONING",
-            title=f"{security.ticker} borrow/options positioning",
+            title=f"{security.ticker} institutional-flow / borrow / options positioning",
             event_date=utcnow(),
             payload=bundle,
         ))
