@@ -39,7 +39,7 @@ from .symbols import validate_ticker
 bp = Blueprint("web", __name__)
 
 SECTIONS = [
-    ("overview", "Overview"), ("business", "Business"), ("numbers", "Numbers"),
+    ("overview", "Overview"), ("business", "Business"), ("fundamentals", "Fundamentals"),
     ("expectations", "Expectations"), ("valuation", "Valuation"), ("bear-case", "Bear Case"),
     ("catalysts", "Catalysts"), ("financial-flows", "Financial Flows"),
     ("management", "Management"), ("tape", "Tape / Flows"), ("monitoring", "Monitoring"),
@@ -47,7 +47,7 @@ SECTIONS = [
 ]
 SECTION_KEYS = {key for key, _ in SECTIONS}
 RESEARCH_FIELDS = {
-    "business": "business", "numbers": "numbers", "expectations": "expectations",
+    "business": "business", "fundamentals": "numbers", "expectations": "expectations",
     "bear-case": "bear_case_summary", "catalysts": "catalysts_summary",
     "management": "management_summary", "tape": "tape_summary", "financial-flows": "flows_summary",
 }
@@ -598,6 +598,8 @@ def company_default(ticker):
 @login_required
 def company_section(ticker, section):
     require_control_view()
+    if section == "numbers":
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="fundamentals"), code=301)
     if section not in SECTION_KEYS: abort(404)
     ctx = _ctx(ticker); company = ctx["company"]; coverage = ctx["coverage"]; extra = {}
     cache = ctx.get("research_cache") or {}
@@ -628,7 +630,7 @@ def company_section(ticker, section):
             (ctx["decision_lenses"].get("implied_expectations") or {})
             or {"available": False, "classification": "CALCULATING" if ctx.get("cache_pending") else "UNAVAILABLE", "drivers": [], "errors": []}
         )
-    elif section == "numbers":
+    elif section == "fundamentals":
         financials = annual_rows(company.id, 15)
         quarterly_financials = quarterly_rows(company.id, 12)
         current_financial = current_row(company.id)
