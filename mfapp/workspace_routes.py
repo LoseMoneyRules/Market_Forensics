@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from flask import abort, g, jsonify, redirect, request, url_for
 
 from .access import audit, require_control_view
-from .core_models import ResearchGateApproval
+from .core_models import Job, ResearchGateApproval
 from .data_providers import latest_snapshot
 from .extensions import db
 from .jobs import enqueue_job
@@ -54,6 +54,24 @@ def approve_research_gate(ticker: str, gate_key: str):
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
 
+def _quote_is_fresh(snap) -> bool:
+    return bool(snap and snap.as_of and snap.as_of >= utcnow() - timedelta(minutes=5))
+
+
+def _recent_market_refresh(user_id: int, security_id: int):
+    return (
+        Job.query.filter(
+            Job.user_id == user_id,
+            Job.security_id == security_id,
+            Job.job_type == "MARKET_REFRESH",
+            Job.status.in_(["DONE", "FAILED", "CANCELLED"]),
+            Job.finished_at.is_not(None),
+        )
+        .order_by(Job.finished_at.desc(), Job.id.desc())
+        .first()
+    )
+
+
 @bp.get("/company/<ticker>/price/live")
 @role_required("CONTROL")
 def live_price(ticker: str):
@@ -64,6 +82,7 @@ def live_price(ticker: str):
         "provider": snap.provider if snap else None,
         "as_of": snap.as_of.isoformat() if snap and snap.as_of else None,
         "quality": snap.quality if snap else None,
+        "fresh": _quote_is_fresh(snap),
     })
 
 
@@ -71,22 +90,34 @@ def live_price(ticker: str):
 @role_required("CONTROL")
 def refresh_price(ticker: str):
     require_control_view(); ctx = _ctx(ticker); snap = latest_snapshot(ctx["security"].id)
-    fresh = bool(snap and snap.as_of and snap.as_of >= utcnow() - timedelta(minutes=5))
+    fresh = _quote_is_fresh(snap)
     job = None
+    recent = None
+    cooldown = False
+    retry_after_seconds = 0
     if not fresh:
-        job = enqueue_job(
-            "MARKET_REFRESH", user_id=g.user.id, company_id=ctx["company"].id,
-            security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10,
-        )
+        recent = _recent_market_refresh(g.user.id, ctx["security"].id)
+        if recent and recent.finished_at:
+            elapsed = max(0.0, (utcnow() - recent.finished_at).total_seconds())
+            window = 60 if recent.status == "FAILED" else 5 * 60
+            cooldown = elapsed < window
+            retry_after_seconds = max(0, int(window - elapsed)) if cooldown else 0
+        if not cooldown:
+            job = enqueue_job(
+                "MARKET_REFRESH", user_id=g.user.id, company_id=ctx["company"].id,
+                security_id=ctx["security"].id, payload={"coverage_id": ctx["coverage"].id}, priority=10,
+            )
     reused = bool(job and getattr(job, "_mf_reused", False))
     queued = bool(job and not reused)
-    status = "FRESH" if fresh else ("REUSED" if reused else "QUEUED")
+    status = "FRESH" if fresh else ("COOLDOWN" if cooldown else ("REUSED" if reused else "QUEUED"))
     return jsonify({
         "status": status,
         "fresh": fresh,
         "queued": queued,
         "reused": reused,
-        "job_id": job.id if job else None,
+        "cooldown": cooldown,
+        "retry_after_seconds": retry_after_seconds,
+        "job_id": job.id if job else (recent.id if cooldown and recent else None),
         "ticker": ctx["security"].ticker,
         "price": float(snap.price) if snap else None,
         "provider": snap.provider if snap else None,
