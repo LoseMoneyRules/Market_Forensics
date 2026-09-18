@@ -36,6 +36,11 @@ Final 0.2.8 micro-polish merged through PR #30:
 - Coverage rows are sorted alphabetically by ticker before rendering.
 - VERSION remains `0.2.8`; no architecture, data, provider, report or deployment behavior changes.
 
+Current same-version typography/readiness polish:
+- Process Readiness gate links use regular weight; bold is intentionally minimized throughout the product.
+- Approve/Reopen re-evaluates Decision Lenses from already-materialized evidence and updates Research conclusion immediately; it does not enqueue a heavy RECALCULATE or call external providers.
+- Closing the final Research gate therefore moves an unvalidated file from RESEARCH INCOMPLETE to READY TO VALIDATE immediately when the cached evidence is otherwise unchanged.
+
 Second same-version polish merged through PR #29:
 - Coverage moves Refresh stale / Refresh all below the table and its single Process/Validate note; a fully approved process displays only READY rather than 13/13 plus READY.
 - Validate keeps the walk-forward action bar immediately below the Research tabs.
