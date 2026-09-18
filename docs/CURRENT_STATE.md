@@ -25,7 +25,7 @@ Deploy #40 is the authoritative production baseline. PR #29 keeps VERSION and ar
 
 ## 0.2.8 release scope
 
-Final 0.2.8 micro-polish candidate on `polish/0.2.8-readiness-links-sort`:
+Final 0.2.8 micro-polish merged through PR #30:
 - Process Readiness gate names link directly to their corresponding Research page.
 - Coverage rows are sorted alphabetically by ticker before rendering.
 - VERSION remains `0.2.8`; no architecture, data, provider, report or deployment behavior changes.
