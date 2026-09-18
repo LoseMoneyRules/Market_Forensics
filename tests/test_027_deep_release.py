@@ -8,6 +8,7 @@ from mfapp import create_app
 from mfapp.core_models import (
     Company, Coverage, DecisionJournal, ResearchGateApproval, Security,
 )
+from mfapp.calculations import financial_metrics
 from mfapp.extensions import db
 from mfapp.models import User
 from mfapp.readiness import research_readiness
@@ -176,6 +177,56 @@ def test_027_expectations_and_fundamentals_always_show_current_basis_contract(tm
     assert "ROIC" in html
     assert "Needs operating income, tax, debt, equity & cash" not in html or "ROIC" in html
 
+
+
+
+def test_027_gross_margin_uses_exact_revenue_cogs_bridge_without_guessing():
+    metrics = financial_metrics({"revenue": 1000, "cogs": 600, "gross_profit": None}, {})
+    assert round(metrics["gross_margin_pct"], 2) == 40.00
+    incomplete = financial_metrics({"revenue": 1000, "cogs": None, "gross_profit": None}, {})
+    assert incomplete["gross_margin_pct"] is None
+
+
+def test_027_publication_snapshot_freezes_forensic_valuation_contract(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "publication_valuation")
+    uid, coverage_id, _ = seed_control_workspace(app)
+
+    monkeypatch.setattr(
+        "mfapp.triangulation_engine.automatic_triangulation",
+        lambda company_id, user_id=None: {"peer_value_crosscheck": {"eligible": True, "estimate": 123.0}},
+    )
+    monkeypatch.setattr(
+        "mfapp.triangulation_engine.apply_peer_valuation_overlay",
+        lambda valuation, triangulation: {
+            **dict(valuation or {}),
+            "base": 123.0,
+            "peer_overlay": {"applied": True, "peer_estimate": 123.0, "applied_factor": 1.05},
+        },
+    )
+
+    with app.app_context():
+        from mfapp.services import create_snapshot
+        coverage = db.session.get(Coverage, coverage_id)
+        snapshot = create_snapshot(coverage, uid)
+        assert snapshot.payload["valuation"]["base"] == 123.0
+        assert snapshot.payload["valuation"]["peer_overlay"]["applied"] is True
+
+
+def test_027_business_get_never_fetches_macro_provider(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "macro_get")
+    uid, _, _ = seed_control_workspace(app)
+    client = app.test_client()
+    login(client, uid)
+    calls = {"n": 0}
+
+    def forbidden_fetch(*args, **kwargs):
+        calls["n"] += 1
+        raise AssertionError("normal GET must not fetch FRED")
+
+    monkeypatch.setattr("mfapp.macro_context.requests.get", forbidden_fetch)
+    response = client.get("/company/EXM/business")
+    assert response.status_code == 200
+    assert calls["n"] == 0
 
 def test_027_peer_overlay_is_bounded_auditable_and_never_peer_only():
     base = {"bear": 70.0, "base": 100.0, "bull": 150.0, "expected_value": 105.0}
