@@ -12,14 +12,14 @@ from cryptography.fernet import Fernet
 from mfapp import create_app
 from mfapp.alert_engine import alert_email as account_alert_email
 from mfapp.calculations import CALCULATION_VERSION, financial_metrics
-from mfapp.core_models import Catalyst, Company, Coverage, Event, HistoricalPrice, MarketSnapshot, MonitoringRule, Position, RiskPlan, Security
+from mfapp.core_models import Catalyst, Company, Coverage, Event, HistoricalPrice, Job, MarketSnapshot, MonitoringRule, Position, RiskPlan, Security
 from mfapp.decision_engine import build_research_intelligence
 from mfapp.discovery_engine import classify_coverage
 from mfapp.extensions import db
 from mfapp.models import User, UserPreference
 from mfapp.readiness import research_readiness
 from mfapp.security import encrypt_secret, hash_password
-from mfapp.reporting import get_report_branding, research_report_data, set_report_branding
+from mfapp.reporting import get_report_branding, render_discovery_pdf, research_report_data, set_report_branding
 from mfapp.services import create_snapshot, ensure_workspace, publication_payload
 
 
@@ -133,6 +133,9 @@ def test_020_canonical_routes_and_runtime_assets(tmp_path, monkeypatch):
         "/alerts/email",
         "/alerts/subscription/<int:coverage_id>",
         "/company/<ticker>/alerts/rule/<int:rule_id>",
+        "/company/<ticker>/tape/borrow-fee",
+        "/discovery/report/pdf",
+        "/settings/report-branding",
     }
     assert expected <= routes
 
@@ -477,11 +480,14 @@ def test_020_automatic_triangulation_uses_exact_sic_and_peer_medians(tmp_path, m
         }
         metrics = {
             company_id: {"company_id": company_id, "ticker": "EXM", "revenue_growth_pct": 15, "operating_margin_pct": 18, "fcf_margin_pct": 12,
-                         "inventory_to_revenue_pct": 10, "receivables_to_revenue_pct": 11, "asset_turnover": 1.5, "share_change_pct": -2, "fcf_yield_pct": 8, "market_cap": 10_000},
+                         "inventory_to_revenue_pct": 10, "receivables_to_revenue_pct": 11, "asset_turnover": 1.5, "roic_pct": 20,
+                         "share_change_pct": -2, "pe": 14, "ev_sales": 1.7, "fcf_yield_pct": 8, "market_cap": 10_000},
             p1.id: {"company_id": p1.id, "ticker": "P1", "revenue_growth_pct": 5, "operating_margin_pct": 10, "fcf_margin_pct": 6,
-                    "inventory_to_revenue_pct": 14, "receivables_to_revenue_pct": 15, "asset_turnover": 1.0, "share_change_pct": 2, "fcf_yield_pct": 4, "market_cap": 9_000},
+                    "inventory_to_revenue_pct": 14, "receivables_to_revenue_pct": 15, "asset_turnover": 1.0, "roic_pct": 10,
+                    "share_change_pct": 2, "pe": 20, "ev_sales": 2.5, "fcf_yield_pct": 4, "market_cap": 9_000},
             p2.id: {"company_id": p2.id, "ticker": "P2", "revenue_growth_pct": 7, "operating_margin_pct": 12, "fcf_margin_pct": 7,
-                    "inventory_to_revenue_pct": 13, "receivables_to_revenue_pct": 14, "asset_turnover": 1.1, "share_change_pct": 1, "fcf_yield_pct": 5, "market_cap": 11_000},
+                    "inventory_to_revenue_pct": 13, "receivables_to_revenue_pct": 14, "asset_turnover": 1.1, "roic_pct": 12,
+                    "share_change_pct": 1, "pe": 22, "ev_sales": 2.7, "fcf_yield_pct": 5, "market_cap": 11_000},
         }
         monkeypatch.setattr(tri, "_sec_meta", lambda cid: meta.get(cid, {}))
         monkeypatch.setattr(tri, "_metric_row", lambda company, user_id=None: metrics.get(company.id))
@@ -490,6 +496,8 @@ def test_020_automatic_triangulation_uses_exact_sic_and_peer_medians(tmp_path, m
         assert result["method"] == "EXACT SIC"
         assert len(result["peers"]) == 2
         assert any(row["label"] == "Revenue growth" and row["state"] == "STRENGTH" for row in result["signals"])
+        assert {"ROIC", "P/E", "EV / Sales"} <= {row["label"] for row in result["comparisons"]}
+        assert any(row["state"] == "RELATIVE VALUE + QUALITY" for row in result["signals"])
 
 
 def test_020_management_promises_parse_and_score_met_miss(tmp_path, monkeypatch):
@@ -539,12 +547,21 @@ def test_020_tape_reads_options_borrow_turnover_and_resilience(tmp_path, monkeyp
                 "locate": {},
             },
         ))
+        db.session.add(Event(
+            company_id=company_id,
+            event_type="BORROW_FEE_OBSERVATION",
+            title="borrow fee",
+            event_date=datetime.now(timezone.utc).replace(tzinfo=None),
+            payload={"annualized_fee_pct": 3.25, "source": "TEST BROKER"},
+        ))
         db.session.commit()
         security = db.session.get(Security, security_id)
         tape = tape_series(security, 6)
         metrics = tape["metrics"]
         assert metrics["put_call_oi"] == pytest.approx(.70)
         assert metrics["borrow_status"] == "easy_to_borrow"
+        assert metrics["borrow_fee_pct"] == pytest.approx(3.25)
+        assert metrics["borrow_fee_source"] == "TEST BROKER"
         assert metrics["turnover_ratio_20d"] is not None
         assert metrics["price_resilience"] is not None
         assert metrics["rank_score"] is not None
@@ -580,6 +597,8 @@ def test_020_market_wide_discovery_uses_screeners_without_guessing_fair_value(tm
         assert "HIGH ACTIVITY" in aaa["lenses"]
         assert "PRICE DISLOCATION" in aaa["lenses"]
         assert "DEEP RESEARCH REQUIRED" in aaa["lenses"]
+        bbb = next(row for row in result["candidates"] if row["ticker"] == "BBB")
+        assert "POTENTIAL SHORT" in bbb["lenses"]
         assert "base_gap_pct" not in aaa or not aaa.get("known_context")
 
 
@@ -619,3 +638,46 @@ def test_020_complete_parity_surfaces_and_canonical_conclusion_contract():
     assert "{{ intelligence.action }}" not in portfolio
     assert "decision_lenses.research_conclusion" in base
     assert "row.decision_lenses.research_conclusion" in dashboard
+
+
+def test_020_discovery_landscape_pdf_and_full_refresh_contract(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, _, _, _ = seed_workspace(app)
+    scan = {
+        "universe_source": "TEST",
+        "candidates": [
+            {"ticker": "AAA", "scan_score": 82.5, "move_pct": 12.0, "activity_rank": 1, "lenses": ["HIGH ACTIVITY", "PRICE DISLOCATION"]},
+            {"ticker": "BBB", "scan_score": 75.0, "move_pct": -10.0, "activity_rank": 2, "lenses": ["POTENTIAL SHORT"]},
+        ],
+    }
+    pdf = render_discovery_pdf(scan, {"title": "Market Forensics", "footer": "Lose Money Rules", "logo_url": ""})
+    assert len(pdf.getvalue()) > 700
+    jobs = Path("mfapp/jobs.py").read_text()
+    assert '("POSITIONING_REFRESH", 75)' in jobs
+    assert '("MANAGEMENT_SCAN", 80)' in jobs
+    assert "MANAGEMENT_GUIDANCE_SCAN" in jobs
+
+
+def test_020_borrow_fee_route_stores_sourced_context(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, _, _ = seed_workspace(app)
+    client = app.test_client(); login_control(client, uid)
+    response = client.post("/company/EXM/tape/borrow-fee", data={
+        "annualized_fee_pct": "4.75",
+        "source": "Prime broker",
+        "note": "Observed at market open",
+    }, follow_redirects=False)
+    assert response.status_code == 302
+    with app.app_context():
+        event = Event.query.filter_by(company_id=company_id, event_type="BORROW_FEE_OBSERVATION").order_by(Event.id.desc()).first()
+        assert event is not None
+        assert float(event.payload["annualized_fee_pct"]) == pytest.approx(4.75)
+        assert event.payload["source"] == "Prime broker"
+
+
+def test_020_reports_expose_full_pdf_and_discovery_report_actions():
+    company = Path("mfapp/templates/company_section.html").read_text()
+    discovery = Path("mfapp/templates/discovery.html").read_text()
+    assert "Full PDF" in company
+    assert "Full Word" in company
+    assert "Landscape PDF" in discovery
