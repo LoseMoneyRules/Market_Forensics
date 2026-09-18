@@ -2,18 +2,10 @@
 {% block title %}{{ security.ticker }} · Portfolio · Market Forensics{% endblock %}
 {% block content %}
 <section class="page company-page">
-  <div class="company-head">
-    <div>
-      <div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>Private portfolio workspace</span></div>
-      <h1>{{ company.display_name }}</h1>
-      <div class="company-states">
-        <span>Research <strong>{{ coverage.research_state }}</strong></span>
-        <span>Validation <strong>{{ readiness.validation.state }}</strong></span>
-        <span>Research conclusion <strong>{{ decision_lenses.research_conclusion }}</strong></span>
-      </div>
-    </div>
-    <div class="company-actions"><a class="button" href="{{ url_for('web.company_section', ticker=security.ticker, section='overview') }}">Open Research</a><a class="button" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>
-  </div>
+  {% set company_header_context = 'Private portfolio workspace' %}
+  {% set company_header_states = [('Research', coverage.research_state), ('Validation', readiness.validation.state), ('Research conclusion', decision_lenses.research_conclusion)] %}
+  {% include "_company_header.html" %}
+  <div class="command-actions company-context-actions"><a class="button" href="{{ url_for('web.company_section', ticker=security.ticker, section='overview') }}">Open Research</a><a class="button" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>
   <div class="kpi-grid">
     <div class="kpi"><span>Current price</span><strong>{% if market %}&#36;{{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</strong></div>
     <div class="kpi"><span>Bear</span><strong>{% if valuation.bear is not none %}&#36;{{ '%.2f'|format(valuation.bear) }}{% else %}—{% endif %}</strong></div>
