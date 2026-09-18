@@ -12,20 +12,20 @@
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
 **Production:** 0.2.8 on Namecheap  
-**Verified production baseline:** deploy run `35380547531` / deploy #40 = completed / success on main commit `371af002bf9a74f9b302a7489a1b93624c6042ea`; candidate health + post-cleanup health passed with `version = 0.2.8`, `reports = rich`  
-**Persistent report vendor verification:** deploy #40 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
-**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; UI/report polish PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; data-completeness/layout polish PR #29 at `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; VERSION remains `0.2.8`  
-**Latest verified main CI:** run `35384935210` / #842 = completed / success on `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**0.2.8 production deploy:** deploy #40 includes PR #28 / main through `371af002bf9a74f9b302a7489a1b93624c6042ea`; PR #29 is not yet deployed  
-**Release phase:** 0.2.8 + PR #28 polish are LIVE; PR #29 is complete and validated on main and needs a separate Namecheap deploy; final micro-polish candidate is pending CI / merge  
-**Branch:** `polish/0.2.8-readiness-links-sort`
+**Verified production baseline:** deploy run `35385879326` / deploy #42 = completed / success on main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; candidate health + post-cleanup health passed with `version = 0.2.8`, `architecture = web-native`, `database = primary`, `reports = rich`  
+**Persistent report vendor verification:** deploy #42 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
+**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; UI/report polish PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; data-completeness/layout polish PR #29 at `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; readiness-links/alphabetical-Coverage PR #30 at `e225e1af5990b8102bf98138cb508c1e7347ab26`; Business partial-peer hotfix PR #31 at `20c9048dadd7efe33e32c162f8bfeae0f75bdfba`; VERSION remains `0.2.8`  
+**Latest verified main CI:** run `35386419346` / #850 = completed / success on `20c9048dadd7efe33e32c162f8bfeae0f75bdfba`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**0.2.8 production deploy:** deploy #42 includes PR #29 + PR #30 through main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; PR #31 Business hotfix is merged/tested on main but not yet deployed  
+**Release phase:** 0.2.8 through PR #30 is LIVE; PR #31 is complete and validated on main and needs one new Namecheap deploy  
+**Branch:** `main`
 
-Deploy #40 is the authoritative production baseline. PR #29 keeps VERSION and architecture unchanged. After its production deploy, existing normalized fundamentals need one SEC re-ingest (Refresh all or per-company Refresh SEC + TTM) to benefit from the broader mappings; Recalculate alone only rebuilds analytics from already-stored normalized facts.
+Deploy #42 is the authoritative production baseline. PR #31 does not change VERSION or architecture. After the next deploy, existing old/partial peer-overlay cache payloads must render safely without requiring a recalculation; future recalculations also write the complete peer-overlay schema.
 ---
 
 ## 0.2.8 release scope
 
-Business partial-peer hotfix candidate:
+Business partial-peer hotfix merged through PR #31:
 - `/company/<ticker>/business` must render when automatic triangulation has peers but the relative-value overlay is not yet eligible.
 - `peer_overlay` now keeps a stable schema even when not applied; Business also reads old/partial cached overlay fields defensively.
 - Regression reproduces an ORCL-style cached payload with peers present, only one valuation method, and no legacy `intrinsic_base` key.
