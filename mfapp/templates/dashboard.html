@@ -18,7 +18,7 @@
   {% for row in rows %}
     {% if row.readiness.ready_to_validate %}{% set ns.ready = ns.ready + 1 %}{% endif %}
     {% if row.readiness.validation.state == 'VALIDATED' %}{% set ns.validated = ns.validated + 1 %}{% endif %}
-    {% if row.intelligence.stance == 'DATA REVIEW' %}{% set ns.review = ns.review + 1 %}{% endif %}
+    {% if row.decision_lenses.research_conclusion == 'DATA REVIEW' %}{% set ns.review = ns.review + 1 %}{% endif %}
   {% endfor %}
   <div class="kpi-grid compact">
     <div class="kpi"><span>Coverage</span><strong>{{ rows|length }}</strong></div>
@@ -30,7 +30,7 @@
 
   {% if rows %}
   <div class="table-card scroll"><table class="data-table coverage-table">
-    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th>Price</th><th>Bear</th><th>Base</th><th>Bull</th><th>Base gap</th><th>Process</th><th>Validate</th><th>Lens</th><th>Manage</th></tr></thead>
+    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th>Price</th><th>Bear</th><th>Base</th><th>Bull</th><th>Base gap</th><th>Process</th><th>Validate</th><th>Freshness</th><th>Next action</th><th>Lens</th><th>Manage</th></tr></thead>
     <tbody>
     {% for row in rows %}
       <tr>
@@ -45,6 +45,8 @@
         <td>{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td>
         <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
         <td><span class="status-chip">{{ row.readiness.validation.state }}</span></td>
+        <td>{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}<strong>{{ '%.0f'|format(row.freshness_hours*60) }}m</strong>{% elif row.freshness_hours < 48 %}<strong>{{ '%.1f'|format(row.freshness_hours) }}h</strong>{% else %}<strong>{{ '%.1f'|format(row.freshness_hours/24) }}d</strong>{% endif %}<small class="block">Research {{ row.coverage.updated_at }}</small></td>
+        <td><strong>{{ row.next_action }}</strong></td>
         <td><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
         <td>
           <form class="coverage-manage-inline" method="post" action="{{ url_for('web.manage_coverage', ticker=row.security.ticker) }}">
