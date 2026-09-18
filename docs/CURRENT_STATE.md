@@ -57,6 +57,8 @@ The repository does not infer the currently deployed Namecheap version. 0.2.2 is
 
 A failed candidate health check must roll back automatically.
 
+**Permanent release-version rule:** GitHub test/deploy workflows must read the candidate version from the repository `VERSION` file. Release numbers must never be hard-coded in workflow health assertions. This is enforced by the release test suite so future version bumps do not require CI/deploy workflow edits.
+
 ---
 
 ## 3. Performance contract — mandatory
