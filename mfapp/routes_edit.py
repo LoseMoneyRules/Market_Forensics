@@ -284,7 +284,8 @@ def save_risk(ticker):
     risk.updated_by = g.user.id
     audit("portfolio.risk.save", "coverage", ctx["coverage"].id, {"max_loss_pct": float(risk.max_loss_pct) if risk.max_loss_pct is not None else None, "max_position_pct": float(risk.max_position_pct) if risk.max_position_pct is not None else None})
     db.session.commit()
-    flash("Portfolio risk plan saved.", "success")
+    enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
+    flash("Portfolio risk plan saved. Portfolio analytics queued for update.", "success")
     return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
 
 
@@ -313,7 +314,8 @@ def save_position(ticker):
     ctx["investment"].updated_by = g.user.id
     audit("portfolio.position.save", "coverage", ctx["coverage"].id, {"shares": float(shares), "investment_state": ctx["investment"].state})
     db.session.commit()
-    flash("Position saved.", "success")
+    enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
+    flash("Position saved. Portfolio analytics queued for update.", "success")
     return redirect(url_for("web.portfolio_security", ticker=ticker.upper()))
 
 
