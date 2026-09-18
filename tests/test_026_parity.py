@@ -316,15 +316,74 @@ def test_026_visual_contracts_cover_working_capital_and_wrapped_flows():
     assert command_table.count("<strong>") == 1
 
 
+def test_026_capital_risk_and_position_controls_live_only_in_portfolio():
+    from mfapp.routes import SECTIONS
+
+    research_sections = {key for key, _ in SECTIONS}
+    assert "risk" not in research_sections
+    assert "position" not in research_sections
+
+    research_template = Path("mfapp/templates/company_section.html").read_text()
+    validate_template = Path("mfapp/templates/validate.html").read_text()
+    portfolio_template = Path("mfapp/templates/portfolio_security.html").read_text()
+    portfolio_index = Path("mfapp/templates/portfolio.html").read_text()
+
+    forbidden_capital_controls = [
+        "Max portfolio loss budget %",
+        "Sizing reference price",
+        "Liquidity / event haircut %",
+        "Max position cap %",
+        "Average cost",
+        "Exposure tags",
+    ]
+    for label in forbidden_capital_controls:
+        assert label not in research_template
+        assert label not in validate_template
+
+    assert "RISK / POSITION" in portfolio_template
+    assert "Max portfolio loss budget %" in portfolio_template
+    assert "Sizing reference price" in portfolio_template
+    assert "Average cost" in portfolio_template
+    assert "Exposure tags" in portfolio_template
+    assert "Add / edit real position" in portfolio_index
+    assert "THESIS INVALIDATION" in research_template
+    assert "Research rule, not portfolio sizing." in research_template
+
+
+def test_026_readability_contract_has_no_tiny_ui_text():
+    css = Path("mfapp/static/css/app.css").read_text()
+    app_js = Path("mfapp/static/js/app.js").read_text()
+    flow_js = Path("mfapp/static/js/flows.js").read_text()
+    validate_js = Path("mfapp/static/js/validate_chart.js").read_text()
+    reporting = Path("mfapp/reporting.py").read_text()
+
+    assert "font-size:9px" not in css
+    assert "font-size:10px" not in css
+    assert "font-size:11px" not in css
+    assert "font-size:10.5px" not in css
+    assert "font-size:11.5px" not in css
+    assert "body{margin:0;min-height:100vh;background:var(--paper);font-size:14px;line-height:1.5}" in css
+    assert "font-size:14px;line-height:1.35" in css
+    assert "ctx.font='13px system-ui'" in app_js
+    assert "labelFont='13',valueFont='14',labelLine='15'" in flow_js
+    assert "ctx.font='13px Inter, sans-serif'" in validate_js
+    assert "font_size=11; leading=15" in reporting
+    assert 'fontSize=10.5,leading=14' in reporting
+
+
 def test_026_reports_are_first_class_production_dependencies():
     requirements = Path("requirements.txt").read_text()
     optional = Path("requirements-reporting.txt").read_text()
     workflow = Path(".github/workflows/deploy-namecheap.yml").read_text()
     reporting = Path("mfapp/reporting.py").read_text()
 
+    app_py = Path("app.py").read_text()
     assert "-r requirements-reporting.txt" in requirements
     assert "python-docx" in optional and "reportlab" in optional
     assert "assert payload['reports'] == 'rich'" in workflow
+    assert "mfapp/_reporting_vendor" in workflow
+    assert "pip install --no-compile --target .release-payload/mfapp/_reporting_vendor" in workflow
+    assert "_reporting_vendor" in app_py
     assert "'\"reports\":\"rich\"'" in workflow
     assert "Fundamentals" in reporting
     assert "Numbers" not in reporting
