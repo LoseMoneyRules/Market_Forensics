@@ -14,10 +14,10 @@
 **Production:** 0.2.8 on Namecheap  
 **Verified production baseline:** deploy run `35385879326` / deploy #42 = completed / success on main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; candidate health + post-cleanup health passed with `version = 0.2.8`, `architecture = web-native`, `database = primary`, `reports = rich`  
 **Persistent report vendor verification:** deploy #42 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
-**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; UI/report polish PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; data-completeness/layout polish PR #29 at `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; readiness-links/alphabetical-Coverage PR #30 at `e225e1af5990b8102bf98138cb508c1e7347ab26`; Business partial-peer hotfix PR #31 at `20c9048dadd7efe33e32c162f8bfeae0f75bdfba`; VERSION remains `0.2.8`  
-**Latest verified main CI:** run `35386419346` / #850 = completed / success on `20c9048dadd7efe33e32c162f8bfeae0f75bdfba`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**0.2.8 production deploy:** deploy #42 includes PR #29 + PR #30 through main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; PR #31 Business hotfix is merged/tested on main but not yet deployed  
-**Release phase:** 0.2.8 through PR #30 is LIVE; PR #31 is complete and validated on main and needs one new Namecheap deploy  
+**Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; UI/report polish PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; data-completeness/layout polish PR #29 at `1a0ed6c7953890b0cc93da6fc623de7e57e707cf`; readiness-links/alphabetical-Coverage PR #30 at `e225e1af5990b8102bf98138cb508c1e7347ab26`; Business partial-peer hotfix PR #31 at `20c9048dadd7efe33e32c162f8bfeae0f75bdfba`; minimal-bold/live-conclusion PR #32 at `54964d3d37db0a4bc6453422caae3fbb16e84755`; VERSION remains `0.2.8`  
+**Latest verified main CI:** run `35387049022` / #856 = completed / success on `54964d3d37db0a4bc6453422caae3fbb16e84755`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**0.2.8 production deploy:** deploy #42 includes PR #29 + PR #30 through main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; PR #31 + PR #32 are merged/tested on main but not yet deployed  
+**Release phase:** 0.2.8 through PR #30 is LIVE; PR #31 + PR #32 are complete and validated on main and need one new Namecheap deploy  
 **Branch:** `main`
 
 Deploy #42 is the authoritative production baseline. PR #31 does not change VERSION or architecture. After the next deploy, existing old/partial peer-overlay cache payloads must render safely without requiring a recalculation; future recalculations also write the complete peer-overlay schema.
@@ -36,7 +36,7 @@ Final 0.2.8 micro-polish merged through PR #30:
 - Coverage rows are sorted alphabetically by ticker before rendering.
 - VERSION remains `0.2.8`; no architecture, data, provider, report or deployment behavior changes.
 
-Current same-version typography/readiness polish:
+Same-version typography/readiness polish merged through PR #32:
 - Process Readiness gate links use regular weight; bold is intentionally minimized throughout the product.
 - Approve/Reopen re-evaluates Decision Lenses from already-materialized evidence and updates Research conclusion immediately; it does not enqueue a heavy RECALCULATE or call external providers.
 - Closing the final Research gate therefore moves an unvalidated file from RESEARCH INCOMPLETE to READY TO VALIDATE immediately when the cached evidence is otherwise unchanged.
