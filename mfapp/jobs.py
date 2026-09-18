@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import signal
 import requests
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -244,30 +245,46 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
     }
 
 def _discovery(user_id: int) -> dict[str, Any]:
-    """Market-wide lightweight scan plus deep-context ranking for existing Coverage."""
-    from .services import readiness, valuation_result
+    """Market-wide scan plus cache-only ranking for current Coverage."""
+    from .research_cache import latest_cache_map
+
     scan = market_scan(user_id)
+    coverages = Coverage.query.filter(
+        Coverage.user_id == user_id,
+        Coverage.status != "ARCHIVED",
+    ).all()
+    caches = latest_cache_map([row.id for row in coverages])
+    security_ids = [row.security_id for row in coverages]
+    securities = {
+        row.id: row
+        for row in Security.query.filter(Security.id.in_(security_ids)).all()
+    } if security_ids else {}
+
     ranked = []
-    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
-        security = db.session.get(Security, coverage.security_id)
+    for coverage in coverages:
+        security = securities.get(coverage.security_id)
         if not security:
             continue
-        ready = readiness(coverage)
-        val = valuation_result(coverage)
-        price, base = val.get("current_price"), val.get("base")
-        gap = ((float(base) / float(price) - 1) * 100) if base is not None and price not in (None, 0) else None
-        score = ready["done"] * 5 + (min(abs(gap), 50) if gap is not None else 0)
+        cache = dict(caches.get(coverage.id) or {})
+        readiness = dict(cache.get("readiness") or {})
+        intelligence = dict(cache.get("intelligence") or {})
+        done = int(readiness.get("done") or 0)
+        total = int(readiness.get("total") or 13)
+        gap = intelligence.get("base_gap_pct")
+        score = done * 5 + (min(abs(float(gap)), 50) if gap is not None else 0)
         ranked.append({
             "ticker": security.ticker,
-            "readiness": f"{ready['done']}/{ready['total']}",
+            "readiness": f"{done}/{total}",
             "base_gap_pct": gap,
             "score": round(score, 2),
+            "cache_ready": bool(cache),
         })
     ranked.sort(key=lambda row: row["score"], reverse=True)
     return {
         "coverage_scanned": len(ranked),
         "ranked": ranked[:25],
         "market_scan": scan,
+        "ranking_mode": "CACHE_ONLY",
     }
 
 def _prime_research_cache(user_id: int) -> dict[str, Any]:
@@ -451,6 +468,33 @@ def _execute(job: Job) -> dict[str, Any]:
     raise RuntimeError(f"Unknown job type: {kind}")
 
 
+class JobDeadlineExceeded(TimeoutError):
+    pass
+
+
+def _job_deadline_seconds(job_type: str) -> int | None:
+    # Discovery is intentionally a lightweight radar. If it exceeds this bound,
+    # something is wrong with provider/DB execution and the job must fail fast.
+    return 90 if str(job_type).upper() == "DISCOVERY_SCAN" else None
+
+
+def _execute_with_deadline(job: Job):
+    seconds = _job_deadline_seconds(job.job_type)
+    if not seconds or not hasattr(signal, "SIGALRM"):
+        return _execute(job)
+
+    def _timeout_handler(signum, frame):
+        raise JobDeadlineExceeded(f"{job.job_type} exceeded {seconds}s hard deadline")
+
+    previous = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(seconds)
+    try:
+        return _execute(job)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]:
     recover_stale_running_jobs(user_id=user_id); compact_queue(user_id=user_id); results = []
     for _ in range(max(1, min(int(limit), 50))):
@@ -467,13 +511,16 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
                               inputs={"job_id": job.id, "payload": job.payload or {}}, status="RUNNING", started_at=job.started_at)
         db.session.add_all([refresh, calc]); db.session.commit(); started = time.perf_counter()
         try:
-            payload = _execute(job); finished = utcnow(); job.status = "DONE"; job.result = payload; job.error_message = ""; job.finished_at = finished
+            payload = _execute_with_deadline(job); finished = utcnow(); job.status = "DONE"; job.result = payload; job.error_message = ""; job.finished_at = finished
             refresh.status = "DONE"; refresh.summary = payload; refresh.finished_at = finished; calc.status = "DONE"; calc.outputs = payload; calc.finished_at = finished
         except Exception as exc:
             error_id = uuid.uuid4().hex[:12]; finished = utcnow(); job.error_message = f"{type(exc).__name__}: {exc}"[:4000]; job.finished_at = finished
-            if job.attempts < job.max_attempts:
+            if isinstance(exc, JobDeadlineExceeded):
+                job.status = "FAILED"; job.locked_at = None
+            elif job.attempts < job.max_attempts:
                 job.status = "QUEUED"; job.run_after = utcnow() + timedelta(minutes=min(60, 5 * job.attempts)); job.locked_at = None
-            else: job.status = "FAILED"
+            else:
+                job.status = "FAILED"
             refresh.status = "FAILED"; refresh.error_id = error_id; refresh.summary = {"error": job.error_message}; refresh.finished_at = finished
             calc.status = "FAILED"; calc.error_id = error_id; calc.outputs = {"error": job.error_message}; calc.finished_at = finished
         elapsed = (time.perf_counter() - started) * 1000; calc.elapsed_ms = Decimal(str(round(elapsed, 3))); db.session.commit()
