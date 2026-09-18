@@ -152,27 +152,82 @@ def _deep_validation(company_id: int, coverage_id: int | None) -> dict[str, Any]
 
 
 def _management_scan(company: Company, security: Security, user_id: int, limit: int = 24) -> dict[str, Any]:
-    ua = sec_user_agent(user_id); meta = sec_ticker_meta(security.ticker, ua); submissions = sec_json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", ua)
-    recent = (submissions.get("filings") or {}).get("recent") or {}; forms = recent.get("form") or []; accns = recent.get("accessionNumber") or []; filed = recent.get("filingDate") or []; docs = recent.get("primaryDocument") or []; stored = 0; promises_stored = 0
-    for i, form in enumerate(forms[:max(1, min(limit, 100))]):
-        if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}: continue
-        accn = str(accns[i] if i < len(accns) else "")
-        if not accn or Source.query.filter_by(company_id=company.id, provider="SEC", accession_no=accn).first(): continue
-        doc = str(docs[i] if i < len(docs) else ""); filing_date = str(filed[i] if i < len(filed) else ""); accession_path = accn.replace("-", "")
-        url = f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/{accession_path}/{doc}" if doc else ""
-        source = Source(company_id=company.id, provider="SEC", source_type="FILING", title=f"{security.ticker} {form} {filing_date}", url=url, accession_no=accn,
-                        published_at=datetime.fromisoformat(filing_date) if filing_date else None, retrieved_at=utcnow(), meta={"form": form, "cik": meta["cik"]})
-        db.session.add(source); db.session.flush(); db.session.add(Event(company_id=company.id, source_id=source.id, event_type=f"SEC_{form.replace(' ','_').replace('-','_')}", title=source.title, event_date=source.published_at or utcnow(), payload={"form": form, "accession_no": accn, "url": url})); stored += 1
-        if url and form in {"10-K", "10-Q", "8-K"}:
-            try:
-                response = requests.get(url, headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate"}, timeout=12)
-                if response.status_code == 200:
-                    extracted = extract_promises(html_to_text(response.text), source_id=source.id)
-                    promises_stored += store_promises(company.id, extracted, source_id=source.id)
-            except Exception:
-                pass
-    db.session.commit(); return {"filings_stored": stored, "promises_stored": promises_stored, "cik": meta["cik"], "forms_scanned": min(len(forms), limit)}
+    ua = sec_user_agent(user_id)
+    meta = sec_ticker_meta(security.ticker, ua)
+    submissions = sec_json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", ua)
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    accns = recent.get("accessionNumber") or []
+    filed = recent.get("filingDate") or []
+    docs = recent.get("primaryDocument") or []
+    stored = promises_stored = guidance_scanned = 0
 
+    for i, form in enumerate(forms[:max(1, min(limit, 100))]):
+        if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}:
+            continue
+        accn = str(accns[i] if i < len(accns) else "")
+        if not accn:
+            continue
+        doc = str(docs[i] if i < len(docs) else "")
+        filing_date = str(filed[i] if i < len(filed) else "")
+        accession_path = accn.replace("-", "")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/{accession_path}/{doc}" if doc else ""
+
+        source = Source.query.filter_by(company_id=company.id, provider="SEC", accession_no=accn).first()
+        if source is None:
+            source = Source(
+                company_id=company.id, provider="SEC", source_type="FILING",
+                title=f"{security.ticker} {form} {filing_date}", url=url, accession_no=accn,
+                published_at=datetime.fromisoformat(filing_date) if filing_date else None,
+                retrieved_at=utcnow(), meta={"form": form, "cik": meta["cik"]},
+            )
+            db.session.add(source)
+            db.session.flush()
+            db.session.add(Event(
+                company_id=company.id, source_id=source.id,
+                event_type=f"SEC_{form.replace(' ','_').replace('-','_')}",
+                title=source.title, event_date=source.published_at or utcnow(),
+                payload={"form": form, "accession_no": accn, "url": url},
+            ))
+            stored += 1
+
+        already_scanned = Event.query.filter_by(
+            company_id=company.id, source_id=source.id, event_type="MANAGEMENT_GUIDANCE_SCAN"
+        ).first()
+        if already_scanned or not url or form not in {"10-K", "10-Q", "8-K"}:
+            continue
+
+        try:
+            response = requests.get(
+                url,
+                headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate"},
+                timeout=12,
+            )
+            if response.status_code != 200:
+                continue
+            extracted = extract_promises(html_to_text(response.text), source_id=source.id)
+            count = store_promises(company.id, extracted, source_id=source.id)
+            promises_stored += count
+            guidance_scanned += 1
+            db.session.add(Event(
+                company_id=company.id, source_id=source.id,
+                event_type="MANAGEMENT_GUIDANCE_SCAN",
+                title=f"{security.ticker} guidance scan · {accn}",
+                event_date=source.published_at or source.retrieved_at or utcnow(),
+                payload={"form": form, "accession_no": accn, "promises_found": len(extracted), "promises_stored": count},
+            ))
+        except Exception:
+            # No completion marker: a later scan may retry a transient filing fetch/parser failure.
+            continue
+
+    db.session.commit()
+    return {
+        "filings_stored": stored,
+        "guidance_filings_scanned": guidance_scanned,
+        "promises_stored": promises_stored,
+        "cik": meta["cik"],
+        "forms_scanned": min(len(forms), limit),
+    }
 
 def _discovery(user_id: int) -> dict[str, Any]:
     """Market-wide lightweight scan plus deep-context ranking for existing Coverage."""
