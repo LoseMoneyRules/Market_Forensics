@@ -19,10 +19,11 @@
 **0.2.7 Namecheap deploy:** run `35369640385` / deploy #36 = completed / success; candidate health + post-cleanup health passed; no rollback  
 **Deploy-vendor hotfix:** PR #25 merged to `main` at `8908092dedf3a5390f54774848852cd860b12d5b`; PR CI #809 and post-merge main CI #810 were green, but deploy #37 exposed an lftp exclusion bug in the backup mirror  
 **Deploy #37:** run `35371633874` = cancelled during backup before candidate swap; production remained untouched. Cache detection correctly returned `MF_REPORTING_VENDOR_UPLOAD=0`, but `--exclude-glob _reporting_vendor*` did not exclude the directory because lftp matches directories with a trailing slash.  
-**Release phase:** 0.2.7 remains LIVE from deploy #36; recursive vendor-exclusion correction is in progress  
-**Branch:** `fix/vendor-exclude-recursive`
+**Recursive vendor-exclusion fix:** PR #26 merged to `main` at `0555a2f8b19456852185ec3a3cc90824da2d270f`; PR CI run `35372218619` / #814 = success; post-merge main CI run `35372328821` / #815 = success  
+**Release phase:** 0.2.7 remains LIVE from deploy #36; corrected recursive vendor exclusion and fail-closed backup-plan preflight are active in `main` for the next deploy  
+**Branch:** `main`
 
-0.2.7 remains the authoritative production release on Namecheap from deploy #36. Deploy #37 did not reach candidate upload or restart. The corrective workflow replaces the faulty glob with the explicit lftp extended regex `^_reporting_vendor(/|$)` in backup, candidate upload and rollback mirrors, and adds a production dry-run preflight that refuses to deploy if any `_reporting_vendor` path appears in the backup plan.
+0.2.7 remains the authoritative production release on Namecheap from deploy #36. Deploy #37 did not reach candidate upload or restart. PR #26 is merged and replaces the faulty glob with the explicit lftp extended regex `^_reporting_vendor(/|$)` in backup, candidate upload and rollback mirrors. The next deploy must first pass a real remote `mirror --just-print` preflight; if any `_reporting_vendor` path appears in the plan, the deploy fails before transfer.
 
 ---
 
@@ -446,7 +447,7 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
-**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`). Deploy #37 (`35371633874`) was cancelled during the backup step before candidate upload because the first persistent-vendor exclusion still mirrored `_reporting_vendor`. Production was not changed. Branch `fix/vendor-exclude-recursive` corrects the lftp exclusion and adds a fail-closed dry-run preflight.
+**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`). Deploy #37 (`35371633874`) was cancelled during backup before candidate upload; production was not changed. PR #26 is merged to `main` at `0555a2f8b19456852185ec3a3cc90824da2d270f`; PR CI #814 and post-merge main CI #815 are green. The corrected lftp regex exclusion plus fail-closed remote dry-run preflight are now the required deploy path.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
