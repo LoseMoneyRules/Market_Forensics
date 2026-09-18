@@ -2,7 +2,7 @@ name: Market Forensics release tests
 
 on:
   push:
-    branches: [main, dev, 'release/**']
+    branches: [main, dev, 'release/**', 'fix/**']
   pull_request:
     branches: [main, dev]
 
