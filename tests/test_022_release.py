@@ -112,28 +112,37 @@ def test_022_discovery_is_two_sided_transparent_and_target_aware(monkeypatch):
                 {"symbol": "SHORTX", "volume": 9_000_000},
                 {"symbol": "NEARX", "volume": 8_000_000},
             ]})
-        if "movers" in url:
-            return FakeResponse({"gainers": [{"symbol": "SHORTX", "percent_change": 11.0}],
-                                 "losers": [{"symbol": "LONGX", "percent_change": -10.0},
-                                            {"symbol": "NEARX", "percent_change": -8.5}]})
-        return FakeResponse({})
+        return FakeResponse({"gainers": [{"symbol": "SHORTX", "percent_change": 11.0}],
+                             "losers": [{"symbol": "LONGX", "percent_change": -10.0},
+                                        {"symbol": "NEARX", "percent_change": -8.5}]})
 
     monkeypatch.setattr(md, "_headers", lambda user_id: {"x": "y"})
     monkeypatch.setattr(md.requests, "get", fake_get)
-    monkeypatch.setattr(md, "_snapshot_map", lambda symbols, headers, errors: {})
-    monkeypatch.setattr(md, "_coverage_context_map", lambda user_id, symbols: {
-        "LONGX": {"cache_ready": True, "base_gap_pct": 30.0, "discovery_labels": [], "known": True},
-        "SHORTX": {"cache_ready": True, "base_gap_pct": -25.0, "discovery_labels": [], "known": True},
-        "NEARX": {"cache_ready": True, "base_gap_pct": 3.0, "discovery_labels": [], "known": True},
+    monkeypatch.setattr(md, "_snapshot_map", lambda symbols, headers, errors: {
+        "LONGX": {"price": 25.0, "daily_volume": 5_000_000, "dollar_volume": 125_000_000},
+        "SHORTX": {"price": 50.0, "daily_volume": 4_000_000, "dollar_volume": 200_000_000},
+        "NEARX": {"price": 40.0, "daily_volume": 3_000_000, "dollar_volume": 120_000_000},
+    })
+    monkeypatch.setattr(md, "_asset_map", lambda symbols, headers, errors: {
+        symbol: {"name": symbol+" Corp", "status": "active", "exchange": "NASDAQ", "tradable": True, "shortable": True}
+        for symbol in symbols
+    })
+    monkeypatch.setattr(md, "_coverage_context_map", lambda user_id, symbols: {})
+    monkeypatch.setattr(md, "enrich_forensic_candidates", lambda user_id, pool, context, errors: {
+        "LONGX": {"base": 40.0, "gap_pct": 60.0, "quality": "INTRINSIC", "long_score": 40, "short_score": 0,
+                  "signals": [{"side":"LONG","label":"OPERATING LEVERAGE","detail":"Op margin +200 bps","points":18}], "snapshot": {}, "source":"TEST"},
+        "SHORTX": {"base": 30.0, "gap_pct": -40.0, "quality": "INTRINSIC", "long_score": 0, "short_score": 40,
+                   "signals": [{"side":"SHORT","label":"OPERATING DELEVERAGE","detail":"Op margin -200 bps","points":18}], "snapshot": {}, "source":"TEST"},
+        "NEARX": {"base": 41.0, "gap_pct": 2.5, "quality": "INTRINSIC", "long_score": 40, "short_score": 0,
+                  "signals": [{"side":"LONG","label":"REVENUE ACCELERATION","detail":"Revenue +12%","points":14}], "snapshot": {}, "source":"TEST"},
     })
     result = md.market_scan(1)
     rows = {row["ticker"]: row for row in result["candidates"]}
     assert rows["LONGX"]["research_side"] == "LONG"
     assert rows["SHORTX"]["research_side"] == "SHORT"
     assert "NEARX" not in rows
-    assert result["excluded_breakdown"]["AT / NEAR BASE"] == 1
-    assert any("Stored Base gap" in reason for reason in rows["LONGX"]["why_found"])
-    assert result["long_count"] >= 1 and result["short_count"] >= 1
+    assert result["long_count"] == 1 and result["short_count"] == 1
+    assert result["excluded_breakdown"]["FAIR VALUE / OPERATIONS NOT ALIGNED"] == 1
 
 
 def test_022_command_center_dark_valuation_flow_and_tape_contracts():
