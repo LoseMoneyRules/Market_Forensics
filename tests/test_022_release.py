@@ -79,6 +79,15 @@ def test_022_market_refresh_has_terminal_cooldown_and_does_not_storm(tmp_path, m
     with app.app_context():
         after = Job.query.filter_by(user_id=uid, security_id=security_id, job_type="MARKET_REFRESH").count()
         assert after == before
+        active = Job(
+            job_type="MARKET_REFRESH", status="QUEUED", priority=10, user_id=uid,
+            company_id=company_id, security_id=security_id, payload={"coverage_id": coverage_id},
+            attempts=0, max_attempts=3, run_after=now,
+        )
+        db.session.add(active); db.session.commit(); active_id = active.id
+    reused = client.post("/company/EXM/price/refresh").get_json()
+    assert reused["status"] == "REUSED"
+    assert reused["job_id"] == active_id and reused["reused"] is True and reused["queued"] is False
 
 
 def test_022_background_completion_never_forces_page_reload():
