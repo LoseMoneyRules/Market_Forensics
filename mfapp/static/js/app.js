@@ -324,10 +324,16 @@
   function renderJobs(state){
     if(!workerChip)return;
     const queued=Number(state?.queued||0),running=Number(state?.running||0),failed=Number(state?.failed||0);
+    const active=Array.isArray(state?.active_jobs)?state.active_jobs:[];
+    const lead=active.find((row)=>row.status==='RUNNING')||active[0]||null;
+    const target=lead?.target?String(lead.target):'';
+    workerChip.title=active.length
+      ? active.slice(0,6).map((row)=>'#'+row.id+' '+row.type+' · '+row.target+' · '+row.status).join('\n')
+      : 'No active background jobs.';
     if(refreshOffered){workerChip.textContent='Data updated · refresh';workerChip.classList.add('job-updated');return}
     workerChip.classList.remove('job-updated');
-    if(running)workerChip.textContent='Jobs · running · '+queued+' queued';
-    else if(queued)workerChip.textContent='Jobs · starting · '+queued+' queued';
+    if(running)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · running · '+queued+' queued';
+    else if(queued)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · queued · '+queued;
     else if(failed)workerChip.textContent='Jobs · idle · '+failed+' failed';
     else workerChip.textContent='Jobs · idle';
   }
