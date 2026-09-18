@@ -384,7 +384,10 @@ def test_026_reports_are_first_class_production_dependencies():
     assert "mfapp/_reporting_vendor" in workflow
     assert "MF_REPORTING_REQUIREMENTS_SHA" in workflow
     assert "MF_REPORTING_VENDOR_UPLOAD" in workflow
-    assert workflow.count("--exclude-glob _reporting_vendor*") >= 3
+    assert "--exclude-glob _reporting_vendor*" not in workflow
+    assert workflow.count("--exclude='^_reporting_vendor(/|$)'") >= 4
+    assert "Verify reporting vendor is excluded from backup plan" in workflow
+    assert "Reporting vendor leaked into the backup plan. Refusing to deploy." in workflow
     assert "pip install --no-compile --target .reporting-vendor-payload" in workflow
     assert "pip install --no-compile --target .release-payload/mfapp/_reporting_vendor" not in workflow
     assert "_reporting_vendor.next" in workflow

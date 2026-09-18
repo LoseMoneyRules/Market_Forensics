@@ -17,11 +17,12 @@
 **0.2.7 post-merge main CI:** run `35369300915` / run #798 = completed / success on merge commit  
 **CURRENT_STATE sync CI:** run `35369397930` / run #801 = completed / success on clean main state  
 **0.2.7 Namecheap deploy:** run `35369640385` / deploy #36 = completed / success; candidate health + post-cleanup health passed; no rollback  
-**Deploy-vendor hotfix:** PR #25 merged to `main` at `8908092dedf3a5390f54774848852cd860b12d5b`; PR CI run `35371300278` / #809 = success; post-merge main CI run `35371391426` / #810 = success  
-**Release phase:** 0.2.7 is LIVE; persistent reporting-vendor deploy cache is active in `main` for future deploys  
-**Branch:** `main`
+**Deploy-vendor hotfix:** PR #25 merged to `main` at `8908092dedf3a5390f54774848852cd860b12d5b`; PR CI #809 and post-merge main CI #810 were green, but deploy #37 exposed an lftp exclusion bug in the backup mirror  
+**Deploy #37:** run `35371633874` = cancelled during backup before candidate swap; production remained untouched. Cache detection correctly returned `MF_REPORTING_VENDOR_UPLOAD=0`, but `--exclude-glob _reporting_vendor*` did not exclude the directory because lftp matches directories with a trailing slash.  
+**Release phase:** 0.2.7 remains LIVE from deploy #36; recursive vendor-exclusion correction is in progress  
+**Branch:** `fix/vendor-exclude-recursive`
 
-0.2.7 is the authoritative code in main and is LIVE on Namecheap. Deploy #36 completed successfully with candidate and post-cleanup production health green. PR #25 is now merged and changes only the GitHub→Namecheap transfer mechanism: the next deploy will reuse the existing healthy report vendor when `requirements-reporting.txt` is unchanged, bootstrapping only the tiny hash marker if needed.
+0.2.7 remains the authoritative production release on Namecheap from deploy #36. Deploy #37 did not reach candidate upload or restart. The corrective workflow replaces the faulty glob with the explicit lftp extended regex `^_reporting_vendor(/|$)` in backup, candidate upload and rollback mirrors, and adds a production dry-run preflight that refuses to deploy if any `_reporting_vendor` path appears in the backup plan.
 
 ---
 
@@ -295,7 +296,8 @@ The rich PDF/Word stack is now a first-class production dependency:
 - `requirements.txt` includes `requirements-reporting.txt`;
 - Namecheap keeps the private report runtime at `mfapp/_reporting_vendor`, so the application path remains stable and no manual cPanel pip step is required;
 - the deploy workflow hashes `requirements-reporting.txt` and stores a matching marker with the persistent report runtime;
-- when that hash is unchanged, `_reporting_vendor` is excluded from both production backup and application upload mirrors, so the vendor tree is neither downloaded nor uploaded again;
+- when that hash is unchanged, `_reporting_vendor` is excluded from production backup, application upload and rollback mirrors using the explicit lftp extended regex `^_reporting_vendor(/|$)`; the previous `--exclude-glob _reporting_vendor*` form is forbidden because lftp matches directory names with a trailing slash;
+- before any real production backup, the workflow runs the exact exclusion as a remote `mirror --just-print` preflight and aborts if the plan contains any `_reporting_vendor` path;
 - the first cache-aware deploy may bootstrap the marker from an already healthy vendor when the deployed `requirements-reporting.txt` has the same hash, avoiding a needless one-time retransmission;
 - when report dependencies actually change, a new vendor tree is built separately, uploaded to a staging directory, and swapped into the stable path with server-side rename while the previous tree is retained for rollback;
 - `app.py` continues loading that private report runtime before importing the application;
@@ -435,7 +437,8 @@ Permanent UI rules:
 16. private research, reports, snapshots and publications use the same forensic valuation contract while retaining intrinsic scenarios in audit metadata.
 17. normal GET navigation performs no new external macro/provider fetches.
 18. VERSION == State-Version == 0.2.7.
-19. ordinary Namecheap deploys must not transfer `mfapp/_reporting_vendor` when `requirements-reporting.txt` is unchanged; backup, candidate upload and rollback mirrors must exclude the persistent vendor tree.
+19. ordinary Namecheap deploys must not transfer `mfapp/_reporting_vendor` when `requirements-reporting.txt` is unchanged; backup, candidate upload and rollback mirrors must exclude the persistent vendor tree with `^_reporting_vendor(/|$)`.
+20. every production deploy must dry-run the backup mirror first and fail before transfer if `_reporting_vendor` appears in the planned mirror operations.
 
 The release is blocked by a broken capability even if its page returns HTTP 200.
 
@@ -443,7 +446,7 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
-**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`), with candidate health and post-cleanup health green. Deployment hotfix PR #25 is merged to `main` at `8908092dedf3a5390f54774848852cd860b12d5b`; PR CI #809 and post-merge main CI #810 are green. No production application redeploy is required for this workflow-only hotfix.
+**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`). Deploy #37 (`35371633874`) was cancelled during the backup step before candidate upload because the first persistent-vendor exclusion still mirrored `_reporting_vendor`. Production was not changed. Branch `fix/vendor-exclude-recursive` corrects the lftp exclusion and adds a fail-closed dry-run preflight.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
