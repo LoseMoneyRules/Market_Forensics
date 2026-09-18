@@ -382,7 +382,13 @@ def test_026_reports_are_first_class_production_dependencies():
     assert "python-docx" in optional and "reportlab" in optional
     assert "assert payload['reports'] == 'rich'" in workflow
     assert "mfapp/_reporting_vendor" in workflow
-    assert "pip install --no-compile --target .release-payload/mfapp/_reporting_vendor" in workflow
+    assert "MF_REPORTING_REQUIREMENTS_SHA" in workflow
+    assert "MF_REPORTING_VENDOR_UPLOAD" in workflow
+    assert workflow.count("--exclude-glob _reporting_vendor*") >= 3
+    assert "pip install --no-compile --target .reporting-vendor-payload" in workflow
+    assert "pip install --no-compile --target .release-payload/mfapp/_reporting_vendor" not in workflow
+    assert "_reporting_vendor.next" in workflow
+    assert "_reporting_vendor.rollback" in workflow
     assert "_reporting_vendor" in app_py
     assert "'\"reports\":\"rich\"'" in workflow
     assert "Fundamentals" in reporting
