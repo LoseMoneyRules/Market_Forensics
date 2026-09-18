@@ -85,7 +85,7 @@ jobs:
           mkdir -p .release-payload .production-backup .empty-cleanup
           cp app.py manage.py requirements.txt requirements-reporting.txt VERSION .release-payload/
           cp -a mfapp .release-payload/
-          rm -rf .release-payload/mfapp/_reporting_vendor
+          rm -rf .release-payload/mfapp/_reporting_vendor .release-payload/mfapp/_vendor
           MF_REPORTING_REQUIREMENTS_SHA="$(sha256sum requirements-reporting.txt | awk '{print $1}')"
           test -n "$MF_REPORTING_REQUIREMENTS_SHA"
           echo "MF_REPORTING_REQUIREMENTS_SHA=$MF_REPORTING_REQUIREMENTS_SHA" >> "$GITHUB_ENV"
@@ -210,17 +210,18 @@ jobs:
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --just-print \
             --exclude='^_reporting_vendor(/|$)' \
+            --exclude='^_vendor(/|$)' \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./mfapp /tmp/mf-backup-plan/mfapp
           bye
           LFTP
           cat /tmp/mf-backup-plan.txt
-          if grep -q '_reporting_vendor' /tmp/mf-backup-plan.txt; then
-            echo "::error::Reporting vendor leaked into the backup plan. Refusing to deploy."
+          if grep -Eq '(^|/)(_reporting_vendor|_vendor)(/|$)' /tmp/mf-backup-plan.txt; then
+            echo "::error::A persistent/obsolete vendor tree leaked into the backup plan. Refusing to deploy."
             exit 1
           fi
-          echo "Reporting vendor exclusion verified against production before backup."
+          echo "Vendor exclusions verified against production before backup."
 
       - name: Backup current production runtime
         env:
@@ -239,6 +240,7 @@ jobs:
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --verbose \
             --exclude='^_reporting_vendor(/|$)' \
+            --exclude='^_vendor(/|$)' \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./mfapp ./.production-backup/mfapp
@@ -343,6 +345,7 @@ jobs:
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --delete --verbose \
             --exclude='^_reporting_vendor(/|$)' \
+            --exclude='^_vendor(/|$)' \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./.release-payload/mfapp ./mfapp
@@ -441,6 +444,7 @@ jobs:
           open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
           mirror --reverse --delete --verbose \
             --exclude='^_reporting_vendor(/|$)' \
+            --exclude='^_vendor(/|$)' \
             --exclude-glob __pycache__/ \
             --exclude-glob '*.pyc' \
             ./.production-backup/mfapp ./mfapp
