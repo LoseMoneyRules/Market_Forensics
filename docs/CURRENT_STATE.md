@@ -11,19 +11,19 @@
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.4 on Namecheap  
+**Production:** 0.2.5 on Namecheap  
 **Main before 0.2.6:** 0.2.5 at `8feeda8c27ac46d5e3c7fd46cfbb0f76b19df52b`  
 **0.2.5 post-merge CI:** run `35356768235` / run #771 = completed / success  
+**0.2.5 Namecheap deploy:** run `35357228878` / deploy #34 = completed / success; candidate health + post-cleanup health passed; no rollback  
 **Active candidate:** 0.2.6 — Local parity recovery  
 **Branch:** `0.2.6`
 
-Production remains on deployed 0.2.4 until 0.2.6 passes every gate.
+Production remains on deployed 0.2.5 until 0.2.6 passes every gate.
 
-0.2.5 passed its stated PR and post-merge gates but was never deployed. The subsequent V3.1.12-vs-Web
+0.2.5 passed its stated PR/post-merge gates and was deployed successfully. The subsequent V3.1.12-vs-Web
 capability audit found material product regressions that the old smoke tests did not detect
 (Portfolio-before-Research, Local-grade Risk/Position sizing, immutable journal outcomes, and the
-production rich-report dependency contract). Therefore 0.2.5 is superseded by 0.2.6 and should not
-be manually deployed.
+production rich-report dependency contract). Therefore 0.2.5 remains the production baseline while 0.2.6 supersedes it as the active correction candidate.
 
 ---
 
@@ -429,7 +429,7 @@ Required sequence:
 
 Do not merge merely because individual fixes look correct.
 
-Do not deploy 0.2.5.
+Do not redeploy 0.2.5 as a substitute for the 0.2.6 corrections.
 
 Do not call 0.2.6 LIVE until the deploy workflow succeeds and production `/health` returns:
 - HTTP 200;
