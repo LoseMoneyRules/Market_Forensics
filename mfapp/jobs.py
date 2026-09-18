@@ -29,7 +29,7 @@ from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_met
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
 TERMINAL_JOB_STATUSES = ("DONE", "FAILED", "CANCELLED", "SUPERSEDED")
 DEFAULT_JOB_LEASE_SECONDS = 30 * 60
-JOB_LEASE_SECONDS = {"DISCOVERY_SCAN": 3 * 60}
+JOB_LEASE_SECONDS = {"DISCOVERY_SCAN": 6 * 60}
 
 
 def utcnow() -> datetime:
