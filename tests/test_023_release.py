@@ -178,12 +178,14 @@ def test_023_ui_contracts_are_single_source_and_compact():
     positions = [header.index(">"+label+"<") for label in expected]
     assert positions == sorted(positions)
     assert ".coverage-table th{white-space:nowrap}" in css
-    assert ".coverage-table th:last-child,.coverage-table td:last-child{width:1%;white-space:nowrap" in css
+    assert ".coverage-table .coverage-number-col,.coverage-table .coverage-fresh-col{width:1%;white-space:nowrap" in css
+    assert ".coverage-table .coverage-manage-col{width:48px;max-width:48px" in css
     assert "Latest point-in-time walk-forward validation status" in dashboard
 
     assert ".flow-canvas{min-height:0" in css
-    assert ".flow-svg{display:block;width:auto;height:auto;max-width:none;min-height:0;margin:0}" in css
-    assert "const colGap=180,nodeW=150,nodeH=52,top=14,side=10,rowGap=12;" in flows
+    assert ".flow-svg{display:block;width:100%;height:auto;min-height:0;margin:0}" in css
+    assert "const targetWidth=Math.max(720,visible>0?visible-24:720);" in flows
+    assert "const colGap=layout.maxDepth>0?Math.max(170,(targetWidth-side*2-nodeW)/layout.maxDepth):0;" in flows
 
     for path in (
         "mfapp/templates/company_section.html",
