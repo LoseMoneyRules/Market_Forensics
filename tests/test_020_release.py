@@ -94,6 +94,57 @@ def login_control(client, user_id):
         session["view_as"] = "CONTROL"
 
 
+def seed_fast_cache(app, coverage_id, company_id, *, conclusion="LONG WATCH"):
+    from mfapp.research_cache import cache_event_type
+    with app.app_context():
+        db.session.add(Event(
+            company_id=company_id,
+            event_type=cache_event_type(coverage_id),
+            title="EXM research cache",
+            event_date=datetime.now(timezone.utc).replace(tzinfo=None),
+            payload={
+                "coverage_id": coverage_id,
+                "ticker": "EXM",
+                "valuation": {"current_price": 40, "bear": 30, "base": 55, "bull": 70, "expected_value": 53},
+                "readiness": {
+                    "done": 0, "evidence_ready": 0, "total": 13, "gates": [],
+                    "ready_to_validate": False,
+                    "validation": {"state": "NOT RUN", "run_id": None, "status": None, "samples": 0, "reliability": None},
+                    "bias_flags": [],
+                },
+                "intelligence": {
+                    "action": "WAIT", "stance": "WATCH", "bias": "NEUTRAL", "confidence": "MEDIUM",
+                    "score": 0.5, "positives": 1, "negatives": 0, "warnings": [], "blockers": [],
+                    "signals": [], "top_signals": [], "supporting_evidence": [], "opposing_evidence": [],
+                    "base_gap_pct": 37.5, "validation_state": "NOT RUN", "buy_threshold": 2.5, "sell_threshold": -2.5,
+                },
+                "decision_lenses": {
+                    "rows": [], "business": "MIXED", "value": "ATTRACTIVE", "expectations": "BALANCED",
+                    "variant": "POSSIBLE", "path": "UNCLEAR", "model_confidence": "UNVALIDATED",
+                    "thesis_control": "UNRESOLVED", "research_conclusion": conclusion,
+                    "implied_expectations": {"available": False, "classification": "UNAVAILABLE", "drivers": []},
+                },
+                "brief": {
+                    "price": 40, "bear": 30, "base": 55, "bull": 70, "base_gap_pct": 37.5,
+                    "confidence": "MEDIUM", "horizon_years": 5, "target_year": date.today().year + 5, "reasons": [],
+                },
+                "synthesis": {
+                    "why_now": ["Cached why now"], "why_not_yet": ["Cached why not yet"],
+                    "what_changes": ["Cached change"], "what_kills": ["Cached kill"],
+                    "micro_for": [], "micro_against": [], "macro": [], "invalidation": "", "next": ["Cached next"],
+                },
+                "triangulation": {"available": False, "reason": "cached", "peers": [], "comparisons": [], "signals": [], "method": "CACHE", "sic": "", "sic_description": ""},
+                "management": {"score": 60, "coverage_pct": 50, "components": []},
+                "management_accountability": [],
+                "management_promises": [],
+                "tape": {"months": 12, "market": [], "short_interest": [], "short_volume": [], "positioning": {}, "metrics": {"regime": "MIXED", "confidence": "MEDIUM"}},
+                "tape_metrics": {"regime": "MIXED", "confidence": "MEDIUM"},
+                "discovery_labels": ["LONG DISLOCATION"],
+            },
+        ))
+        db.session.commit()
+
+
 def test_020_health_identity_and_calculation_version(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
     assert app.config["VERSION"] == "0.2.0"
@@ -696,3 +747,72 @@ def test_020_reports_expose_full_pdf_and_discovery_report_actions():
     assert "Full PDF" in company
     assert "Full Word" in company
     assert "Landscape PDF" in discovery
+
+
+def test_020_cached_navigation_never_runs_heavy_research_engines(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, _, coverage_id = seed_workspace(app)
+    seed_fast_cache(app, coverage_id, company_id)
+
+    import mfapp.routes as routes
+    def bomb(*args, **kwargs):
+        raise AssertionError("heavy analytical engine executed during normal GET navigation")
+
+    for name in (
+        "_research_readiness", "_intelligence", "management_engine", "tape_series",
+        "automatic_triangulation", "build_synthesis", "price_implied_expectations", "valuation_result",
+    ):
+        monkeypatch.setattr(routes, name, bomb)
+
+    client = app.test_client()
+    login_control(client, uid)
+    for path in (
+        "/", "/discovery", "/company/EXM/overview", "/company/EXM/business",
+        "/company/EXM/management", "/company/EXM/tape",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200, (path, response.status_code, response.data[:400])
+
+
+def test_020_dashboard_query_count_is_bounded_with_cache(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, _, coverage_id = seed_workspace(app)
+    seed_fast_cache(app, coverage_id, company_id)
+
+    from sqlalchemy import event as sa_event
+    count = {"n": 0}
+    with app.app_context():
+        engine = db.engine
+
+    def before_cursor(*args, **kwargs):
+        count["n"] += 1
+
+    sa_event.listen(engine, "before_cursor_execute", before_cursor)
+    try:
+        client = app.test_client()
+        login_control(client, uid)
+        response = client.get("/")
+        assert response.status_code == 200
+        assert count["n"] <= 18, count
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", before_cursor)
+
+
+def test_020_browser_observes_jobs_without_auto_pumping_heavy_work():
+    js = Path("mfapp/static/js/app.js").read_text()
+    assert "Heavy work is never auto-executed in a page request." in js
+    assert "last_finished_id" in js
+    assert "window.location.reload()" in js
+    assert "await pump()" not in js
+    assert "fetch('/jobs/pump'" not in js
+
+
+def test_020_reporting_dependencies_are_optional_at_startup():
+    reporting = Path("mfapp/reporting.py").read_text()
+    requirements = Path("requirements.txt").read_text()
+    optional = Path("requirements-reporting.txt").read_text()
+    assert "from docx import Document" not in reporting.split("_load_report_libs", 1)[0]
+    assert "from reportlab" not in reporting.split("_load_report_libs", 1)[0]
+    assert "python-docx" not in requirements
+    assert "reportlab" not in requirements
+    assert "python-docx" in optional and "reportlab" in optional
