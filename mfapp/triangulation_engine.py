@@ -97,6 +97,12 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
             else None
         ),
         "market_cap": market_cap,
+        "revenue": revenue,
+        "net_income": net_income,
+        "fcf": fcf,
+        "shares": shares,
+        "debt": debt,
+        "cash": cash,
     }
 
 
@@ -200,6 +206,36 @@ def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_
             "state": state,
         })
 
+    peer_value_components = []
+    shares = target.get("shares")
+    if shares not in (None, 0):
+        pe_vals = [r.get("pe") for r in peer_rows if r.get("pe") is not None and r.get("pe") > 0]
+        if len(pe_vals) >= 2 and target.get("net_income") is not None and target.get("net_income") > 0:
+            multiple = median(pe_vals)
+            peer_value_components.append({"method": "P/E", "value": multiple * target["net_income"] / shares, "peer_median": multiple, "sample_size": len(pe_vals)})
+        evs_vals = [r.get("ev_sales") for r in peer_rows if r.get("ev_sales") is not None and r.get("ev_sales") > 0]
+        if len(evs_vals) >= 2 and target.get("revenue") is not None and target.get("revenue") > 0:
+            multiple = median(evs_vals)
+            equity_value = target["revenue"] * multiple - (target.get("debt") or 0.0) + (target.get("cash") or 0.0)
+            if equity_value > 0:
+                peer_value_components.append({"method": "EV / Sales", "value": equity_value / shares, "peer_median": multiple, "sample_size": len(evs_vals)})
+        fy_vals = [r.get("fcf_yield_pct") for r in peer_rows if r.get("fcf_yield_pct") is not None and r.get("fcf_yield_pct") > 0]
+        if len(fy_vals) >= 2 and target.get("fcf") is not None and target.get("fcf") > 0:
+            peer_yield = median(fy_vals) / 100.0
+            if peer_yield > 0:
+                peer_value_components.append({"method": "FCF Yield", "value": target["fcf"] / peer_yield / shares, "peer_median": peer_yield * 100.0, "sample_size": len(fy_vals)})
+
+    peer_values = [row["value"] for row in peer_value_components if row.get("value") is not None and row.get("value") > 0]
+    peer_value_crosscheck = {
+        "eligible": len(peer_rows) >= 2 and len(peer_values) >= 2,
+        "estimate": median(peer_values) if peer_values else None,
+        "low": min(peer_values) if peer_values else None,
+        "high": max(peer_values) if peer_values else None,
+        "components": peer_value_components,
+        "peer_count": len(peer_rows),
+        "method_count": len(peer_values),
+    }
+
     valuation_states = [comparison_map.get("pe", {}).get("state"), comparison_map.get("ev_sales", {}).get("state")]
     quality_states = [comparison_map.get("operating_margin_pct", {}).get("state"), comparison_map.get("roic_pct", {}).get("state")]
     if "RICHER" in valuation_states and "STRENGTH" not in quality_states:
@@ -225,7 +261,54 @@ def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_
         "peers": peer_rows,
         "comparisons": comparisons,
         "signals": signals,
+        "peer_value_crosscheck": peer_value_crosscheck,
     }
 
 
-__all__ = ["automatic_triangulation"]
+def apply_peer_valuation_overlay(valuation: dict[str, Any], triangulation: dict[str, Any]) -> dict[str, Any]:
+    """Blend a bounded peer cross-check into the displayed forensic fair value.
+
+    Intrinsic Bear/Base/Bull remains the primary engine. Peer evidence earns only
+    a small, explicit weight after at least two peers and two independent relative
+    valuation methods are available. The overlay is capped so market multiples
+    can cross-check a thesis but cannot dictate it.
+    """
+    out = dict(valuation or {})
+    cross = dict((triangulation or {}).get("peer_value_crosscheck") or {})
+    try:
+        base = float(out.get("base")) if out.get("base") is not None else None
+        peer = float(cross.get("estimate")) if cross.get("estimate") is not None else None
+    except (TypeError, ValueError, ArithmeticError):
+        base = peer = None
+    if not cross.get("eligible") or base in (None, 0) or peer in (None, 0):
+        out["peer_overlay"] = {"applied": False, "reason": "Insufficient peer valuation evidence.", **cross}
+        return out
+
+    peer_count = int(cross.get("peer_count") or 0)
+    method_count = int(cross.get("method_count") or 0)
+    weight = 0.20 if peer_count >= 5 and method_count >= 3 else 0.15
+    blended_base = base * (1.0 - weight) + peer * weight
+    raw_factor = blended_base / base
+    factor = max(0.90, min(1.10, raw_factor))
+    original = {key: out.get(key) for key in ("bear", "base", "bull", "expected_value")}
+    for key in ("bear", "base", "bull", "expected_value"):
+        try:
+            if out.get(key) is not None:
+                out[key] = float(out[key]) * factor
+        except (TypeError, ValueError, ArithmeticError):
+            pass
+    out["intrinsic_scenarios"] = original
+    out["peer_overlay"] = {
+        "applied": True,
+        "weight": weight,
+        "uncapped_factor": raw_factor,
+        "applied_factor": factor,
+        "intrinsic_base": base,
+        "peer_estimate": peer,
+        "forensic_base": out.get("base"),
+        **cross,
+    }
+    return out
+
+
+__all__ = ["automatic_triangulation", "apply_peer_valuation_overlay"]
