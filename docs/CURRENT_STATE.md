@@ -14,13 +14,13 @@
 **Production:** 0.2.7 on Namecheap  
 **Verified production baseline:** deploy run `35372729870` / deploy #38 = completed / success on main commit `564ea20a6eb0663380f88a375f80b3f109cf54e9`; candidate health + post-cleanup health passed; `reports = rich`  
 **Persistent report vendor verification:** deploy #38 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; the remote backup dry-run proved `_reporting_vendor` was excluded before transfer  
-**Main baseline before 0.2.8:** `564ea20a6eb0663380f88a375f80b3f109cf54e9`; VERSION `0.2.7`  
-**Latest verified 0.2.7 main CI:** run `35372328821` / #815 = completed / success on merge commit `0555a2f8b19456852185ec3a3cc90824da2d270f`; the later CURRENT_STATE sync commit used `[skip ci]`  
-**0.2.8 candidate:** branch `release/0.2.8`; VERSION `0.2.8`; CI / merge / production deploy pending  
-**Release phase:** 0.2.7 remains LIVE; 0.2.8 is the active candidate and must pass its release gates before merge  
-**Branch:** `release/0.2.8`
+**Main release:** 0.2.8 merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; VERSION `0.2.8`  
+**Latest verified main CI:** run `35376388768` / #838 = completed / success on merge commit `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; release tests, production-minimal startup, rich-report smoke and self-contained reporting-vendor smoke all passed  
+**0.2.8 deploy:** pending a new manual `workflow_dispatch`; no 0.2.8 Namecheap deployment has been claimed or inferred  
+**Release phase:** 0.2.8 code + CI are complete on main; production remains 0.2.7 until the dedicated Namecheap deploy succeeds  
+**Branch:** `main`
 
-Deploy #38 is the authoritative proof that ordinary releases do not retransmit the persistent reporting runtime when its dependency hash is unchanged. 0.2.8 additionally excludes obsolete `_vendor` paths from normal application mirrors. Production remains 0.2.7 until a separate 0.2.8 merge and successful Namecheap deployment complete.
+Deploy #38 remains the authoritative production baseline and proof that ordinary releases do not retransmit the persistent reporting runtime when its dependency hash is unchanged. The 0.2.8 deploy definition additionally excludes obsolete `_vendor` paths from normal application backup/upload/rollback mirrors. Production remains 0.2.7 until a separate 0.2.8 `workflow_dispatch` run and production health checks complete successfully.
 ---
 
 ## 0.2.8 release scope
