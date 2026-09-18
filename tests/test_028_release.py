@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
-from mfapp.core_models import Company, Coverage, NormalizedFinancial, Security
+from mfapp.core_models import Company, Coverage, FinancialPeriod, NormalizedFinancial, Security
 from mfapp.extensions import db
 from mfapp.financial_flow_engine import build_income_statement_flow
 from mfapp.models import User
@@ -95,6 +96,59 @@ def test_028_reports_do_not_use_wsgi_file_wrapper(tmp_path, monkeypatch):
         assert response.data.startswith(prefix)
         assert "attachment;" in response.headers.get("Content-Disposition", "")
         assert response.headers.get("Cache-Control") == "no-store, max-age=0"
+
+
+def test_028_safe_report_fallback_handles_real_fundamentals(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "report_fundamentals")
+    uid = seed_control_workspace(app)
+    with app.app_context():
+        company = Company.query.filter_by(display_name="Example Industrial Co").first()
+        period = FinancialPeriod(
+            company_id=company.id,
+            period_type="FY",
+            fiscal_year=2025,
+            end_date=date(2025, 12, 31),
+            currency="USD",
+        )
+        db.session.add(period)
+        db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=period.id,
+            revenue=Decimal("1000"),
+            cogs=Decimal("600"),
+            gross_profit=Decimal("400"),
+            operating_income=Decimal("250"),
+            pretax_income=Decimal("220"),
+            income_tax=Decimal("50"),
+            net_income=Decimal("170"),
+            cfo=Decimal("210"),
+            capex=Decimal("40"),
+            fcf=Decimal("170"),
+            receivables=Decimal("120"),
+            inventory=Decimal("80"),
+            debt=Decimal("100"),
+            cash=Decimal("40"),
+            equity=Decimal("500"),
+        ))
+        db.session.commit()
+
+    client = app.test_client()
+    login(client, uid)
+
+    def fail_rich(*args, **kwargs):
+        raise RuntimeError("force rich renderer failure")
+
+    def emergency_must_not_run(*args, **kwargs):
+        raise AssertionError("safe renderer fallback should handle populated fundamentals")
+
+    monkeypatch.setattr("mfapp.reporting.render_pdf", fail_rich)
+    monkeypatch.setattr("mfapp.reporting.render_docx", fail_rich)
+    monkeypatch.setattr("mfapp.routes_publish.emergency_research_report_stream", emergency_must_not_run)
+
+    pdf = client.get("/company/EXM/report/pdf?mode=full")
+    docx = client.get("/company/EXM/report/docx?mode=full")
+    assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF")
+    assert docx.status_code == 200 and docx.data.startswith(b"PK")
 
 
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():
