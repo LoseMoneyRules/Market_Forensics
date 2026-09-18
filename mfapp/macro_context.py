@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from math import isfinite
 from typing import Any
@@ -78,8 +78,13 @@ def _fetch_series(series_id: str) -> dict[str, Any]:
         raise RuntimeError(f"FRED {series_id} returned no usable observations")
 
     latest_date, latest = rows[-1]
-    prior_3 = rows[max(0, len(rows) - 1 - min(65, len(rows) - 1))][1]
-    prior_12 = rows[max(0, len(rows) - 1 - min(260, len(rows) - 1))][1]
+    latest_day = datetime.fromisoformat(latest_date).date()
+    def prior_value(days: int) -> float:
+        cutoff = latest_day - timedelta(days=days)
+        eligible = [(d, v) for d, v in rows if datetime.fromisoformat(d).date() <= cutoff]
+        return eligible[-1][1] if eligible else rows[0][1]
+    prior_3 = prior_value(90)
+    prior_12 = prior_value(365)
     return {
         "series_id": series_id,
         "as_of": latest_date,
