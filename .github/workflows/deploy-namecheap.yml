@@ -60,7 +60,7 @@ jobs:
           payload = health.get_json()
           release_version = open('VERSION', encoding='utf-8').read().strip()
           assert payload['status'] == 'ok' and payload['version'] == release_version
-          assert payload['reports'] == 'stdlib-fallback'
+          assert payload['reports'] == 'rich'
           data = {
               'branding':{'title':'Market Forensics','footer':'Lose Money Rules'},
               'ticker':'TEST','company':'Production Smoke','action':'DATA REVIEW','stance':'UNVERIFIED',
