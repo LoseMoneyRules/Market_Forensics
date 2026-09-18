@@ -241,6 +241,11 @@ def test_028_debt_components_recover_nike_style_total_debt():
     assert method == "DIRECT_COMBINED_DEBT"
     assert records == [combined]
 
+    value, records, method = _compose_debt(direct, None, None, None)
+    assert value is None
+    assert records == []
+    assert method == ""
+
 
 def test_028_exact_filing_label_fallback_can_find_extension_taxonomy():
     companyfacts = {
