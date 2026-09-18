@@ -241,8 +241,22 @@ def _fallback_synthesis(ctx: dict) -> dict:
 
 
 def _cached_tape_for_months(tape: dict, months: int) -> dict:
-    if months >= 12 or not tape:
-        return tape or {"months": months, "market": [], "short_interest": [], "short_volume": [], "positioning": {}, "metrics": {}}
+    metric_defaults = {
+        "return_1m_pct": None, "return_3m_pct": None, "volume_ratio_20d": None, "turnover_ratio_20d": None,
+        "short_5d_pct": None, "short_20d_pct": None, "put_call_oi": None, "put_open_interest": None,
+        "call_open_interest": None, "borrow_status": "unknown", "borrow_fee_pct": None, "borrow_fee_source": "",
+        "borrow_fee_as_of": None, "shortable": None, "locate_price": None, "locate_available_qty": None,
+        "absorption": None, "price_resilience": None, "long_demand": None, "bear_pressure": None,
+        "battle_intensity": None, "net_tape": None, "rank_score": None, "regime": "MIXED", "confidence": "LOW",
+    }
+    base = {
+        "months": months, "market": [], "short_interest": [], "short_volume": [], "positioning": {},
+        "metrics": metric_defaults | dict((tape or {}).get("metrics") or {}),
+    } | dict(tape or {})
+    base["metrics"] = metric_defaults | dict((tape or {}).get("metrics") or {})
+    if months >= 12:
+        return base
+    tape = base
     cutoff = date.today().replace(day=1)
     # Six calendar months is close enough for display slicing; calculations remain the cached 12M context.
     for _ in range(6):
