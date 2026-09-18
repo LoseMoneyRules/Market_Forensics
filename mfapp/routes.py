@@ -19,7 +19,7 @@ from .models import AuditEvent, Invite, User
 from .core_models import (
     Alert, BearCaseItem, Catalyst, Company, Coverage, DataQualityIssue, DecisionJournal,
     Event, Expectation, FinancialFlow, FinancialPeriod, InvestmentState, Job,
-    ManagementAssessment, MonitoringHistory, MonitoringRule, Position, Provenance,
+    ManagementAssessment, MarketSnapshot, MonitoringHistory, MonitoringRule, Position, Provenance,
     Publication, RefreshRun, ResearchState, ResearchVersion, RiskPlan, Security,
     Snapshot, Source, ValuationModel,
 )
@@ -263,34 +263,64 @@ def health():
     }
 
 
-@bp.get("/")
-@login_required
-def dashboard():
-    role = effective_role()
-    if role != "CONTROL":
-        return render_template("published_index.html", publications=_published_for_role(role), role=role)
-    require_control_view()
-    rows = []
-    for coverage in Coverage.query.filter(
-        Coverage.user_id == g.user.id,
+def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
+    coverages = Coverage.query.filter(
+        Coverage.user_id == user_id,
         Coverage.status != "ARCHIVED",
-    ).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
-        security = db.session.get(Security, coverage.security_id); company = db.session.get(Company, security.company_id)
-        market = latest_snapshot(security.id); valuation = valuation_result(coverage)
-        model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
-        readiness = _research_readiness(coverage)
-        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW", "positives": 0, "negatives": 0, "warnings": []}
-        research = ResearchState.query.filter_by(coverage_id=coverage.id).first()
-        risk = RiskPlan.query.filter_by(coverage_id=coverage.id).first()
-        lenses = build_decision_lenses(
-            coverage=coverage, company=company, research=research, risk=risk, model=model, market=market,
-            valuation=valuation, intelligence=intelligence, readiness=readiness,
-            management=management_engine(company.id), tape=tape_series(security, 12),
-        ) if all((research, risk, model)) else {"research_conclusion": "DATA REVIEW", "rows": []}
+    ).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all()
+    if not coverages:
+        return [], False
+
+    security_ids = [row.security_id for row in coverages]
+    securities = {row.id: row for row in Security.query.filter(Security.id.in_(security_ids)).all()}
+    company_ids = [row.company_id for row in securities.values()]
+    companies = {row.id: row for row in Company.query.filter(Company.id.in_(company_ids)).all()} if company_ids else {}
+
+    snapshot_rows = MarketSnapshot.query.filter(MarketSnapshot.security_id.in_(security_ids)).order_by(
+        MarketSnapshot.security_id.asc(), MarketSnapshot.as_of.desc(), MarketSnapshot.id.desc()
+    ).all()
+    snapshots = {}
+    for row in snapshot_rows:
+        snapshots.setdefault(row.security_id, row)
+
+    caches = latest_cache_map([row.id for row in coverages])
+    missing = [row.id for row in coverages if row.id not in caches]
+    if missing:
+        active_prime = Job.query.filter(
+            Job.user_id == user_id,
+            Job.job_type == "CACHE_PRIME",
+            Job.status.in_(["QUEUED", "RUNNING"]),
+        ).first()
+        if active_prime is None:
+            enqueue_job("CACHE_PRIME", user_id=user_id, payload={}, priority=94)
+
+    now = utcnow()
+    rows = []
+    for coverage in coverages:
+        security = securities.get(coverage.security_id)
+        if security is None:
+            continue
+        company = companies.get(security.company_id)
+        cache = dict(caches.get(coverage.id) or {})
+        market = snapshots.get(security.id)
+        valuation = dict(cache.get("valuation") or {
+            "current_price": float(market.price) if market and market.price is not None else None,
+            "bear": None, "base": None, "bull": None, "expected_value": None,
+        })
+        readiness = dict(cache.get("readiness") or _fallback_readiness())
+        intelligence = dict(cache.get("intelligence") or {
+            "action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW",
+            "score": 0.0, "positives": 0, "negatives": 0, "warnings": ["Research cache is building."],
+            "top_signals": [], "base_gap_pct": None, "validation_state": readiness.get("validation", {}).get("state", "NOT RUN"),
+            "buy_threshold": 2.5, "sell_threshold": -2.5,
+        })
+        lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
         pending = [gate.get("label") for gate in readiness.get("gates", []) if not gate.get("approved")]
         validation_state = str((readiness.get("validation") or {}).get("state") or "NOT RUN")
         conclusion = str(lenses.get("research_conclusion") or "DATA REVIEW")
-        if pending:
+        if not cache:
+            next_action = "Building research cache"
+        elif pending:
             next_action = f"Complete / approve {pending[0]}"
         elif validation_state == "NOT RUN":
             next_action = "Validate study"
@@ -302,15 +332,27 @@ def dashboard():
             next_action = "Monitor evidence"
         freshness_hours = None
         if market and market.as_of:
-            freshness_hours = max(0.0, (utcnow() - market.as_of).total_seconds() / 3600.0)
-        rows.append({"coverage": coverage, "security": security, "company": company, "market": market,
-                     "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
-                     "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
-                     "decision_lenses": lenses, "discovery_labels": classify_coverage(intelligence, readiness),
-                     "next_action": next_action, "freshness_hours": freshness_hours})
+            freshness_hours = max(0.0, (now - market.as_of).total_seconds() / 3600.0)
+        rows.append({
+            "coverage": coverage, "security": security, "company": company, "market": market,
+            "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
+            "decision_lenses": lenses, "discovery_labels": list(cache.get("discovery_labels") or []),
+            "next_action": next_action, "freshness_hours": freshness_hours,
+        })
+    return rows, bool(missing)
+
+
+@bp.get("/")
+@login_required
+def dashboard():
+    role = effective_role()
+    if role != "CONTROL":
+        return render_template("published_index.html", publications=_published_for_role(role), role=role)
+    require_control_view()
+    rows, cache_building = _cached_coverage_rows(g.user.id)
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
-    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts)
+    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts, cache_building=cache_building)
 
 
 @bp.get("/discovery")
@@ -321,24 +363,8 @@ def discovery():
     external = search_universe(q, g.user.id) if q else {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
     latest_scan_job = Job.query.filter_by(user_id=g.user.id, job_type="DISCOVERY_SCAN", status="DONE").order_by(Job.finished_at.desc(), Job.id.desc()).first()
     market_scan = dict(((latest_scan_job.result or {}).get("market_scan") or {}) if latest_scan_job else {})
-    rows = []
-    for coverage in Coverage.query.filter(
-        Coverage.user_id == g.user.id,
-        Coverage.status != "ARCHIVED",
-    ).order_by(Coverage.priority.desc(), Coverage.updated_at.desc()).all():
-        security = db.session.get(Security, coverage.security_id)
-        company = db.session.get(Company, security.company_id)
-        market = latest_snapshot(security.id)
-        valuation = valuation_result(coverage)
-        model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
-        readiness = _research_readiness(coverage)
-        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW"}
-        rows.append({
-            "coverage": coverage, "security": security, "company": company, "market": market,
-            "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
-            "discovery_labels": classify_coverage(intelligence, readiness),
-        })
-    return render_template("discovery.html", rows=rows, q=q, external=external, market_scan=market_scan, market_scan_job=latest_scan_job)
+    rows, cache_building = _cached_coverage_rows(g.user.id)
+    return render_template("discovery.html", rows=rows, q=q, external=external, market_scan=market_scan, market_scan_job=latest_scan_job, cache_building=cache_building)
 
 
 @bp.post("/coverage")
