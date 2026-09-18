@@ -2,8 +2,6 @@
 {% block title %}{{ security.ticker }} · Portfolio · Market Forensics{% endblock %}
 {% block content %}
 <section class="page company-page">
-  {% set company_header_context = 'Private portfolio workspace' %}
-  {% set company_header_states = [('Research', coverage.research_state), ('Validation', readiness.validation.state), ('Research conclusion', decision_lenses.research_conclusion)] %}
   {% include "_company_header.html" %}
   <div class="command-actions company-context-actions"><a class="button" href="{{ url_for('web.company_section', ticker=security.ticker, section='overview') }}">Open Research</a><a class="button" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>
   <div class="kpi-grid">
