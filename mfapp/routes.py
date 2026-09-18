@@ -179,14 +179,30 @@ def dashboard():
             valuation=valuation, intelligence=intelligence, readiness=readiness,
             management=management_engine(company.id), tape=tape_series(security, 12),
         ) if all((research, risk, model)) else {"research_conclusion": "DATA REVIEW", "rows": []}
+        pending = [gate.get("label") for gate in readiness.get("gates", []) if not gate.get("approved")]
+        validation_state = str((readiness.get("validation") or {}).get("state") or "NOT RUN")
+        conclusion = str(lenses.get("research_conclusion") or "DATA REVIEW")
+        if pending:
+            next_action = f"Complete / approve {pending[0]}"
+        elif validation_state == "NOT RUN":
+            next_action = "Validate study"
+        elif validation_state in {"LIMITED", "REVIEW"}:
+            next_action = "Review validation"
+        elif conclusion in {"LONG READY", "SHORT READY"}:
+            next_action = "Portfolio review"
+        else:
+            next_action = "Monitor evidence"
+        freshness_hours = None
+        if market and market.as_of:
+            freshness_hours = max(0.0, (utcnow() - market.as_of).total_seconds() / 3600.0)
         rows.append({"coverage": coverage, "security": security, "company": company, "market": market,
                      "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
                      "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
-                     "decision_lenses": lenses, "discovery_labels": classify_coverage(intelligence, readiness)})
+                     "decision_lenses": lenses, "discovery_labels": classify_coverage(intelligence, readiness),
+                     "next_action": next_action, "freshness_hours": freshness_hours})
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
-    action_counts = {key: sum(1 for row in rows if row["intelligence"].get("action") == key) for key in ("BUY", "SELL", "WAIT")}
-    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts, action_counts=action_counts)
+    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts)
 
 
 @bp.get("/discovery")
