@@ -270,6 +270,27 @@ def _discovery(user_id: int) -> dict[str, Any]:
         "market_scan": scan,
     }
 
+def _prime_research_cache(user_id: int) -> dict[str, Any]:
+    queued = reused = 0
+    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
+        security = db.session.get(Security, coverage.security_id)
+        if not security:
+            continue
+        job = enqueue_job(
+            "RECALCULATE",
+            user_id=user_id,
+            company_id=security.company_id,
+            security_id=security.id,
+            payload={"coverage_id": coverage.id},
+            priority=95,
+        )
+        if getattr(job, "_mf_reused", False):
+            reused += 1
+        else:
+            queued += 1
+    return {"jobs_queued": queued, "jobs_reused": reused}
+
+
 def _bulk(user_id: int) -> dict[str, Any]:
     sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
@@ -414,6 +435,7 @@ def _execute(job: Job) -> dict[str, Any]:
         payload["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         return payload
     if kind == "DISCOVERY_SCAN": return _discovery(job.user_id)
+    if kind == "CACHE_PRIME": return _prime_research_cache(job.user_id)
     if kind == "BULK_REFRESH": return _bulk(job.user_id)
     if kind == "STALE_REFRESH": return _stale(job.user_id)
     raise RuntimeError(f"Unknown job type: {kind}")
