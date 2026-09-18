@@ -9,7 +9,7 @@ from flask import Blueprint, abort, current_app, flash, g, redirect, render_temp
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
-from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, scenario_forecasts
+from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, numbers_completeness, quarterly_rows, scenario_forecasts
 from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_series
 from .management_promises import evaluate_promises
 from .extensions import db
@@ -616,7 +616,9 @@ def company_section(ticker, section):
         )
     elif section == "numbers":
         extra["financials"] = annual_rows(company.id, 15)
+        extra["quarterly_financials"] = quarterly_rows(company.id, 12)
         extra["current_financial"] = current_row(company.id)
+        extra["numbers_completeness"] = numbers_completeness(company.id)
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
         extra["quality_issues"] = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").order_by(DataQualityIssue.detected_at.desc()).all()
     elif section == "valuation":
