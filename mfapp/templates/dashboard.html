@@ -29,7 +29,7 @@
     <form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Refresh all</button></form>
   </div>
   <div class="table-card coverage-card"><table class="data-table coverage-table">
-    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th class="coverage-number-col">Price</th><th class="coverage-number-col">Base</th><th class="coverage-number-col">Base gap</th><th>Process</th><th title="Latest point-in-time walk-forward validation status">Validate</th><th class="coverage-fresh-col">Freshness</th><th class="coverage-wrap-col">Next<br>action</th><th class="coverage-wrap-col">Lens</th><th class="coverage-manage-col">Manage</th></tr></thead>
+    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th class="coverage-number-col">Price</th><th class="coverage-number-col">Base</th><th class="coverage-number-col">Base gap</th><th>Process</th><th title="Latest point-in-time walk-forward validation status">Validate</th><th class="coverage-fresh-col">Freshness</th><th class="coverage-wrap-col">Next action</th><th class="coverage-wrap-col">Lens</th><th class="coverage-manage-col">Manage</th></tr></thead>
     <tbody>
     {% for row in rows %}
       <tr>
