@@ -12,7 +12,7 @@ from .core_models import Company, Coverage, InvestmentState, Job, Position, Publ
 from .data_providers import latest_snapshot, provider_overview, provider_status, set_secret
 from .extensions import db
 from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
-from .jobs import enqueue_job
+from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
 from .reporting import get_report_branding, render_discovery_pdf, render_docx, render_pdf, research_report_data, set_report_branding
@@ -22,17 +22,22 @@ from .services import can_view_publication, create_snapshot, publication_payload
 
 
 def _queue_status(user_id: int) -> dict:
+    # Status checks also recover dead leases, so a dead worker cannot block the
+    # browser fallback forever while the UI still says RUNNING.
+    recovered = recover_stale_running_jobs(user_id=user_id)
     due = Job.query.filter(Job.user_id == user_id, Job.status == "QUEUED", Job.run_after <= utcnow()).count()
     queued = Job.query.filter_by(user_id=user_id, status="QUEUED").count()
     running = Job.query.filter_by(user_id=user_id, status="RUNNING").count()
     failed = Job.query.filter_by(user_id=user_id, status="FAILED").count()
+    cancelled = Job.query.filter_by(user_id=user_id, status="CANCELLED").count()
     finished = Job.query.filter(
         Job.user_id == user_id,
-        Job.status.in_(["DONE", "FAILED"]),
+        Job.status.in_(["DONE", "FAILED", "CANCELLED"]),
         Job.finished_at.is_not(None),
     ).order_by(Job.finished_at.desc(), Job.id.desc()).first()
     return {
-        "due": due, "queued": queued, "running": running, "failed": failed,
+        "due": due, "queued": queued, "running": running, "failed": failed, "cancelled": cancelled,
+        "recovered_stale": recovered,
         "last_finished_id": finished.id if finished else None,
         "last_finished_at": finished.finished_at.isoformat() if finished and finished.finished_at else None,
         "executor": "cron+browser-fallback",
@@ -262,6 +267,28 @@ def job_status():
     return jsonify(_queue_status(g.user.id))
 
 
+@bp.post("/jobs/<int:job_id>/cancel")
+@role_required("CONTROL")
+def cancel_active_job(job_id):
+    require_control_view()
+    job = db.session.get(Job, job_id)
+    if not job or job.user_id != g.user.id:
+        abort(404)
+    previous_status = str(job.status or "").upper()
+    if previous_status not in {"QUEUED", "RUNNING"}:
+        flash(f"Job #{job.id} is already {previous_status.lower()} and cannot be cancelled.", "error")
+        return redirect(request.referrer or url_for("web.settings"))
+    pid = cancel_job(job, reason=f"Cancelled by CONTROL user #{g.user.id}")
+    audit("job.cancel", "job", job.id, {"type": job.job_type, "previous_status": previous_status})
+    db.session.commit()
+    terminated = terminate_job_executor(pid) if previous_status == "RUNNING" else False
+    flash(
+        f"Job #{job.id} cancelled." + (" Executor terminated and lock released." if terminated else ""),
+        "success",
+    )
+    return redirect(request.referrer or url_for("web.settings"))
+
+
 @bp.post("/jobs/pump")
 @role_required("CONTROL")
 def pump_jobs():
@@ -283,6 +310,7 @@ def pump_jobs():
 @login_required
 def settings():
     require_control_view()
+    queue_status = _queue_status(g.user.id)
     jobs = Job.query.filter_by(user_id=g.user.id).order_by(Job.created_at.desc()).limit(50).all()
     refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
     return render_template(
@@ -291,7 +319,7 @@ def settings():
         provider_catalog=provider_overview(g.user.id),
         jobs=jobs,
         refreshes=refreshes,
-        queue_status=_queue_status(g.user.id),
+        queue_status=queue_status,
         number_formats=NUMBER_FORMATS,
         number_format=get_number_format(g.user.id),
         report_branding=get_report_branding(g.user.id, current_app.config.get("LOGO_URL", "")),
