@@ -239,6 +239,11 @@ def _fallback_synthesis(ctx: dict) -> dict:
         "micro_for": [],
         "micro_against": [],
         "macro": [],
+        "macro_for": [],
+        "macro_against": [],
+        "macro_watch": [],
+        "macro_source": None,
+        "macro_as_of": None,
         "invalidation": ctx["risk"].thesis_invalidation or "",
         "next": ["Wait for the current evidence job to finish." if pending else "Queue a recalculation."],
     }
