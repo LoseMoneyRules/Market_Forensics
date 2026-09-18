@@ -468,7 +468,7 @@ html[data-theme="dark"] .mobile-backdrop{background:rgba(2,8,14,.68)}
 .tape-flow-grid span{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
 .tape-flow-grid strong{font-size:18px;color:var(--navy);font-variant-numeric:tabular-nums}
 .tape-source-note{margin:12px 0 0;font-size:12.5px;line-height:1.45}
-.tape-change-grid .panel{margin-bottom:0}.compact-list{margin:8px 0 0;padding-left:19px}.compact-list li{margin:5px 0;font-size:13.5px}
+.tape-change-grid .panel{margin-bottom:0}.tape-change-grid .compact-list{margin:8px 0 0;padding-left:19px}.tape-change-grid .compact-list li{margin:5px 0;font-size:13.5px}
 .tape-v2-charts{align-items:stretch}.tape-v2-charts .chart-card canvas{height:280px}
 .tape-flow-table{margin-top:2px}.tape-flow-table .data-table{min-width:980px}
 html[data-theme="dark"] .tape-flow-grid{background:var(--line);border-color:var(--line)}html[data-theme="dark"] .tape-flow-grid>div{background:var(--white)}
