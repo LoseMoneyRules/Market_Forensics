@@ -385,6 +385,7 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             "decision_lenses": lenses, "discovery_labels": list(cache.get("discovery_labels") or []),
             "next_action": next_action, "freshness_hours": freshness_hours,
         })
+    rows.sort(key=lambda row: str(row["security"].ticker or "").upper())
     return rows, bool(missing)
 
 

@@ -5,7 +5,7 @@
   </div>
   {% for gate in readiness.gates %}
   <div class="gate-row" data-gate-key="{{ gate.key }}">
-    <span>{{ gate.label }}</span>
+    <a class="gate-link" href="{{ url_for('web.company_section', ticker=security.ticker, section=gate.key) }}">{{ gate.label }}</a>
     <strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}{% if gate.approved and gate.evidence_changed %} · EVIDENCE CHANGED{% endif %}</strong>
     {% if gate.approved %}
     <form class="gate-approval-form" method="post" data-gate-action="revoke" action="{{ url_for('web.approve_research_gate_action', ticker=security.ticker, gate_key=gate.key, action='revoke') }}">
