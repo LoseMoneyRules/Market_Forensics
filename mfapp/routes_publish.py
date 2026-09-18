@@ -8,13 +8,13 @@ from pathlib import Path
 from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, url_for
 
 from .access import audit, effective_role, require_control_view
-from .core_models import Company, Coverage, InvestmentState, Job, Position, Publication, RefreshRun, Security, Snapshot
+from .core_models import Company, Coverage, InvestmentState, Job, PortfolioRiskPlan, Position, PositionProfile, Publication, RefreshRun, RiskPlan, Security, Snapshot
 from .data_providers import latest_snapshot, provider_overview, provider_status, set_secret
 from .extensions import db
 from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
-from .portfolio_engine import portfolio_rows
+from .portfolio_engine import portfolio_rows, position_sizing
 from .reporting import get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
@@ -253,15 +253,62 @@ def portfolio():
 @login_required
 def portfolio_security(ticker):
     require_control_view()
-    ctx = _ctx(ticker)
+    ticker = str(ticker or "").strip().upper()
+    security = (
+        Security.query.filter(db.func.upper(Security.ticker) == ticker)
+        .order_by(Security.active.desc(), Security.is_primary.desc(), Security.id.asc())
+        .first()
+    )
+    if security is None:
+        abort(404)
+    company = db.session.get(Company, security.company_id)
+    coverage = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if coverage is not None:
+        ctx = _ctx(ticker)
+        valuation = ctx["valuation"]
+        readiness = ctx["readiness"]
+        market = ctx["market"]
+        investment = ctx["investment"]
+        research_risk = ctx["risk"]
+    else:
+        ctx = {}
+        valuation = {"bear": None, "base": None, "bull": None, "expected_value": None}
+        readiness = {"done": 0, "total": 13, "validation": {"state": "NOT RUN"}}
+        market = latest_snapshot(security.id)
+        investment = None
+        research_risk = None
+
+    position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    profile = PositionProfile.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    money_risk = PortfolioRiskPlan.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     rows, totals = portfolio_rows(g.user.id)
     if rows and not totals.get("analytics_ready"):
         enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
-    row = next((item for item in rows if item["security"].id == ctx["security"].id), None)
+    row = next((item for item in rows if item["security"].id == security.id), None)
     portfolio_value = totals.get("market_value") or 0
     position_value = (row or {}).get("market_value") if row else None
     weight_pct = ((position_value / portfolio_value) * 100.0) if position_value is not None and portfolio_value else 0.0
-    return render_template("portfolio_security.html", portfolio_row=row, portfolio_totals=totals, portfolio_weight_pct=weight_pct, **ctx)
+    sizing = position_sizing(market.price if market else None, money_risk)
+
+    return render_template(
+        "portfolio_security.html",
+        security=security,
+        company=company,
+        coverage=coverage,
+        valuation=valuation,
+        readiness=readiness,
+        market=market,
+        investment=investment,
+        position=position,
+        profile=profile,
+        money_risk=money_risk,
+        research_risk=research_risk,
+        sizing=sizing,
+        portfolio_row=row,
+        portfolio_totals=totals,
+        portfolio_weight_pct=weight_pct,
+        research_attached=coverage is not None,
+    )
 
 
 @bp.post("/company/<ticker>/refresh/<kind>")
