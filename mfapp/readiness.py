@@ -7,7 +7,7 @@ from typing import Any
 from .core_models import (
     BearCaseItem, Catalyst, Company, Coverage, DecisionJournal, Expectation, FinancialFlow,
     FinancialPeriod, HistoricalTestRun, ManagementAssessment, MonitoringRule,
-    ResearchGateApproval, ResearchState, Security, Source, ValuationModel,
+    ResearchGateApproval, ResearchState, RiskPlan, Security, Source, ValuationModel,
 )
 from .extensions import db
 from .services import valuation_result
@@ -42,6 +42,8 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     management_count = ManagementAssessment.query.filter_by(coverage_id=coverage.id).count()
     monitor_count = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).count()
     journal_count = DecisionJournal.query.filter_by(coverage_id=coverage.id).count()
+    risk = RiskPlan.query.filter_by(coverage_id=coverage.id).first()
+    invalidation_text = _text(risk.thesis_invalidation if risk else "")
     source_count = Source.query.filter_by(company_id=company.id).count() if company else 0
     flow_count = 0
     if company:
@@ -69,7 +71,11 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         _gate("Financial Flows", "financial-flows", {"flows": flow_count, "text": _text(research.flows_summary if research else "")}, flow_count > 0),
         _gate("Management", "management", {"assessments": management_count, "text": _text(research.management_summary if research else "")}, management_count > 0 or bool(research and _text(research.management_summary))),
         _gate("Tape / Flows", "tape", {"text": _text(research.tape_summary if research else ""), "sources": source_count}, bool(research and _text(research.tape_summary))),
-        _gate("Monitoring", "monitoring", {"rules": monitor_count}, monitor_count > 0),
+        _gate(
+            "Monitoring", "monitoring",
+            {"rules": monitor_count, "thesis_invalidation": invalidation_text},
+            monitor_count > 0 or bool(invalidation_text),
+        ),
         _gate("Decision Journal", "journal", {"entries": journal_count}, journal_count > 0),
         _gate("Sources / Audit", "audit", {"sources": source_count}, source_count > 0),
     ]
@@ -77,11 +83,15 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     approvals = {row.gate_key: row for row in ResearchGateApproval.query.filter_by(coverage_id=coverage.id).all()}
     for gate in gates:
         approval = approvals.get(gate["key"])
-        fresh = bool(approval and approval.evidence_hash == gate["evidence_hash"])
-        gate["approved"] = fresh
-        gate["stale_approval"] = bool(approval and not fresh)
-        gate["approved_at"] = approval.approved_at if fresh else None
-        gate["status"] = "APPROVED" if fresh else ("PENDING APPROVAL" if gate["evidence_ready"] else "MISSING EVIDENCE")
+        evidence_changed = bool(approval and approval.evidence_hash != gate["evidence_hash"])
+        # Human approval is monotonic until CONTROL explicitly reopens/revokes it.
+        # Evidence changes remain visible for review, but must never silently open
+        # unrelated gates or erase a prior approval.
+        gate["approved"] = bool(approval)
+        gate["stale_approval"] = evidence_changed
+        gate["evidence_changed"] = evidence_changed
+        gate["approved_at"] = approval.approved_at if approval else None
+        gate["status"] = "APPROVED" if approval else ("PENDING APPROVAL" if gate["evidence_ready"] else "MISSING EVIDENCE")
 
     done = sum(1 for gate in gates if gate["approved"])
     reliability = float(hist.reliability_score) if hist and hist.reliability_score is not None else None
