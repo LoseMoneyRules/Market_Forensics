@@ -414,6 +414,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "final_requires_operating_confirmation": True,
             "fill_quota": "none",
         },
+        "contract_version": "FORENSIC_FAIR_VALUE_V1",
         "enrichment_mode": "FAIR_VALUE_FORENSIC_STAGE",
     }
 
