@@ -171,6 +171,7 @@ Process · Validate · Freshness · Next action · Lens · Manage.
 
 Typography contract:
 - ticker and column titles may be bold;
+- bold is exceptional, not the default: links, gate names, normal labels and body values remain regular weight;
 - body values are not bold;
 - Price / Base / Gap stay on one line;
 - numeric cells use tabular numbers;
@@ -446,6 +447,7 @@ Workflow health assertions read VERSION dynamically; do not hardcode a 0.2.x rel
 Permanent UI rules:
 - never purple;
 - institutional blue;
+- use as little bold as possible: reserve bold/strong weight for true hierarchy, compact headings, ticker symbols, critical statuses or primary decision outputs; normal body values, navigation links, gate names, explanatory text and routine labels should use regular weight unless there is a specific readability reason;
 - readable typography is a release gate: normal UI 13–14 px, forms 14 px, micro-metadata no smaller than 12 px, chart labels 12–14 px;
 - real dark mode;
 - real light mode;
