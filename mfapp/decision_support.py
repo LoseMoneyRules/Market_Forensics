@@ -229,11 +229,17 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         company_id=security.company_id,
         event_type="ALPACA_POSITIONING",
     ).order_by(Event.event_date.desc(), Event.id.desc()).first()
+    borrow_fee_event = Event.query.filter_by(
+        company_id=security.company_id,
+        event_type="BORROW_FEE_OBSERVATION",
+    ).order_by(Event.event_date.desc(), Event.id.desc()).first()
     positioning = dict((positioning_event.payload or {}) if positioning_event else {})
     borrow = dict(positioning.get("borrow") or {})
     options = dict(positioning.get("options") or {})
     locate = dict(positioning.get("locate") or {})
     put_call = n(options.get("put_call_oi"))
+    borrow_fee_payload = dict((borrow_fee_event.payload or {}) if borrow_fee_event else {})
+    borrow_fee_pct = n(borrow_fee_payload.get("annualized_fee_pct"))
 
     def ret(days: int) -> float | None:
         if len(daily_prices) < 2:
@@ -322,6 +328,9 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "put_open_interest": n(options.get("put_open_interest")),
             "call_open_interest": n(options.get("call_open_interest")),
             "borrow_status": borrow.get("borrow_status") or "unknown",
+            "borrow_fee_pct": borrow_fee_pct,
+            "borrow_fee_source": borrow_fee_payload.get("source") or "",
+            "borrow_fee_as_of": borrow_fee_event.event_date.isoformat() if borrow_fee_event and borrow_fee_event.event_date else None,
             "shortable": borrow.get("shortable"),
             "locate_price": n(locate.get("price")),
             "locate_available_qty": n(locate.get("available_qty")),
