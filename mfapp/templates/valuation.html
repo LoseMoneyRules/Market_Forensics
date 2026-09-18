@@ -3,8 +3,6 @@
 {% macro money(v) %}{% if v is not none %}${{ '{:,.2f}'.format(v|float) }}{% else %}Pending quote{% endif %}{% endmacro %}
 {% block content %}
 <section class="page company-page">
-  {% set company_header_context = 'Intrinsic valuation' %}
-  {% set company_header_states = [('Method', 'Multi-method intrinsic'), ('Current basis', model_settings.get('current_financial_basis','FY')), ('Calibration', calibration.get('source','TYPE_PRIOR')|replace('_',' ')), ('Historical sample', calibration.get('sample_size',0)), ('Quality', engine_result.get('quality','DATA_WARNING')|replace('_',' '))] %}
   {% include "_company_header.html" %}
   {% set section='valuation' %}{% include "_research_tabs.html" %}
 
