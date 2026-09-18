@@ -129,7 +129,7 @@ def _plain_research_lines(data: dict[str, Any]) -> list[str]:
                     _pct(row.get("share_count_growth_pct")),
                 ])
             ft=Table(rows,colWidths=[.55*inch,1.0*inch,.6*inch,.95*inch,.75*inch,.75*inch,.7*inch,.75*inch])
-            ft.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),6.5)]))
+            ft.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.5)]))
             story += [ft,Spacer(1,6)]
 
         tri=data.get("triangulation") or {}
@@ -158,7 +158,7 @@ def _pdf_escape(text: str) -> str:
 
 def _fallback_pdf(lines: list[str], *, landscape_page: bool = False) -> BytesIO:
     width,height=(792,612) if landscape_page else (612,792)
-    margin=42; font_size=9; leading=13
+    margin=42; font_size=11; leading=15
     usable=max(20,int((height-2*margin)/leading))
     wrapped: list[str] = []
     wrap_width=125 if landscape_page else 92
@@ -567,7 +567,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     p = doc.add_paragraph(subtitle)
-    p.runs[0].font.size = Pt(10)
+    p.runs[0].font.size = Pt(11)
 
     table = doc.add_table(rows=2, cols=6)
     table.style = "Table Grid"
@@ -704,8 +704,8 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     doc=SimpleDocTemplate(out,pagesize=LETTER,rightMargin=.55*inch,leftMargin=.55*inch,topMargin=.5*inch,bottomMargin=.5*inch)
     styles=getSampleStyleSheet()
     styles.add(ParagraphStyle(name="MFTitle",parent=styles["Title"],fontSize=18,leading=21,textColor=colors.HexColor("#0b1f33"),alignment=TA_LEFT,spaceAfter=6))
-    styles.add(ParagraphStyle(name="MFH2",parent=styles["Heading2"],fontSize=11,leading=14,textColor=colors.HexColor("#1f4e79"),spaceBefore=8,spaceAfter=4))
-    styles.add(ParagraphStyle(name="MFBody",parent=styles["BodyText"],fontSize=8.7,leading=11,spaceAfter=5))
+    styles.add(ParagraphStyle(name="MFH2",parent=styles["Heading2"],fontSize=13,leading=16,textColor=colors.HexColor("#1f4e79"),spaceBefore=8,spaceAfter=4))
+    styles.add(ParagraphStyle(name="MFBody",parent=styles["BodyText"],fontSize=10.5,leading=14,spaceAfter=5))
     brand = data.get("branding") or {}
     story=[]
     logo = _safe_logo(str(brand.get("logo_url") or ""))
@@ -721,7 +721,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
         [_money(data["market_price"]),_money(data["bear"]),_money(data["base"]),_money(data["bull"]),_pct(data["base_gap_pct"]),data["validation_state"]],
     ]
     t=Table(grid,colWidths=[1.05*inch]*6)
-    t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#b8c4ce")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5)]))
+    t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#b8c4ce")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9.5),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5)]))
     story += [t,Spacer(1,8)]
     chart = _valuation_chart_png(data)
     story += [RLImage(chart, width=6.6*inch, height=1.52*inch), Spacer(1,6)]
@@ -735,7 +735,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     story.append(Paragraph("Research lenses",styles["MFH2"]))
     lens_rows=[["Lens","State"]]+[[str(r.get("label") or r.get("key") or ""),str(r.get("state") or "")] for r in (data.get("decision_lenses") or [])]
     lens_table=Table(lens_rows,colWidths=[2.6*inch,3.9*inch])
-    lens_table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8)]))
+    lens_table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9.5)]))
     story += [lens_table,Spacer(1,6)]
     implied=data.get("implied_expectations") or {}
     if implied.get("available"):
@@ -750,7 +750,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
                 str(row.get("read") or ""),
             ])
         tt=Table(rows,colWidths=[2.35*inch,1.35*inch,1.35*inch,1.45*inch])
-        tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7.5)]))
+        tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9)]))
         story += [tt,Spacer(1,6)]
 
     story.append(Paragraph("Evidence for / against",styles["MFH2"]))
@@ -782,7 +782,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
                 promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
                 rows.append([str(row.get("target_year") or ""),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")])
             tt=Table(rows,colWidths=[.55*inch,1.45*inch,1.9*inch,1.15*inch,.85*inch])
-            tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),7)]))
+            tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9)]))
             story += [tt,Spacer(1,6)]
 
         tape=data.get("tape_metrics") or {}
@@ -836,7 +836,7 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     )
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="MFDiscTitle", parent=styles["Title"], fontSize=17, leading=20, textColor=colors.HexColor("#0b1f33"), alignment=TA_LEFT, spaceAfter=5))
-    styles.add(ParagraphStyle(name="MFDiscBody", parent=styles["BodyText"], fontSize=7.5, leading=9.5, spaceAfter=3))
+    styles.add(ParagraphStyle(name="MFDiscBody", parent=styles["BodyText"], fontSize=9.5, leading=12, spaceAfter=3))
     story = []
     logo = _safe_logo(str(branding.get("logo_url") or ""))
     if logo:
@@ -856,7 +856,7 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
         ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),
         ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),
         ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-        ("FONTSIZE",(0,0),(-1,-1),6.8),
+        ("FONTSIZE",(0,0),(-1,-1),8.8),
         ("GRID",(0,0),(-1,-1),.25,colors.HexColor("#c7d1da")),
         ("VALIGN",(0,0),(-1,-1),"TOP"),
         ("LEFTPADDING",(0,0),(-1,-1),3),
