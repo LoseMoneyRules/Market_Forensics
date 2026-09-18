@@ -205,6 +205,39 @@ def _ctx(ticker: str) -> dict:
         "research_cache": cache or {}, "cache_pending": cache_pending,
     }
 
+def _fallback_synthesis(ctx: dict) -> dict:
+    pending = bool(ctx.get("cache_pending"))
+    message = "Research cache is updating in the job queue." if pending else "No calculated synthesis is stored yet."
+    return {
+        "why_now": [message],
+        "why_not_yet": [message],
+        "what_changes": ["Complete the queued recalculation; the page will refresh automatically when it finishes."],
+        "what_kills": [ctx["risk"].thesis_invalidation or "No explicit thesis-kill condition is locked yet."],
+        "micro_for": [],
+        "micro_against": [],
+        "macro": [],
+        "invalidation": ctx["risk"].thesis_invalidation or "",
+        "next": ["Wait for the current evidence job to finish." if pending else "Queue a recalculation."],
+    }
+
+
+def _cached_tape_for_months(tape: dict, months: int) -> dict:
+    if months >= 12 or not tape:
+        return tape or {"months": months, "market": [], "short_interest": [], "short_volume": [], "positioning": {}, "metrics": {}}
+    cutoff = date.today().replace(day=1)
+    # Six calendar months is close enough for display slicing; calculations remain the cached 12M context.
+    for _ in range(6):
+        cutoff = (cutoff.replace(day=1) - __import__("datetime").timedelta(days=1)).replace(day=1)
+    cutoff_iso = cutoff.isoformat()
+    out = dict(tape)
+    out["months"] = months
+    for key in ("market", "short_interest", "short_volume"):
+        rows = list(tape.get(key) or [])
+        date_key = "date"
+        out[key] = [row for row in rows if str(row.get(date_key) or row.get("settlement_date") or row.get("trade_date") or "") >= cutoff_iso]
+    return out
+
+
 def _research_version(coverage: Coverage, research: ResearchState, reason: str) -> None:
     version = (db.session.query(db.func.max(ResearchVersion.version)).filter(ResearchVersion.coverage_id == coverage.id).scalar() or 0) + 1
     payload = {column.name: getattr(research, column.name) for column in research.__table__.columns if column.name not in {"id", "coverage_id", "updated_at"}}
@@ -388,13 +421,14 @@ def company_section(ticker, section):
     require_control_view()
     if section not in SECTION_KEYS: abort(404)
     ctx = _ctx(ticker); company = ctx["company"]; coverage = ctx["coverage"]; extra = {}
+    cache = ctx.get("research_cache") or {}
     if section in {"overview", "business"}:
-        extra["synthesis"] = build_synthesis(
-            coverage=coverage, security=ctx["security"], company=company, research=ctx["research"], risk=ctx["risk"],
-            model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"], intelligence=ctx["intelligence"], readiness=ctx["readiness"],
-        )
+        extra["synthesis"] = dict(cache.get("synthesis") or _fallback_synthesis(ctx))
         if section == "business":
-            extra["auto_triangulation"] = automatic_triangulation(company.id, g.user.id)
+            extra["auto_triangulation"] = dict(cache.get("triangulation") or {
+                "available": False, "reason": "Peer triangulation is updating in the job queue.",
+                "peers": [], "comparisons": [], "signals": [], "method": "CALCULATING", "sic": "", "sic_description": "",
+            })
             extra["triangulation_rows"] = Event.query.filter(
                 Event.company_id == company.id,
                 Event.event_type.like("TRIANGULATION_%"),
@@ -411,8 +445,9 @@ def company_section(ticker, section):
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 5)
         extra["scenario_forecasts"] = scenario_forecasts(company.id, ctx["model"], 5)
-        extra["implied_expectations"] = price_implied_expectations(
-            company.id, ctx["model"], ctx["market"].price if ctx["market"] else ctx["valuation"].get("current_price")
+        extra["implied_expectations"] = dict(
+            (ctx["decision_lenses"].get("implied_expectations") or {})
+            or {"available": False, "classification": "CALCULATING" if ctx.get("cache_pending") else "UNAVAILABLE", "drivers": [], "errors": []}
         )
     elif section == "numbers":
         extra["financials"] = annual_rows(company.id, 15)
@@ -432,15 +467,18 @@ def company_section(ticker, section):
         extra.update({"periods": periods, "selected_year": year, "flows": flows})
     elif section == "management":
         extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
-        extra["management_engine"] = management_engine(company.id)
-        extra["management_accountability"] = management_accountability(company.id)
-        extra["management_promises"] = evaluate_promises(company.id)
+        extra["management_engine"] = dict(cache.get("management") or {"score": None, "coverage_pct": 0, "components": []})
+        extra["management_accountability"] = list(cache.get("management_accountability") or [])
+        extra["management_promises"] = list(cache.get("management_promises") or [])
     elif section == "tape":
         months = 6 if str(request.args.get("months") or "12") == "6" else 12
-        extra["tape_events"] = Event.query.filter_by(company_id=company.id).order_by(Event.event_date.desc()).limit(30).all()
+        extra["tape_events"] = Event.query.filter(
+            Event.company_id == company.id,
+            ~Event.event_type.like("RESEARCH_CACHE_%"),
+        ).order_by(Event.event_date.desc()).limit(30).all()
         extra["finra_summary"] = finra_stored_summary(company.id)
         extra["finra_api_ready"] = provider_status(g.user.id).get("finra_api", False)
-        extra["tape_series"] = tape_series(ctx["security"], months)
+        extra["tape_series"] = _cached_tape_for_months(dict(cache.get("tape") or {}), months)
     elif section == "monitoring":
         rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all()
         histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}
