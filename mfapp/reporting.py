@@ -387,6 +387,72 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
     }
 
 
+def safe_research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict[str, str] | None = None) -> dict[str, Any]:
+    try:
+        return research_report_data(ctx, mode=mode, branding=branding)
+    except Exception:
+        coverage = ctx.get("coverage")
+        research = ctx.get("research")
+        security = ctx.get("security")
+        company = ctx.get("company")
+        market = ctx.get("market")
+        valuation = dict(ctx.get("valuation") or {})
+        readiness = dict(ctx.get("readiness") or {})
+        lenses = dict(ctx.get("decision_lenses") or {})
+        intelligence = dict(ctx.get("intelligence") or {})
+        brand = dict(branding or {})
+        return {
+            "branding": {
+                "title": str(brand.get("title") or "Market Forensics"),
+                "prepared_by": str(brand.get("prepared_by") or ""),
+                "footer": str(brand.get("footer") or "Lose Money Rules"),
+                "logo_url": str(brand.get("logo_url") or ""),
+            },
+            "mode": "executive" if str(mode).lower() == "executive" else "full",
+            "ticker": getattr(security, "ticker", "UNKNOWN"),
+            "company": getattr(company, "display_name", "Unknown company"),
+            "sector": getattr(company, "sector", "") or "",
+            "industry": getattr(company, "industry", "") or "",
+            "market_price": float(market.price) if market and market.price is not None else None,
+            "market_provider": getattr(market, "provider", "") if market else "",
+            "market_as_of": market.as_of.isoformat() if market and market.as_of else "",
+            "action": lenses.get("research_conclusion") or "DATA REVIEW",
+            "stance": lenses.get("value") or intelligence.get("stance") or "UNVERIFIED",
+            "bias": intelligence.get("bias") or "NEUTRAL",
+            "confidence": lenses.get("model_confidence") or intelligence.get("confidence") or "UNVALIDATED",
+            "decision_lenses": list(lenses.get("rows") or []),
+            "implied_expectations": dict(lenses.get("implied_expectations") or {}),
+            "triangulation": {},
+            "management_promises": [],
+            "tape_metrics": {},
+            "diagnostic_action": "WAIT",
+            "score": None,
+            "bear": valuation.get("bear"), "base": valuation.get("base"), "bull": valuation.get("bull"),
+            "expected_value": valuation.get("expected_value"),
+            "base_gap_pct": intelligence.get("base_gap_pct"),
+            "readiness": f"{readiness.get('done',0)}/{readiness.get('total',0)}",
+            "ready_to_validate": bool(readiness.get("ready_to_validate")),
+            "validation_state": (readiness.get("validation") or {}).get("state") or "NOT RUN",
+            "thesis": _txt(getattr(research, "thesis", "")),
+            "counter_evidence": _txt(getattr(research, "counter_evidence", "")),
+            "variant_market": _txt(getattr(research, "variant_market", "")),
+            "variant_us": _txt(getattr(research, "variant_us", "")),
+            "variant_evidence": _txt(getattr(research, "variant_evidence", "")),
+            "business": _txt(getattr(research, "business", "")),
+            "numbers": _txt(getattr(research, "numbers", "")),
+            "expectations_summary": _txt(getattr(research, "expectations", "")),
+            "valuation_notes": _txt(getattr(research, "valuation_notes", "")),
+            "bear_case_summary": _txt(getattr(research, "bear_case_summary", "")),
+            "catalysts_summary": _txt(getattr(research, "catalysts_summary", "")),
+            "flows_summary": _txt(getattr(research, "flows_summary", "")),
+            "management_summary": _txt(getattr(research, "management_summary", "")),
+            "tape_summary": _txt(getattr(research, "tape_summary", "")),
+            "risk_summary": _txt(getattr(research, "risk_summary", "")),
+            "supporting": [], "opposing": [], "warnings": ["Report generated from safe stored-data fallback."],
+            "blockers": [], "expectations": [], "bear_items": [], "catalysts": [], "management": [], "sources": [],
+        }
+
+
 def _valuation_chart_png(data: dict[str, Any]) -> BytesIO:
     if not _load_report_libs():
         raise RuntimeError("Rich report backend unavailable")
@@ -759,4 +825,4 @@ def render_discovery_pdf_safe(scan: dict[str, Any], branding: dict[str, str] | N
         return _fallback_pdf(lines, landscape_page=True)
 
 
-__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf","render_discovery_pdf","render_docx_safe","render_pdf_safe","render_discovery_pdf_safe","report_backend_status"]
+__all__=["get_report_branding","set_report_branding","research_report_data","safe_research_report_data","render_docx","render_pdf","render_discovery_pdf","render_docx_safe","render_pdf_safe","render_discovery_pdf_safe","report_backend_status"]
