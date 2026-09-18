@@ -947,3 +947,11 @@ def test_020_discovery_scan_is_batch_cached_and_hard_bounded():
     assert 'timeout=(5, 12)' in discovery
     assert 'return 90 if str(job_type).upper() == "DISCOVERY_SCAN"' in jobs
     assert "_execute_with_deadline(job)" in jobs
+
+
+def test_current_state_matches_version():
+    version = Path("VERSION").read_text().strip()
+    state = Path("docs/CURRENT_STATE.md").read_text()
+    assert f"**State-Version: {version}**" in state
+    assert "READ THIS FIRST" in state
+    assert "single source of truth" in state.lower()
