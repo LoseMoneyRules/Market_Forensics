@@ -13,6 +13,7 @@ from .decision_lenses import build_decision_lenses
 from .decision_support import company_brief, management_accountability, management_engine, tape_series
 from .discovery_engine import classify_coverage
 from .management_promises import evaluate_promises
+from .macro_context import macro_context
 from .research_synthesis import build_synthesis
 from .triangulation_engine import apply_peer_valuation_overlay, automatic_triangulation
 from .extensions import db
@@ -96,6 +97,7 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     market = latest_snapshot(security.id)
     intrinsic_valuation = valuation_result(coverage)
     triangulation = automatic_triangulation(company.id, coverage.user_id)
+    macro = macro_context(company.id)
     valuation = apply_peer_valuation_overlay(intrinsic_valuation, triangulation)
     readiness = research_readiness(coverage)
 
@@ -158,6 +160,7 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
         "tape": tape,
         "tape_metrics": (tape.get("metrics") or {}),
         "triangulation": triangulation,
+        "macro": macro,
         "synthesis": synthesis,
         "discovery_labels": discovery_labels,
         "market_as_of": market.as_of if market else None,
