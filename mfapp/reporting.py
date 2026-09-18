@@ -33,7 +33,10 @@ def _load_report_libs() -> bool:
     try:
         from docx import Document as _Document
         from docx.enum.text import WD_ALIGN_PARAGRAPH as _WD_ALIGN_PARAGRAPH
-        from docx.shared import Inches as _Inches, Pt as _Pt
+        from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT as _WD_CELL_VERTICAL_ALIGNMENT
+        from docx.oxml import OxmlElement as _OxmlElement
+        from docx.oxml.ns import qn as _qn
+        from docx.shared import Inches as _Inches, Pt as _Pt, RGBColor as _RGBColor
         from PIL import Image as _PILImage, ImageDraw as _ImageDraw, ImageFont as _ImageFont
         from reportlab.lib import colors as _colors
         from reportlab.lib.enums import TA_LEFT as _TA_LEFT
@@ -48,7 +51,8 @@ def _load_report_libs() -> bool:
         _REPORT_LIBS_LOADED = False
         return False
     globals().update({
-        "Document": _Document, "WD_ALIGN_PARAGRAPH": _WD_ALIGN_PARAGRAPH, "Inches": _Inches, "Pt": _Pt,
+        "Document": _Document, "WD_ALIGN_PARAGRAPH": _WD_ALIGN_PARAGRAPH, "WD_CELL_VERTICAL_ALIGNMENT": _WD_CELL_VERTICAL_ALIGNMENT,
+        "OxmlElement": _OxmlElement, "qn": _qn, "RGBColor": _RGBColor, "Inches": _Inches, "Pt": _Pt,
         "PILImage": _PILImage, "ImageDraw": _ImageDraw, "ImageFont": _ImageFont,
         "colors": _colors, "TA_LEFT": _TA_LEFT, "LETTER": _LETTER, "landscape": _landscape,
         "ParagraphStyle": _ParagraphStyle, "getSampleStyleSheet": _getSampleStyleSheet, "inch": _inch,
@@ -346,11 +350,13 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
         "current_fundamentals": {
             "period": (current_fundamental or {}).get("period_label"),
             "revenue": (current_fundamental or {}).get("revenue"),
+            "gross_margin_pct": ((current_fundamental or {}).get("metrics") or {}).get("gross_margin_pct"),
             "operating_margin_pct": ((current_fundamental or {}).get("metrics") or {}).get("operating_margin_pct"),
             "fcf": (current_fundamental or {}).get("fcf"),
             "fcf_margin_pct": ((current_fundamental or {}).get("metrics") or {}).get("fcf_margin_pct"),
             "cfo_to_net_income": ((current_fundamental or {}).get("metrics") or {}).get("cfo_to_net_income"),
             "roic_pct": ((current_fundamental or {}).get("metrics") or {}).get("roic_pct"),
+            "net_debt_to_fcf": ((current_fundamental or {}).get("metrics") or {}).get("net_debt_to_fcf"),
         },
         "ticker": security.ticker,
         "company": company.display_name,
@@ -374,6 +380,7 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
         "tape_metrics": dict(tape.get("metrics") or {}),
         "diagnostic_action": intelligence.get("action") or "WAIT",
         "score": intelligence.get("score"),
+        "top_signals": list(intelligence.get("top_signals") or []),
         "bear": valuation.get("bear"),
         "base": valuation.get("base"),
         "bull": valuation.get("bull"),
@@ -465,6 +472,9 @@ def safe_research_report_data(ctx: dict[str, Any], *, mode: str = "full", brandi
             "tape_metrics": {},
             "diagnostic_action": "WAIT",
             "score": None,
+            "top_signals": list(intelligence.get("top_signals") or []),
+            "current_fundamentals": {},
+            "fundamentals_history": [],
             "bear": valuation.get("bear"), "base": valuation.get("base"), "bull": valuation.get("bull"),
             "expected_value": valuation.get("expected_value"),
             "base_gap_pct": intelligence.get("base_gap_pct"),
