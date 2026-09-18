@@ -21,6 +21,7 @@
     </div>
 
     {% if scan_failure %}<div class="notice amber"><strong>LAST SCAN FAILED.</strong> {{ scan_failure }}. Any prior successful scan remains visible below.</div>{% endif %}
+    {% if market_scan.stale_contract %}<div class="notice amber"><strong>OLD DISCOVERY RESULT IGNORED.</strong> The last stored scan predates the fair-value forensic contract. Run a new market scan; legacy mover-only candidates are intentionally not displayed.</div>{% endif %}
 
     {% if market_scan.candidates %}
       <div class="scan-summary">
