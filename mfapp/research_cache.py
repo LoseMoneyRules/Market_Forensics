@@ -14,7 +14,7 @@ from .decision_support import company_brief, management_accountability, manageme
 from .discovery_engine import classify_coverage
 from .management_promises import evaluate_promises
 from .research_synthesis import build_synthesis
-from .triangulation_engine import automatic_triangulation
+from .triangulation_engine import apply_peer_valuation_overlay, automatic_triangulation
 from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
@@ -94,7 +94,9 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
         raise RuntimeError(f"Coverage workspace incomplete for coverage_id={coverage.id}")
 
     market = latest_snapshot(security.id)
-    valuation = valuation_result(coverage)
+    intrinsic_valuation = valuation_result(coverage)
+    triangulation = automatic_triangulation(company.id, coverage.user_id)
+    valuation = apply_peer_valuation_overlay(intrinsic_valuation, triangulation)
     readiness = research_readiness(coverage)
 
     # Heavy analytical reads are intentionally executed here, from a job, never
@@ -105,7 +107,6 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     management_accountability_rows = management_accountability(company.id)
     management_promises = evaluate_promises(company.id)
     tape = tape_series(security, 12)
-    triangulation = automatic_triangulation(company.id, coverage.user_id)
     lenses = build_decision_lenses(
         coverage=coverage,
         company=company,
