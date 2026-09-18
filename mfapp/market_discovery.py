@@ -164,6 +164,8 @@ def market_scan(user_id: int) -> dict[str, Any]:
     for symbol, item in by_symbol.items():
         context = _known_context(symbol, user_id)
         local = _local_lenses(context)
+        if item.get("move_pct") is not None and float(item["move_pct"]) <= -8 and item.get("activity_rank"):
+            local.append("POTENTIAL SHORT")
         item["known_context"] = context
         item["lenses"] = list(dict.fromkeys(local + item["lenses"]))
         item["in_coverage"] = symbol in covered
