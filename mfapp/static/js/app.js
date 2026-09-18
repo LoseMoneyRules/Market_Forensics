@@ -168,7 +168,7 @@
     const span=max-min; min-=span*.08; max+=span*.08;
     const x=(i)=>pad.l+(w-pad.l-pad.r)*(rows.length===1?.5:i/(rows.length-1));
     const y=(v)=>pad.t+(h-pad.t-pad.b)*(1-(v-min)/(max-min));
-    ctx.font='11px system-ui'; ctx.fillStyle=css('--muted','#6d7a86'); ctx.strokeStyle=css('--line','#d9e0e6'); ctx.lineWidth=1;
+    ctx.font='13px system-ui'; ctx.fillStyle=css('--muted','#6d7a86'); ctx.strokeStyle=css('--line','#d9e0e6'); ctx.lineWidth=1;
     for(let i=0;i<4;i++){const yy=pad.t+(h-pad.t-pad.b)*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();const val=max-(max-min)*i/3;ctx.fillText(percent?val.toFixed(1)+'%':compact(val),5,yy+4)}
     rows.forEach((row,i)=>{if(i%Math.max(1,Math.ceil(rows.length/6))===0||i===rows.length-1)ctx.fillText(String(row.label||row.date||''),Math.max(pad.l,x(i)-18),h-10)});
     defs.forEach((d)=>{ctx.strokeStyle=d.color;ctx.lineWidth=d.width||2.2;ctx.setLineDash(d.dash?[6,5]:[]);ctx.beginPath();let started=false;rows.forEach((row,i)=>{const v=Number(row[d.key]);if(!Number.isFinite(v))return;const xx=x(i),yy=y(v);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)});ctx.stroke();ctx.setLineDash([]);});
@@ -193,7 +193,7 @@
     const x=(i)=>pad.l+(w-pad.l-pad.r)*(rows.length===1?.5:i/(rows.length-1));
     const yl=(v)=>pad.t+(h-pad.t-pad.b)*(1-(v-lmin)/(lmax-lmin));
     const yr=(v)=>pad.t+(h-pad.t-pad.b)*(1-(v-rmin)/(rmax-rmin));
-    ctx.font='11px system-ui';ctx.lineWidth=1;
+    ctx.font='13px system-ui';ctx.lineWidth=1;
     for(let i=0;i<4;i++){
       const yy=pad.t+(h-pad.t-pad.b)*i/3;
       ctx.strokeStyle=css('--line','#d9e0e6');ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
@@ -211,7 +211,7 @@
     };
     const inventoryColor=css('--mf-chart-price','#3a6f99'),receivablesColor=css('--mf-chart-secondary','#6b7f91');
     draw('inventory',yl,inventoryColor);draw('receivables',yr,receivablesColor);
-    ctx.font='10px system-ui';ctx.textAlign='left';ctx.fillStyle=inventoryColor;ctx.fillText('Inventory · left scale',pad.l,pad.t-10);
+    ctx.font='12px system-ui';ctx.textAlign='left';ctx.fillStyle=inventoryColor;ctx.fillText('Inventory · left scale',pad.l,pad.t-10);
     ctx.textAlign='right';ctx.fillStyle=receivablesColor;ctx.fillText('Receivables · right scale',w-pad.r,pad.t-10);ctx.textAlign='left';
   }
 
@@ -234,7 +234,7 @@
     const x=i=>pad.l+slot*i+slot/2;
     const yRev=v=>pad.t+plotH*(1-Math.max(0,v)/revMax);
     const yFcf=v=>pad.t+plotH*(1-(v-fMin)/(fMax-fMin));
-    ctx.font='10px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.lineWidth=1;
+    ctx.font='12px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.lineWidth=1;
     for(let i=0;i<4;i++){
       const yy=pad.t+plotH*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
       ctx.fillText(compact(revMax*(1-i/3)),4,yy+4);
@@ -305,7 +305,7 @@
     const x=d=>pad.l+(w-pad.l-pad.r)*((new Date(String(d)+'T00:00:00').getTime()-d0)/(d1-d0));
     const yp=v=>pad.t+(h-pad.t-pad.b)*(1-(v-pMin)/(pMax-pMin));
     const ys=v=>pad.t+(h-pad.t-pad.b)*(1-(v-sMin)/(sMax-sMin));
-    ctx.font='11px system-ui';ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.lineWidth=1;
+    ctx.font='13px system-ui';ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.lineWidth=1;
     for(let i=0;i<4;i++){
       const yy=pad.t+(h-pad.t-pad.b)*i/3;
       ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
