@@ -419,6 +419,15 @@ def _normalized_market_scan(job: Job | None) -> dict:
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
+    if scan and scan.get("contract_version") != "FORENSIC_FAIR_VALUE_V1":
+        return {
+            "candidates": [], "long_candidates": [], "short_candidates": [],
+            "candidate_count": 0, "long_count": 0, "short_count": 0,
+            "p1_count": 0, "p2_count": 0, "known_enriched": 0,
+            "excluded_count": 0, "excluded_breakdown": {}, "guardrails": {},
+            "errors": [], "stale_contract": True,
+            "contract_version": scan.get("contract_version") or "LEGACY",
+        }
     raw_candidates = scan.get("candidates")
     candidates = []
     if isinstance(raw_candidates, list):
@@ -438,6 +447,11 @@ def _normalized_market_scan(job: Job | None) -> dict:
                 "scan_score": as_float(raw.get("scan_score"), 0.0) or 0.0,
                 "move_pct": as_float(raw.get("move_pct")),
                 "base_gap_pct": as_float(raw.get("base_gap_pct")),
+                "fair_value": as_float(raw.get("fair_value")),
+                "forensic_score": as_int(raw.get("forensic_score"), 0),
+                "forensic_signals": list(raw.get("forensic_signals") or []) if isinstance(raw.get("forensic_signals") or [], list) else [],
+                "fair_value_quality": str(raw.get("fair_value_quality") or ""),
+                "forensic_source": str(raw.get("forensic_source") or ""),
                 "price": as_float(raw.get("price")),
                 "dollar_volume": as_float(raw.get("dollar_volume")),
                 "target_status": str(raw.get("target_status") or "TARGET UNKNOWN"),
