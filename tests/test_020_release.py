@@ -934,3 +934,16 @@ def test_020_job_pump_spawns_detached_executor_without_running_inline(tmp_path, 
         queued = db.session.get(Job, job_id)
         assert queued.status == "QUEUED"
         assert queued.started_at is None
+
+
+def test_020_discovery_scan_is_batch_cached_and_hard_bounded():
+    discovery = Path("mfapp/market_discovery.py").read_text()
+    jobs = Path("mfapp/jobs.py").read_text()
+    assert "_coverage_context_map" in discovery
+    assert "latest_cache_map" in discovery
+    assert "_known_context" not in discovery
+    assert "research_readiness" not in discovery
+    assert "valuation_result" not in discovery
+    assert 'timeout=(5, 12)' in discovery
+    assert 'return 90 if str(job_type).upper() == "DISCOVERY_SCAN"' in jobs
+    assert "_execute_with_deadline(job)" in jobs
