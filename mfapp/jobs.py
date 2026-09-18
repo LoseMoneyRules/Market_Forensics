@@ -13,7 +13,7 @@ from .autofill import prefill_coverage
 from .calculations import CALCULATION_VERSION, build_cash_flow, build_income_statement_flow, calculate_valuation, financial_metrics
 from .core_models import (
     Alert, CalculationRun, Company, Coverage, DataQualityIssue, Event, FinancialFlow,
-    FinancialPeriod, Job, NormalizedFinancial, RefreshRun, Security, Source,
+    FinancialPeriod, HistoricalPrice, Job, NormalizedFinancial, RefreshRun, Security, Source,
     ValuationModel,
 )
 from .data_providers import latest_snapshot, provider_status, refresh_security_quote
@@ -409,12 +409,15 @@ def _bulk(user_id: int) -> dict[str, Any]:
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
-        specs = [("MARKET_REFRESH", 20), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75), ("RECALCULATE", 95)]
+        specs = [("MARKET_REFRESH", 20), ("PRICE_HISTORY_REFRESH", 35), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75), ("RECALCULATE", 95)]
         if sec_ready:
             specs.insert(1, ("SEC_INGEST", 40))
             specs.append(("MANAGEMENT_SCAN", 80))
         for kind, priority in specs:
-            job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
+            payload = {"coverage_id": coverage.id}
+            if kind == "PRICE_HISTORY_REFRESH":
+                payload["lookback_years"] = 3
+            job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload=payload, priority=priority)
             if getattr(job, "_mf_reused", False): reused += 1
             else: queued += 1
     portfolio_job = enqueue_job("PORTFOLIO_RECALCULATE", user_id=user_id, payload={}, priority=99)
@@ -437,6 +440,15 @@ def _stale(user_id: int) -> dict[str, Any]:
         market = latest_snapshot(security.id)
         if market is None or market.as_of is None or (now - market.as_of).total_seconds() > 30 * 60:
             specs.append(("MARKET_REFRESH", 20))
+        latest_hist = (
+            db.session.query(db.func.count(HistoricalPrice.id), db.func.max(HistoricalPrice.trade_date))
+            .filter(HistoricalPrice.security_id == security.id)
+            .first()
+        )
+        hist_count = int((latest_hist or (0, None))[0] or 0)
+        hist_last = (latest_hist or (0, None))[1]
+        if hist_count < 300 or hist_last is None or hist_last < (now.date() - timedelta(days=10)):
+            specs.append(("PRICE_HISTORY_REFRESH", 35))
         if sec_ready:
             last_sec = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="SEC_INGEST", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
             if last_sec is None or last_sec.finished_at is None or (now - last_sec.finished_at).total_seconds() > 24 * 3600:
@@ -454,7 +466,10 @@ def _stale(user_id: int) -> dict[str, Any]:
         if specs:
             specs.append(("RECALCULATE", 90))
         for kind, priority in specs:
-            job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
+            payload = {"coverage_id": coverage.id}
+            if kind == "PRICE_HISTORY_REFRESH":
+                payload["lookback_years"] = 3
+            job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload=payload, priority=priority)
             if getattr(job, "_mf_reused", False):
                 reused += 1
             else:
