@@ -281,7 +281,8 @@ def test_027_command_center_and_settings_contract():
     assert "Process = approved Research gates." in dashboard
     assert "NOT RUN / LIMITED / VALIDATED / REVIEW" in dashboard
     assert "research-conclusion-text" in dashboard
-    assert "Next<br>action" in dashboard
+    assert "Next action" in dashboard
+    assert "coverage-wrap-col" in dashboard
     assert 'class="panel recent-jobs refresh-runs"' in settings
     assert ".coverage-table .research-conclusion-text" in css
     assert "font-weight:400" in css
