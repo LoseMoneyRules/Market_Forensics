@@ -8,6 +8,7 @@ from typing import Any
 from .core_models import Event, FinancialPeriod, HistoricalPrice, Security, ValuationModel
 from .current_financials import annual_rows, current_row, forecast_rows
 from .finra import stored_summary as finra_stored_summary
+from .tape_engine import score_tape_day, what_changed, what_would_change_regime
 
 
 def n(value: Any) -> float | None:
@@ -238,6 +239,11 @@ def tape_context_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
 
 
 def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
+    """Materialize the web-native Tape Engine V2 from stored/provider evidence.
+
+    Large/Very Large/Whale labels are trade-size proxies, never beneficial-owner
+    identity. Normal GET navigation reads the cached output of this function.
+    """
     months = 6 if int(months) <= 6 else 12
     cutoff = date.today() - timedelta(days=31 * months)
     prices = HistoricalPrice.query.filter(
@@ -247,15 +253,21 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
 
     weekly: list[dict[str, Any]] = []
     last_week = None
-    daily_prices: list[dict[str, Any]] = []
+    daily_market: list[dict[str, Any]] = []
     for row in prices:
         price = n(row.close_split_adjusted) or n(row.close_raw)
         volume = n(row.volume)
         if price is None:
             continue
-        daily_prices.append({
+        open_price = n(getattr(row, "open_split_adjusted", None)) or n(getattr(row, "open_raw", None))
+        high = n(getattr(row, "high_split_adjusted", None)) or n(getattr(row, "high_raw", None))
+        low = n(getattr(row, "low_split_adjusted", None)) or n(getattr(row, "low_raw", None))
+        daily_market.append({
             "date": row.trade_date.isoformat(),
             "price": price,
+            "open": open_price,
+            "high": high,
+            "low": low,
             "volume": volume,
             "turnover": (price * volume) if volume is not None else None,
         })
@@ -279,107 +291,164 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         if row.get("trade_date") and row.get("trade_date") >= cutoff.isoformat()
     ]
 
-    positioning_event = Event.query.filter_by(
+    # Merge stored Alpaca flow windows from successive background refreshes.
+    positioning_events = Event.query.filter_by(
         company_id=security.company_id,
         event_type="ALPACA_POSITIONING",
-    ).order_by(Event.event_date.desc(), Event.id.desc()).first()
-    borrow_fee_event = Event.query.filter_by(
+    ).order_by(Event.event_date.desc(), Event.id.desc()).limit(120).all()
+    positioning = dict((positioning_events[0].payload or {}) if positioning_events else {})
+    flow_by_date: dict[str, dict[str, Any]] = {}
+    for event in reversed(positioning_events):
+        payload = dict(event.payload or {})
+        for row in ((payload.get("flow") or {}).get("rows") or []):
+            day = str(row.get("date") or "")[:10]
+            if day and day >= cutoff.isoformat():
+                flow_by_date[day] = dict(row)
+    flow_rows = [flow_by_date[key] for key in sorted(flow_by_date)]
+
+    for idx, row in enumerate(flow_rows):
+        recent5 = flow_rows[max(0, idx - 4):idx + 1]
+        recent20 = flow_rows[max(0, idx - 19):idx + 1]
+        row["cumulative_5d"] = sum(n(item.get("net_large")) or 0.0 for item in recent5)
+        row["cumulative_20d"] = sum(n(item.get("net_large")) or 0.0 for item in recent20)
+        row["cumulative_5d_sessions"] = len(recent5)
+        row["cumulative_20d_sessions"] = len(recent20)
+
+    ats_event = Event.query.filter_by(
         company_id=security.company_id,
-        event_type="BORROW_FEE_OBSERVATION",
+        event_type="FINRA_ATS_SERIES",
     ).order_by(Event.event_date.desc(), Event.id.desc()).first()
-    positioning = dict((positioning_event.payload or {}) if positioning_event else {})
+    ats_source_rows = list((ats_event.payload or {}).get("rows") or []) if ats_event else []
+    ats_rows = [
+        dict(row)
+        for row in ats_source_rows
+        if str(row.get("week_start") or "") >= cutoff.isoformat()
+    ]
+
     borrow = dict(positioning.get("borrow") or {})
     options = dict(positioning.get("options") or {})
     locate = dict(positioning.get("locate") or {})
     put_call = n(options.get("put_call_oi"))
+    borrow_fee_event = Event.query.filter_by(
+        company_id=security.company_id,
+        event_type="BORROW_FEE_OBSERVATION",
+    ).order_by(Event.event_date.desc(), Event.id.desc()).first()
     borrow_fee_payload = dict((borrow_fee_event.payload or {}) if borrow_fee_event else {})
     borrow_fee_pct = n(borrow_fee_payload.get("annualized_fee_pct"))
 
-    def ret(days: int) -> float | None:
-        if len(daily_prices) < 2:
-            return None
-        end_price = daily_prices[-1]["price"]
-        idx = max(0, len(daily_prices) - 1 - days)
-        start_price = daily_prices[idx]["price"]
-        return (end_price / start_price - 1.0) * 100.0 if start_price not in (None, 0) else None
+    short_map = {str(row.get("date")): n(row.get("short_pct")) for row in short_volume if row.get("date")}
+    flow_map = {str(row.get("date")): row for row in flow_rows if row.get("date")}
+    latest_interest = finra.get("latest_short_interest") or {}
+    si_change = n(latest_interest.get("change_percent"))
 
-    vols = [x["volume"] for x in daily_prices if x.get("volume") not in (None, 0)]
+    tape_daily: list[dict[str, Any]] = []
+    volumes: list[float] = []
+    prior_price = None
+    for idx, row in enumerate(daily_market):
+        price = n(row.get("price"))
+        volume = n(row.get("volume"))
+        prior_volumes = volumes[-20:]
+        avg_volume = mean(prior_volumes) if prior_volumes else None
+        volume_ratio = (volume / avg_volume) if volume is not None and avg_volume not in (None, 0) else 1.0
+        if volume is not None:
+            volumes.append(volume)
+        ret_pct = ((price / prior_price - 1.0) * 100.0) if price is not None and prior_price not in (None, 0) else None
+        prior_price = price if price is not None else prior_price
+        high, low = n(row.get("high")), n(row.get("low"))
+        close_location = ((price - low) / (high - low) * 100.0) if price is not None and high is not None and low is not None and high > low else 50.0
+
+        day = str(row.get("date"))
+        flow = flow_map.get(day) or {}
+        short_pct = short_map.get(day)
+        is_latest = idx == len(daily_market) - 1
+        score = score_tape_day(
+            return_pct=ret_pct,
+            volume_ratio=volume_ratio,
+            close_location=close_location,
+            short_pct=short_pct,
+            net_large_ratio=flow.get("net_large_ratio"),
+            net_whale_ratio=flow.get("net_whale_ratio"),
+            flow_confidence=flow.get("flow_confidence_pct"),
+            si_change_pct=si_change if is_latest else None,
+            put_call_oi=put_call if is_latest else None,
+            hard_to_borrow=("hard" in str(borrow.get("borrow_status") or "").lower()) if is_latest else False,
+            has_market=True,
+            has_short_volume=short_pct is not None,
+            has_flow=bool(flow),
+            has_positioning=bool(positioning) if is_latest else False,
+        )
+        tape_daily.append({
+            "date": day,
+            "price": price,
+            "volume": volume,
+            "return_pct": ret_pct,
+            "volume_ratio": volume_ratio,
+            "close_location": close_location,
+            "short_pct": short_pct,
+            "net_large": n(flow.get("net_large")),
+            "net_whale": n(flow.get("net_whale")),
+            "net_large_ratio": n(flow.get("net_large_ratio")),
+            "net_whale_ratio": n(flow.get("net_whale_ratio")),
+            "flow_confidence_pct": n(flow.get("flow_confidence_pct")),
+            **score,
+        })
+
+    latest_score = tape_daily[-1] if tape_daily else score_tape_day(
+        return_pct=None, volume_ratio=None, close_location=None,
+        has_market=False, has_short_volume=False, has_flow=False, has_positioning=bool(positioning),
+    )
+    previous_score = tape_daily[-2] if len(tape_daily) > 1 else None
+
+    def ret(days: int) -> float | None:
+        if len(daily_market) < 2:
+            return None
+        end_price = n(daily_market[-1].get("price"))
+        idx = max(0, len(daily_market) - 1 - days)
+        start_price = n(daily_market[idx].get("price"))
+        return (end_price / start_price - 1.0) * 100.0 if end_price is not None and start_price not in (None, 0) else None
+
+    vols = [n(x.get("volume")) for x in daily_market if n(x.get("volume")) not in (None, 0)]
     recent_vol = mean(vols[-20:]) if vols[-20:] else None
     prior_vol = mean(vols[-60:-20]) if len(vols) > 20 and vols[-60:-20] else None
     volume_ratio = recent_vol / prior_vol if recent_vol is not None and prior_vol not in (None, 0) else None
-
-    turnovers = [x["turnover"] for x in daily_prices if x.get("turnover") not in (None, 0)]
+    turnovers = [n(x.get("turnover")) for x in daily_market if n(x.get("turnover")) not in (None, 0)]
     recent_turnover = mean(turnovers[-20:]) if turnovers[-20:] else None
     prior_turnover = mean(turnovers[-60:-20]) if len(turnovers) > 20 and turnovers[-60:-20] else None
     turnover_ratio = recent_turnover / prior_turnover if recent_turnover is not None and prior_turnover not in (None, 0) else None
 
-    sv = [x["short_pct"] for x in short_volume if x.get("short_pct") is not None]
+    sv = [n(x.get("short_pct")) for x in short_volume if n(x.get("short_pct")) is not None]
     short_5 = mean(sv[-5:]) if sv else None
     short_20 = mean(sv[-20:]) if sv else None
-    r20 = ret(20)
-    r60 = ret(60)
+    latest_flow = flow_rows[-1] if flow_rows else {}
 
-    absorption = None
-    if short_20 is not None and r20 is not None:
-        absorption = max(0.0, min(100.0, 50.0 + (short_20 - 50.0) * 1.2 + max(-15.0, min(15.0, r20)) * 1.3))
-
-    price_resilience = None
-    if r20 is not None:
-        short_pressure = max(0.0, (short_20 or 50.0) - 50.0)
-        price_resilience = max(0.0, min(100.0, 50.0 + r20 * 2.2 + short_pressure * .55))
-
-    long_demand = None
-    if r20 is not None:
-        long_demand = 50.0 + r20 * 2.0 + ((volume_ratio or 1.0) - 1.0) * 25.0 + ((turnover_ratio or 1.0) - 1.0) * 12.0
-        if put_call is not None and put_call < .70:
-            long_demand += 5.0
-        long_demand = max(0.0, min(100.0, long_demand))
-
-    bear_pressure = None
-    if r20 is not None:
-        bear_pressure = 50.0 - r20 * 2.0 + max(0.0, (short_20 or 50.0) - 50.0) * 1.4
-        if put_call is not None and put_call > 1.20:
-            bear_pressure += min(12.0, (put_call - 1.20) * 20.0)
-        if "hard" in str(borrow.get("borrow_status") or "").lower():
-            bear_pressure += 5.0
-        bear_pressure = max(0.0, min(100.0, bear_pressure))
-
-    battle = None
-    if volume_ratio is not None or short_20 is not None or turnover_ratio is not None:
-        battle = 35.0
-        battle += max(0.0, (volume_ratio or 1.0) - 1.0) * 25.0
-        battle += max(0.0, (turnover_ratio or 1.0) - 1.0) * 20.0
-        battle += abs((short_20 or 50.0) - 50.0)
-        if put_call is not None:
-            battle += min(10.0, abs(put_call - 1.0) * 8.0)
-        battle = max(0.0, min(100.0, battle))
-
-    data_points = sum(x is not None for x in (absorption, long_demand, bear_pressure, battle, put_call, turnover_ratio))
-    confidence = "HIGH" if len(daily_prices) >= 120 and len(sv) >= 20 and data_points >= 5 else "MEDIUM" if len(daily_prices) >= 40 and data_points >= 3 else "LOW"
-    net_tape = ((long_demand or 50.0) + (absorption or 50.0) + (price_resilience or 50.0) - (bear_pressure or 50.0)) / 3.0
-    if net_tape >= 38:
-        regime = "SUPPORTIVE"
-    elif net_tape <= 12:
-        regime = "HOSTILE"
-    else:
-        regime = "MIXED"
-
-    rank_score = max(0.0, min(100.0, 50.0 + net_tape - 25.0))
-
-    tape_context = tape_context_metrics({
-        "long_demand": long_demand, "bear_pressure": bear_pressure, "price_resilience": price_resilience,
-        "battle_intensity": battle, "confidence": confidence, "regime": regime,
-    })
+    confidence_score = n(latest_score.get("data_confidence")) or 0.0
+    confidence = "HIGH" if confidence_score >= 75 else "MEDIUM" if confidence_score >= 55 else "LOW"
+    path = str(latest_score.get("path_regime") or "MIXED")
+    metric_seed = {
+        "long_demand": latest_score.get("long_demand"),
+        "bear_pressure": latest_score.get("short_pressure"),
+        "price_resilience": latest_score.get("price_resilience"),
+        "battle_intensity": latest_score.get("battle_intensity"),
+        "confidence": confidence,
+        "regime": path,
+    }
+    tape_context = tape_context_metrics(metric_seed)
 
     return {
         "months": months,
         "market": weekly,
+        "daily_market": daily_market,
         "short_interest": short_interest,
         "short_volume": short_volume,
+        "institutional_flow": flow_rows,
+        "ats": ats_rows,
+        "tape_daily": tape_daily,
         "positioning": positioning,
+        "what_changed": what_changed(latest_score, previous_score),
+        "what_would_change_regime": what_would_change_regime(latest_score),
         "metrics": {
-            "return_1m_pct": r20,
-            "return_3m_pct": r60,
+            "return_1m_pct": ret(20),
+            "return_3m_pct": ret(60),
             "volume_ratio_20d": volume_ratio,
             "turnover_ratio_20d": turnover_ratio,
             "short_5d_pct": short_5,
@@ -394,15 +463,39 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "shortable": borrow.get("shortable"),
             "locate_price": n(locate.get("price")),
             "locate_available_qty": n(locate.get("available_qty")),
-            "absorption": absorption,
-            "price_resilience": price_resilience,
-            "long_demand": long_demand,
-            "bear_pressure": bear_pressure,
-            "battle_intensity": battle,
-            "net_tape": net_tape,
-            "rank_score": rank_score,
-            "regime": regime,
+            "institutional_flow": latest_score.get("institutional_flow"),
+            "absorption": latest_score.get("absorption"),
+            "price_resilience": latest_score.get("price_resilience"),
+            "long_demand": latest_score.get("long_demand"),
+            "bear_pressure": latest_score.get("short_pressure"),
+            "battle_intensity": latest_score.get("battle_intensity"),
+            "net_tape": latest_score.get("net_tape"),
+            "rank_score": latest_score.get("net_tape"),
+            "rank": latest_score.get("rank"),
+            "forensic_regime": latest_score.get("forensic_regime"),
+            "machine_read": latest_score.get("machine_read"),
+            "data_confidence": latest_score.get("data_confidence"),
+            "regime": path,
             "confidence": confidence,
+            "flow_feed": latest_flow.get("feed") or "",
+            "flow_feed_scope": latest_flow.get("feed_scope") or "",
+            "flow_source_status": latest_flow.get("source_status") or "",
+            "flow_method": latest_flow.get("classification_method") or "",
+            "flow_confidence_pct": n(latest_flow.get("flow_confidence_pct")),
+            "large_threshold": n(latest_flow.get("large_threshold")),
+            "very_large_threshold": n(latest_flow.get("very_large_threshold")),
+            "whale_threshold": n(latest_flow.get("whale_threshold")),
+            "large_buy": n(latest_flow.get("large_buy")),
+            "large_sell": n(latest_flow.get("large_sell")),
+            "net_large": n(latest_flow.get("net_large")),
+            "very_large_buy": n(latest_flow.get("very_large_buy")),
+            "very_large_sell": n(latest_flow.get("very_large_sell")),
+            "net_very_large": n(latest_flow.get("net_very_large")),
+            "whale_buy": n(latest_flow.get("whale_buy")),
+            "whale_sell": n(latest_flow.get("whale_sell")),
+            "net_whale": n(latest_flow.get("net_whale")),
+            "large_share_pct": n(latest_flow.get("large_share_pct")),
+            "whale_share_pct": n(latest_flow.get("whale_share_pct")),
             **tape_context,
         },
     }
