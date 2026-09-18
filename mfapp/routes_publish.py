@@ -15,7 +15,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
-from .reporting import get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, research_report_data, set_report_branding
+from .reporting import get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -221,7 +221,7 @@ def research_report(ticker, fmt):
     ctx = _ctx(ticker)
     mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
     branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
-    data = research_report_data(ctx, mode=mode, branding=branding)
+    data = safe_research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
     stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}"
     if fmt == "docx":
