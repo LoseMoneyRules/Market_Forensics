@@ -5,8 +5,6 @@
 {% macro pct(v) %}{% if v is not none %}{{ '%+.1f'|format(v|float) }}%{% else %}—{% endif %}{% endmacro %}
 {% block content %}
 <section class="page company-page">
-  {% set company_header_context = security.exchange or 'Validated security' %}
-  {% set company_header_states = [('Research', coverage.research_state), ('Coverage', coverage.status), ('Process', readiness.done ~ '/' ~ readiness.total ~ ' approved')] %}
   {% include "_company_header.html" %}
   {% set section=section %}{% include "_research_tabs.html" %}
 
@@ -282,7 +280,7 @@
 
   {% elif section == 'audit' %}
     <div class="two-col"><div class="panel"><div class="panel-head"><h2>Sources</h2><span class="status-chip">{{ sources|length }}</span></div>{% for s in sources[:40] %}<div class="list-row"><div><strong>{{ s.provider }} · {{ s.source_type }}</strong><p>{{ s.title }} · {{ s.retrieved_at }}</p></div>{% if s.url %}<a class="button micro" href="{{ s.url }}" target="_blank" rel="noopener">Open</a>{% endif %}</div>{% else %}<p class="muted">No sources stored.</p>{% endfor %}</div><div class="panel"><div class="panel-head"><h2>Refresh audit</h2></div>{% for r in refresh_runs %}<div class="list-row"><div><strong>{{ r.refresh_type }}</strong><p>{{ r.started_at }}{% if r.finished_at %} → {{ r.finished_at }}{% endif %}</p></div><span class="status-chip">{{ r.status }}</span></div>{% else %}<p class="muted">No refresh runs.</p>{% endfor %}</div></div>
-    <details class="panel"><summary><strong>Field provenance</strong></summary><div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Field</th><th>Provider</th><th>Period</th><th>Build</th><th>Notes</th></tr></thead><tbody>{% for p in provenance %}<tr><td>{{ p.field_name }}</td><td>{{ p.provider }}</td><td>{{ p.financial_period_id or '—' }}</td><td>{{ p.calculation_version or '—' }}</td><td>{{ p.notes }}</td></tr>{% endfor %}</tbody></table></div></details>
+    <details class="panel"><summary><strong>Field provenance</strong></summary><div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Field</th><th>Provider</th><th>Period</th><th>Notes</th></tr></thead><tbody>{% for p in provenance %}<tr><td>{{ p.field_name }}</td><td>{{ p.provider }}</td><td>{{ p.financial_period_id or '—' }}</td><td>{{ p.notes }}</td></tr>{% endfor %}</tbody></table></div></details>
   {% endif %}
 </section>
 {% endblock %}

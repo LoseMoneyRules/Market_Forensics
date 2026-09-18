@@ -71,7 +71,7 @@ def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
     cooldown = False
     if needs_refresh and job is None and latest_terminal and latest_terminal.finished_at:
         elapsed = max(0.0, (datetime.now(timezone.utc).replace(tzinfo=None) - latest_terminal.finished_at).total_seconds())
-        window = 15 * 60 if latest_terminal.status in {"FAILED", "CANCELLED"} else 12 * 3600
+        window = 5 * 60 if latest_terminal.status in {"FAILED", "CANCELLED"} else 30 * 60
         cooldown = elapsed < window
         if cooldown:
             job = latest_terminal
@@ -94,6 +94,7 @@ def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
         "needs_refresh": needs_refresh,
         "job_id": job.id if job else None,
         "job_status": job.status if job else None,
+        "job_error": (job.error_message or "")[:500] if job else "",
         "cooldown": cooldown,
     }
     return history, status

@@ -648,6 +648,10 @@ def test_020_market_wide_discovery_uses_screeners_without_guessing_fair_value(tm
 
     monkeypatch.setattr(md, "_headers", lambda user_id: {"APCA-API-KEY-ID": "x", "APCA-API-SECRET-KEY": "y"})
     monkeypatch.setattr(md.requests, "get", fake_get)
+    monkeypatch.setattr(md, "_snapshot_map", lambda symbols, headers, errors: {
+        "AAA": {"price": 50.0, "daily_volume": 2_000_000, "dollar_volume": 100_000_000},
+        "BBB": {"price": 25.0, "daily_volume": 4_000_000, "dollar_volume": 100_000_000},
+    })
     with app.app_context():
         result = md.market_scan(uid)
         assert result["configured"] is True
@@ -694,7 +698,7 @@ def test_020_complete_parity_surfaces_and_canonical_conclusion_contract():
     assert "PROMISES VS ACTUALS" in company
     assert "Put / Call OI" in company
     assert "Price resilience" in company
-    assert "MARKET-WIDE LIGHT SCAN" in discovery
+    assert "MARKET-WIDE RADAR" in discovery
     assert "REPORT BRANDING" in settings
     assert "{{ intelligence.action }}" not in base
     assert "{{ row.intelligence.action }}" not in dashboard

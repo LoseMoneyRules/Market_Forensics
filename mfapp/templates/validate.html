@@ -4,8 +4,6 @@
 {% macro money(v) %}{% if v is not none %}${{ '%.2f'|format(v|float) }}{% else %}—{% endif %}{% endmacro %}
 {% block content %}
 <section class="page company-page">
-  {% set company_header_context = 'Point-in-time validation' %}
-  {% set company_header_states = [('Research', coverage.research_state), ('Coverage', coverage.status), ('Validation', readiness.validation.state)] %}
   {% include "_company_header.html" %}
   <div class="action-bar validation-run-bar">
     <div><p class="eyebrow">VALIDATE</p><h2>Point-in-time walk-forward</h2><p>Rebuild the valuation at each old filing date using only information available then, freeze the cases, and only afterward compare them with future prices.</p></div>

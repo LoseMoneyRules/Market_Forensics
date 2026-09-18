@@ -117,7 +117,7 @@ def test_023_discovery_request_survives_provider_and_stored_payload_failures(tmp
     page = response.get_data(as_text=True)
     assert "SEARCH UNAVAILABLE" in page
     assert "No candidate was invented or silently substituted." in page
-    assert "BAD" in page
+    assert "BAD" not in page
 
 
 def test_023_missing_price_history_queues_ticker_scoped_backfill(tmp_path, monkeypatch):
@@ -181,9 +181,9 @@ def test_023_ui_contracts_are_single_source_and_compact():
     assert ".coverage-table th:last-child,.coverage-table td:last-child{width:1%;white-space:nowrap" in css
     assert "Latest point-in-time walk-forward validation status" in dashboard
 
-    assert "min-height:250px" in css
-    assert "width:max(100%,680px);height:auto;min-height:220px" in css
-    assert "const colGap=205,nodeW=170,nodeH=60,top=22,side=16,rowGap=20;" in flows
+    assert ".flow-canvas{min-height:0" in css
+    assert ".flow-svg{display:block;width:auto;height:auto;max-width:none;min-height:0;margin:0}" in css
+    assert "const colGap=180,nodeW=150,nodeH=52,top=14,side=10,rowGap=12;" in flows
 
     for path in (
         "mfapp/templates/company_section.html",
@@ -207,9 +207,9 @@ def test_023_ui_contracts_are_single_source_and_compact():
 
 
 def test_023_release_identity_and_state_contract():
-    assert Path("VERSION").read_text().strip() == "0.2.3"
+    version = Path("VERSION").read_text().strip()
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert "**State-Version: 0.2.3**" in state
+    assert f"**State-Version: {version}**" in state
     assert "PRICE_HISTORY_REFRESH" in state
-    assert "ticker, a company, or **GLOBAL**" in state
-    assert "Process Readiness Approve/Reopen updates immediately" in state
+    assert "ticker, company or GLOBAL" in state
+    assert "Process Readiness" in state and "Approve → Reopen" in state

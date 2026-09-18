@@ -30,7 +30,7 @@
 
   {% if rows %}
   <p class="command-table-note"><strong>Process</strong> = approved Research gates. <strong>Validate</strong> = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).</p>
-  <div class="table-card scroll"><table class="data-table coverage-table">
+  <div class="table-card coverage-card"><table class="data-table coverage-table">
     <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th>Price</th><th>Base</th><th>Base gap</th><th>Process</th><th title="Latest point-in-time walk-forward validation status">Validate</th><th>Freshness</th><th>Next action</th><th>Lens</th><th>Manage</th></tr></thead>
     <tbody>
     {% for row in rows %}

@@ -404,10 +404,10 @@ def dashboard():
 
 
 def _normalized_market_scan(job: Job | None) -> dict:
-    def as_float(value, default=0.0):
+    def as_float(value, default=None):
         try:
             return float(value) if value is not None else default
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, ArithmeticError):
             return default
 
     def as_int(value, default=0):
@@ -428,27 +428,44 @@ def _normalized_market_scan(job: Job | None) -> dict:
             ticker = str(raw.get("ticker") or "").strip().upper()
             if not ticker:
                 continue
+            side = str(raw.get("research_side") or "").upper()
+            if not (side.startswith("LONG") or side.startswith("SHORT")):
+                continue
             row = dict(raw)
             row.update({
                 "ticker": ticker,
-                "research_side": str(raw.get("research_side") or "RESEARCH"),
-                "scan_score": as_float(raw.get("scan_score"), 0.0),
-                "move_pct": raw.get("move_pct"),
-                "base_gap_pct": raw.get("base_gap_pct"),
+                "research_side": side,
+                "scan_score": as_float(raw.get("scan_score"), 0.0) or 0.0,
+                "move_pct": as_float(raw.get("move_pct")),
+                "base_gap_pct": as_float(raw.get("base_gap_pct")),
+                "price": as_float(raw.get("price")),
+                "dollar_volume": as_float(raw.get("dollar_volume")),
                 "target_status": str(raw.get("target_status") or "TARGET UNKNOWN"),
+                "radar_label": str(raw.get("radar_label") or "RESEARCH LEAD"),
+                "priority": str(raw.get("priority") or "P3"),
+                "priority_rank": as_int(raw.get("priority_rank"), 3),
+                "priority_reason": str(raw.get("priority_reason") or "WATCH / DEEPER CHECK"),
                 "why_found": list(raw.get("why_found") or []) if isinstance(raw.get("why_found") or [], list) else [],
                 "lenses": list(raw.get("lenses") or []) if isinstance(raw.get("lenses") or [], list) else [],
                 "in_coverage": bool(raw.get("in_coverage")),
             })
             candidates.append(row)
+
+    candidates.sort(key=lambda row: (row["priority_rank"], -row["scan_score"], row["ticker"]))
     errors = scan.get("errors")
     scan["candidates"] = candidates
+    scan["long_candidates"] = [row for row in candidates if row["research_side"].startswith("LONG")]
+    scan["short_candidates"] = [row for row in candidates if row["research_side"].startswith("SHORT")]
     scan["errors"] = [str(x) for x in errors] if isinstance(errors, list) else ([] if not errors else [str(errors)])
-    scan["candidate_count"] = as_int(scan.get("candidate_count"), len(candidates))
+    scan["candidate_count"] = len(candidates)
     scan["known_enriched"] = as_int(scan.get("known_enriched"), sum(1 for x in candidates if x.get("in_coverage")))
-    scan["long_count"] = as_int(scan.get("long_count"), sum(1 for x in candidates if str(x.get("research_side") or "").startswith("LONG")))
-    scan["short_count"] = as_int(scan.get("short_count"), sum(1 for x in candidates if str(x.get("research_side") or "").startswith("SHORT")))
-    scan["no_edge_count"] = as_int(scan.get("no_edge_count"), sum(1 for x in candidates if x.get("research_side") == "NO EDGE"))
+    scan["long_count"] = len(scan["long_candidates"])
+    scan["short_count"] = len(scan["short_candidates"])
+    scan["p1_count"] = sum(1 for x in candidates if x.get("priority") == "P1")
+    scan["p2_count"] = sum(1 for x in candidates if x.get("priority") == "P2")
+    scan["excluded_count"] = as_int(scan.get("excluded_count"), 0)
+    scan["excluded_breakdown"] = dict(scan.get("excluded_breakdown") or {}) if isinstance(scan.get("excluded_breakdown") or {}, dict) else {}
+    scan["guardrails"] = dict(scan.get("guardrails") or {}) if isinstance(scan.get("guardrails") or {}, dict) else {}
     return scan
 
 
@@ -516,11 +533,12 @@ def add_coverage():
     db.session.add(coverage); db.session.flush(); ensure_workspace(coverage, g.user.id)
     audit("coverage.create", "coverage", coverage.id, {"ticker": ticker, "validation_source": validation.source}); db.session.commit()
     enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
+    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 3}, priority=35)
     if provider_status(g.user.id).get("sec"):
         enqueue_job("SEC_INGEST", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=40)
     else:
         enqueue_job("RESEARCH_PREFILL", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=50)
-    flash(f"{ticker} added to Coverage. Market, evidence and auto-draft jobs queued where available.", "success")
+    flash(f"{ticker} added to Coverage. Quote, price history and evidence jobs queued where available.", "success")
     return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
 
 

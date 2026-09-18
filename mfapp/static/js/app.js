@@ -243,6 +243,44 @@
     document.querySelectorAll('canvas[data-mf-chart="valuation"]').forEach(valuationChart);
   }
   renderCharts();
+
+  // Historical-price backfills are heavy background work, but their stored rows
+  // should appear in Valuation without forcing a page reload.
+  const valuationHistoryCanvas=document.querySelector('canvas[data-mf-chart="valuation"]');
+  if(valuationHistoryCanvas && !parseData(valuationHistoryCanvas,'history').length && ticker){
+    let priceHistoryPolls=0;
+    const pollPriceHistory=async()=>{
+      priceHistoryPolls+=1;
+      try{
+        const response=await fetch('/company/'+encodeURIComponent(ticker)+'/price/history/live',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'});
+        if(!response.ok)throw new Error('history '+response.status);
+        const payload=await response.json();
+        const state=document.querySelector('[data-price-history-state]');
+        const job=document.querySelector('[data-price-history-job]');
+        const note=document.querySelector('[data-price-history-note]');
+        if(state){
+          const span=(payload.first_date&&payload.last_date)?' · '+payload.first_date+' → '+payload.last_date:'';
+          const provider=payload.provider?' · '+payload.provider:'';
+          state.textContent=String(payload.count||0)+' plotted points'+span+provider;
+        }
+        if(job && payload.job?.id) job.textContent='Job #'+payload.job.id+' · '+(payload.job.status||'');
+        if(Array.isArray(payload.rows)&&payload.rows.length){
+          valuationHistoryCanvas.dataset.history=JSON.stringify(payload.rows);
+          valuationChart(valuationHistoryCanvas);
+          if(note)note.remove();
+          return;
+        }
+        if(payload.job?.status==='FAILED'){
+          if(note)note.textContent='Historical price backfill failed: '+(payload.job.error||'provider unavailable')+'. Use Refresh 2Y price history to retry.';
+          return;
+        }
+        if(priceHistoryPolls<30)window.setTimeout(pollPriceHistory,4000);
+      }catch(_){
+        if(priceHistoryPolls<15)window.setTimeout(pollPriceHistory,5000);
+      }
+    };
+    window.setTimeout(pollPriceHistory,2000);
+  }
   let resizeTimer=null;
   window.addEventListener('resize',()=>{window.clearTimeout(resizeTimer);resizeTimer=window.setTimeout(renderCharts,180)});
   window.addEventListener('mf-theme-change',()=>window.setTimeout(renderCharts,30));
@@ -283,18 +321,20 @@
     const button = form.querySelector('button[type="submit"]');
     const prior = button?.textContent || '';
     if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+    const formData = new FormData(form);
+    if (event.submitter?.name) formData.set(event.submitter.name, event.submitter.value);
     try {
       const response = await fetch(form.action, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {Accept: 'application/json', 'X-CSRFToken': csrf},
-        body: new FormData(form),
+        body: formData,
         cache: 'no-store'
       });
-      if (!response.ok) throw new Error('gate '+response.status);
-      const payload = await response.json();
+      const payload = await response.json().catch(()=>({}));
+      if (!response.ok || !payload?.ok) throw new Error(payload?.message || ('gate '+response.status));
       const current = document.querySelector('[data-process-readiness]');
-      if (!payload?.ok || !payload?.html || !current) throw new Error('gate response');
+      if (!payload?.html || !current) throw new Error('gate response');
       const shell = document.createElement('div');
       shell.innerHTML = payload.html.trim();
       const next = shell.firstElementChild;
@@ -302,8 +342,16 @@
       current.replaceWith(next);
       applySemanticStatuses(next);
       dirty = false;
-    } catch (_) {
+    } catch (error) {
       if (button) { button.disabled = false; button.textContent = prior; }
+      const row = form.closest('.gate-row');
+      let note = row?.querySelector('.gate-inline-error');
+      if (!note && row) {
+        note = document.createElement('small');
+        note.className = 'gate-inline-error';
+        row.appendChild(note);
+      }
+      if (note) note.textContent = error?.message || 'Unable to update readiness.';
     }
   });
 

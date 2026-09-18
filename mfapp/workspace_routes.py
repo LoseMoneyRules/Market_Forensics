@@ -11,6 +11,7 @@ from .extensions import db
 from .jobs import enqueue_job
 from .readiness import research_readiness
 from .research_cache import patch_research_cache_readiness
+from .research_synthesis import valuation_price_history
 from .routes import _ctx, bp
 from .security import role_required
 
@@ -43,6 +44,8 @@ def approve_research_gate(ticker: str, gate_key: str):
     if gate is None:
         abort(404)
     action = str(request.form.get("action") or "approve").lower()
+    if action not in {"approve", "revoke"}:
+        return jsonify({"ok": False, "message": "Unsupported readiness action."}), 400
     existing = ResearchGateApproval.query.filter_by(coverage_id=ctx["coverage"].id, gate_key=gate_key).first()
     if action == "revoke":
         if existing:
@@ -50,6 +53,8 @@ def approve_research_gate(ticker: str, gate_key: str):
         audit("research_gate.revoke", "coverage", ctx["coverage"].id, {"gate": gate_key})
     else:
         if not gate["evidence_ready"]:
+            if "application/json" in str(request.headers.get("Accept") or ""):
+                return jsonify({"ok": False, "message": "Evidence is not ready for approval."}), 409
             return redirect(url_for("web.company_section", ticker=ticker.upper(), section="overview"))
         if existing is None:
             existing = ResearchGateApproval(coverage_id=ctx["coverage"].id, gate_key=gate_key, approved_by=g.user.id)
@@ -95,6 +100,48 @@ def _recent_market_refresh(user_id: int, security_id: int):
         .order_by(Job.finished_at.desc(), Job.id.desc())
         .first()
     )
+
+
+@bp.get("/company/<ticker>/price/history/live")
+@role_required("CONTROL")
+def live_price_history(ticker: str):
+    require_control_view()
+    ctx = _gate_context(ticker)
+    rows = valuation_price_history(ctx["security"].id, 730)
+    active = (
+        Job.query.filter(
+            Job.user_id == g.user.id,
+            Job.security_id == ctx["security"].id,
+            Job.job_type == "PRICE_HISTORY_REFRESH",
+            Job.status.in_(["QUEUED", "RUNNING"]),
+        )
+        .order_by(Job.id.desc())
+        .first()
+    )
+    latest = (
+        Job.query.filter(
+            Job.user_id == g.user.id,
+            Job.security_id == ctx["security"].id,
+            Job.job_type == "PRICE_HISTORY_REFRESH",
+            Job.status.in_(["DONE", "FAILED", "CANCELLED"]),
+        )
+        .order_by(Job.id.desc())
+        .first()
+    )
+    job = active or latest
+    return jsonify({
+        "ticker": ctx["security"].ticker,
+        "rows": rows,
+        "count": len(rows),
+        "first_date": rows[0]["date"] if rows else None,
+        "last_date": rows[-1]["date"] if rows else None,
+        "provider": rows[-1].get("provider") if rows else None,
+        "job": {
+            "id": job.id if job else None,
+            "status": job.status if job else None,
+            "error": (job.error_message or "")[:500] if job else "",
+        },
+    })
 
 
 @bp.get("/company/<ticker>/price/live")

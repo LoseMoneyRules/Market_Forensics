@@ -2,8 +2,6 @@
 {% block title %}{{ security.ticker }} · Financial Flows · Market Forensics{% endblock %}
 {% block content %}
 <section class="page company-page">
-  {% set company_header_context = 'Research · Financial Flows' %}
-  {% set company_header_states = [('Research', coverage.research_state), ('Coverage', coverage.status), ('Process', readiness.done ~ '/' ~ readiness.total ~ ' approved')] %}
   {% include "_company_header.html" %}
   {% set section='financial-flows' %}{% include "_research_tabs.html" %}
   <div class="action-bar flow-toolbar"><div><p class="eyebrow">ACCOUNTING BRIDGES</p><h2>Financial Flows</h2><p>Reconciled SEC facts. Ribbon width represents magnitude; negative or exceptional values remain explicitly signed and are never disguised as positive flow.</p></div><div class="button-row"><form method="get" class="flow-year-select"><label>Fiscal year<select name="year" onchange="this.form.submit()">{% for p in periods %}<option value="{{ p.fiscal_year }}" {% if selected_year==p.fiscal_year %}selected{% endif %}>FY{{ p.fiscal_year }}</option>{% endfor %}</select></label></form><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='recalculate') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Recalculate flows</button></form></div></div>

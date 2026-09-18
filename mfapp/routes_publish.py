@@ -15,7 +15,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
-from .reporting import get_report_branding, render_discovery_pdf, render_docx, render_pdf, research_report_data, set_report_branding
+from .reporting import get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -208,10 +208,10 @@ def discovery_report():
         flash("Run a market-wide Discovery scan before exporting the landscape report.", "error")
         return redirect(url_for("web.discovery"))
     branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
-    stream = render_discovery_pdf(scan, branding)
+    stream = render_discovery_pdf_safe(scan, branding)
     audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
     db.session.commit()
-    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.3.pdf", max_age=0)
+    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery.pdf", max_age=0)
 
 
 @bp.get("/company/<ticker>/report/<fmt>")
@@ -221,15 +221,15 @@ def research_report(ticker, fmt):
     ctx = _ctx(ticker)
     mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
     branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
-    data = research_report_data(ctx, mode=mode, branding=branding)
+    data = safe_research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
-    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.3"
+    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}"
     if fmt == "docx":
-        stream = render_docx(data)
+        stream = render_docx_safe(data)
         mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         suffix = "docx"
     elif fmt == "pdf":
-        stream = render_pdf(data)
+        stream = render_pdf_safe(data)
         mimetype = "application/pdf"
         suffix = "pdf"
     else:

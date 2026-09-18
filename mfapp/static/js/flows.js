@@ -83,15 +83,13 @@
     const layout=graphLayout(edges,nodeRows);
     if(!layout.names.length)return false;
     const nodeMap=new Map(nodeRows.map(n=>[n.label,n]));
-    const colGap=205,nodeW=170,nodeH=60,top=22,side=16,rowGap=20;
+    const colGap=180,nodeW=150,nodeH=52,top=14,side=10,rowGap=12;
     const maxRows=Math.max(1,...layout.columns.map(c=>c.length));
-    const width=Math.max(680,side*2+nodeW+(layout.maxDepth*colGap));
-    const height=Math.max(220,top*2+maxRows*nodeH+(maxRows-1)*rowGap);
-    const svg=makeSvg('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':(data.flow_type||'Financial')+' flow '+(data.period||'')});
+    const width=Math.max(560,side*2+nodeW+(layout.maxDepth*colGap));
+    const height=Math.max(150,top*2+maxRows*nodeH+(maxRows-1)*rowGap);
+    const svg=makeSvg('svg',{viewBox:`0 0 ${width} ${height}`,width,height,role:'img','aria-label':(data.flow_type||'Financial')+' flow '+(data.period||'')});
     svg.classList.add('flow-svg');
-    const visibleWidth=Math.max(0,root.getBoundingClientRect().width-36);
-    const visualScale=Math.max(1,visibleWidth/width);
-    const labelFont=(11/visualScale).toFixed(2),valueFont=(13/visualScale).toFixed(2),labelLine=(14/visualScale).toFixed(2);
+    const labelFont='11',valueFont='12',labelLine='13';
     const pos=new Map();
     layout.columns.forEach((col,ci)=>{
       const total=col.length*nodeH+Math.max(0,col.length-1)*rowGap;
@@ -135,7 +133,7 @@
     const nodeRows=Array.isArray(data.nodes)&&data.nodes.length?data.nodes:fallbackNodes(edges);
 
     const head=make('div','flow-title');
-    const title=make('div');title.append(make('strong',null,String(data.flow_type||'Financial Flow').replaceAll('_',' ')),make('small','muted',(data.period||'')+' · engine '+(data.calculation_version||'legacy')));
+    const title=make('div');title.append(make('strong',null,String(data.flow_type||'Financial Flow').replaceAll('_',' ')),make('small','muted',String(data.period||'')));
     const scale=make('span','flow-scale-note','Ribbon width = magnitude');head.append(title,scale);root.appendChild(head);
 
     if(!edges.length){

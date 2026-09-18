@@ -1,12 +1,12 @@
 <div class="company-head company-head-standard">
   <div>
-    <div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>{{ company_header_context if company_header_context is defined else (security.exchange or 'Validated security') }}</span></div>
+    <div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>{{ security.exchange or 'Validated security' }}</span></div>
     <h1>{{ company.display_name }}</h1>
-    {% if company_header_states is defined and company_header_states %}
     <div class="company-states">
-      {% for item in company_header_states %}<span>{{ item[0] }} <strong>{{ item[1] }}</strong></span>{% endfor %}
+      <span>Research <strong>{{ coverage.research_state if coverage is defined else '—' }}</strong></span>
+      <span>Coverage <strong>{{ coverage.status if coverage is defined else '—' }}</strong></span>
+      <span>Process <strong>{% if readiness is defined %}{{ readiness.done }}/{{ readiness.total }} approved{% else %}—{% endif %}</strong></span>
     </div>
-    {% endif %}
   </div>
   <div class="company-actions">
     <div class="company-market">

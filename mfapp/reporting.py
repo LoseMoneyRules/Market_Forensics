@@ -15,8 +15,6 @@ from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessme
 from .extensions import db
 from .models import UserPreference
 from .management_promises import evaluate_promises
-from .triangulation_engine import automatic_triangulation
-from .decision_support import tape_series
 
 
 
@@ -294,9 +292,17 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
     catalysts = Catalyst.query.filter_by(coverage_id=coverage.id).order_by(Catalyst.expected_date.asc(), Catalyst.id.asc()).all()
     management = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
     sources = Source.query.filter_by(company_id=company.id).order_by(Source.retrieved_at.desc()).limit(40).all()
-    management_promises = evaluate_promises(company.id)
-    triangulation = automatic_triangulation(company.id, coverage.user_id)
-    tape = tape_series(security, 12)
+    cache = dict(ctx.get("research_cache") or {})
+    cached_promises = cache.get("management_promises")
+    if isinstance(cached_promises, list):
+        management_promises = cached_promises
+    else:
+        try:
+            management_promises = evaluate_promises(company.id)
+        except Exception:
+            management_promises = []
+    triangulation = dict(cache.get("triangulation") or {})
+    tape = dict(cache.get("tape") or {})
     implied = dict((decision_lenses.get("implied_expectations") or {}))
 
     branding = dict(branding or {})
@@ -381,6 +387,72 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
     }
 
 
+def safe_research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict[str, str] | None = None) -> dict[str, Any]:
+    try:
+        return research_report_data(ctx, mode=mode, branding=branding)
+    except Exception:
+        coverage = ctx.get("coverage")
+        research = ctx.get("research")
+        security = ctx.get("security")
+        company = ctx.get("company")
+        market = ctx.get("market")
+        valuation = dict(ctx.get("valuation") or {})
+        readiness = dict(ctx.get("readiness") or {})
+        lenses = dict(ctx.get("decision_lenses") or {})
+        intelligence = dict(ctx.get("intelligence") or {})
+        brand = dict(branding or {})
+        return {
+            "branding": {
+                "title": str(brand.get("title") or "Market Forensics"),
+                "prepared_by": str(brand.get("prepared_by") or ""),
+                "footer": str(brand.get("footer") or "Lose Money Rules"),
+                "logo_url": str(brand.get("logo_url") or ""),
+            },
+            "mode": "executive" if str(mode).lower() == "executive" else "full",
+            "ticker": getattr(security, "ticker", "UNKNOWN"),
+            "company": getattr(company, "display_name", "Unknown company"),
+            "sector": getattr(company, "sector", "") or "",
+            "industry": getattr(company, "industry", "") or "",
+            "market_price": float(market.price) if market and market.price is not None else None,
+            "market_provider": getattr(market, "provider", "") if market else "",
+            "market_as_of": market.as_of.isoformat() if market and market.as_of else "",
+            "action": lenses.get("research_conclusion") or "DATA REVIEW",
+            "stance": lenses.get("value") or intelligence.get("stance") or "UNVERIFIED",
+            "bias": intelligence.get("bias") or "NEUTRAL",
+            "confidence": lenses.get("model_confidence") or intelligence.get("confidence") or "UNVALIDATED",
+            "decision_lenses": list(lenses.get("rows") or []),
+            "implied_expectations": dict(lenses.get("implied_expectations") or {}),
+            "triangulation": {},
+            "management_promises": [],
+            "tape_metrics": {},
+            "diagnostic_action": "WAIT",
+            "score": None,
+            "bear": valuation.get("bear"), "base": valuation.get("base"), "bull": valuation.get("bull"),
+            "expected_value": valuation.get("expected_value"),
+            "base_gap_pct": intelligence.get("base_gap_pct"),
+            "readiness": f"{readiness.get('done',0)}/{readiness.get('total',0)}",
+            "ready_to_validate": bool(readiness.get("ready_to_validate")),
+            "validation_state": (readiness.get("validation") or {}).get("state") or "NOT RUN",
+            "thesis": _txt(getattr(research, "thesis", "")),
+            "counter_evidence": _txt(getattr(research, "counter_evidence", "")),
+            "variant_market": _txt(getattr(research, "variant_market", "")),
+            "variant_us": _txt(getattr(research, "variant_us", "")),
+            "variant_evidence": _txt(getattr(research, "variant_evidence", "")),
+            "business": _txt(getattr(research, "business", "")),
+            "numbers": _txt(getattr(research, "numbers", "")),
+            "expectations_summary": _txt(getattr(research, "expectations", "")),
+            "valuation_notes": _txt(getattr(research, "valuation_notes", "")),
+            "bear_case_summary": _txt(getattr(research, "bear_case_summary", "")),
+            "catalysts_summary": _txt(getattr(research, "catalysts_summary", "")),
+            "flows_summary": _txt(getattr(research, "flows_summary", "")),
+            "management_summary": _txt(getattr(research, "management_summary", "")),
+            "tape_summary": _txt(getattr(research, "tape_summary", "")),
+            "risk_summary": _txt(getattr(research, "risk_summary", "")),
+            "supporting": [], "opposing": [], "warnings": ["Report generated from safe stored-data fallback."],
+            "blockers": [], "expectations": [], "bear_items": [], "catalysts": [], "management": [], "sources": [],
+        }
+
+
 def _valuation_chart_png(data: dict[str, Any]) -> BytesIO:
     if not _load_report_libs():
         raise RuntimeError("Rich report backend unavailable")
@@ -447,7 +519,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = title.add_run(f"{data['ticker']} · {data['company']}")
     run.bold = True; run.font.size = Pt(20)
-    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.3 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    subtitle = f"{brand.get('title') or 'Market Forensics'} · {data['action']} · {data['stance']} · {data['confidence']} confidence"
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     p = doc.add_paragraph(subtitle)
@@ -555,7 +627,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
             doc.add_paragraph(f"{row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}", style="List Bullet")
 
     footer=doc.sections[0].footer.paragraphs[0]
-    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'} 0.2.3"
+    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'}"
     footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
 
     out=BytesIO(); doc.save(out); out.seek(0); return out
@@ -575,7 +647,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     logo = _safe_logo(str(brand.get("logo_url") or ""))
     if logo:
         story += [RLImage(logo, width=1.1*inch, height=.38*inch), Spacer(1,4)]
-    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.3 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    subtitle = f"{brand.get('title') or 'Market Forensics'} · {data['action']} · {data['stance']} · {data['confidence']} confidence"
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     story += [Paragraph(f"{data['ticker']} · {data['company']}",styles["MFTitle"]),
@@ -667,6 +739,21 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     out.seek(0); return out
 
 
+def render_docx_safe(data: dict[str, Any]) -> BytesIO:
+    try:
+        return render_docx(data)
+    except Exception:
+        return _fallback_docx(_plain_research_lines(data))
+
+
+def render_pdf_safe(data: dict[str, Any]) -> BytesIO:
+    try:
+        return render_pdf(data)
+    except Exception:
+        return _fallback_pdf(_plain_research_lines(data))
+
+
+
 def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
     branding = dict(branding or {})
     if not _load_report_libs():
@@ -722,4 +809,20 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     return out
 
 
-__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf","render_discovery_pdf","report_backend_status"]
+def render_discovery_pdf_safe(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
+    try:
+        return render_discovery_pdf(scan, branding)
+    except Exception:
+        branding = dict(branding or {})
+        lines = [str(branding.get("title") or "Market Forensics")+" · Discovery", ""]
+        for idx, row in enumerate(list(scan.get("candidates") or [])[:60], start=1):
+            try:
+                score = float(row.get("scan_score") or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+            lines.append(f"{idx}. {row.get('ticker') or ''} · score {score:.1f} · {row.get('research_side') or 'RESEARCH'}")
+        lines += ["", str(branding.get("footer") or "Lose Money Rules")]
+        return _fallback_pdf(lines, landscape_page=True)
+
+
+__all__=["get_report_branding","set_report_branding","research_report_data","safe_research_report_data","render_docx","render_pdf","render_discovery_pdf","render_docx_safe","render_pdf_safe","render_discovery_pdf_safe","report_backend_status"]
