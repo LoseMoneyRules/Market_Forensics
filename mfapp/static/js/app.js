@@ -243,6 +243,44 @@
     document.querySelectorAll('canvas[data-mf-chart="valuation"]').forEach(valuationChart);
   }
   renderCharts();
+
+  // Historical-price backfills are heavy background work, but their stored rows
+  // should appear in Valuation without forcing a page reload.
+  const valuationHistoryCanvas=document.querySelector('canvas[data-mf-chart="valuation"]');
+  if(valuationHistoryCanvas && !parseData(valuationHistoryCanvas,'history').length && ticker){
+    let priceHistoryPolls=0;
+    const pollPriceHistory=async()=>{
+      priceHistoryPolls+=1;
+      try{
+        const response=await fetch('/company/'+encodeURIComponent(ticker)+'/price/history/live',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'});
+        if(!response.ok)throw new Error('history '+response.status);
+        const payload=await response.json();
+        const state=document.querySelector('[data-price-history-state]');
+        const job=document.querySelector('[data-price-history-job]');
+        const note=document.querySelector('[data-price-history-note]');
+        if(state){
+          const span=(payload.first_date&&payload.last_date)?' · '+payload.first_date+' → '+payload.last_date:'';
+          const provider=payload.provider?' · '+payload.provider:'';
+          state.textContent=String(payload.count||0)+' plotted points'+span+provider;
+        }
+        if(job && payload.job?.id) job.textContent='Job #'+payload.job.id+' · '+(payload.job.status||'');
+        if(Array.isArray(payload.rows)&&payload.rows.length){
+          valuationHistoryCanvas.dataset.history=JSON.stringify(payload.rows);
+          valuationChart(valuationHistoryCanvas);
+          if(note)note.remove();
+          return;
+        }
+        if(payload.job?.status==='FAILED'){
+          if(note)note.textContent='Historical price backfill failed: '+(payload.job.error||'provider unavailable')+'. Use Refresh 2Y price history to retry.';
+          return;
+        }
+        if(priceHistoryPolls<30)window.setTimeout(pollPriceHistory,4000);
+      }catch(_){
+        if(priceHistoryPolls<15)window.setTimeout(pollPriceHistory,5000);
+      }
+    };
+    window.setTimeout(pollPriceHistory,2000);
+  }
   let resizeTimer=null;
   window.addEventListener('resize',()=>{window.clearTimeout(resizeTimer);resizeTimer=window.setTimeout(renderCharts,180)});
   window.addEventListener('mf-theme-change',()=>window.setTimeout(renderCharts,30));
