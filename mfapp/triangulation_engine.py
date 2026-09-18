@@ -71,10 +71,9 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
     pe = (market_cap / net_income) if market_cap not in (None, 0) and net_income is not None and net_income > 0 else None
     enterprise_value = (market_cap + debt - cash) if market_cap is not None else None
     ev_sales = (enterprise_value / revenue) if enterprise_value is not None and revenue not in (None, 0) else None
-    tax_rate = (income_tax / pretax_income) if income_tax is not None and pretax_income is not None and pretax_income > 0 else .21
-    tax_rate = max(0.0, min(.40, tax_rate))
-    invested_capital = (debt + equity - cash) if equity is not None else None
-    roic = (operating_income * (1.0 - tax_rate) / invested_capital * 100.0) if operating_income is not None and invested_capital not in (None, 0) and invested_capital > 0 else None
+    # Reuse the canonical filing-backed ROIC. Do not inject a default tax rate
+    # into peer comparisons; a missing peer ROIC is better than false precision.
+    roic = _n(metrics.get("roic_pct"))
 
     return {
         "company_id": company.id,
