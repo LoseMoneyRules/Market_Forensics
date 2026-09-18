@@ -533,11 +533,12 @@ def add_coverage():
     db.session.add(coverage); db.session.flush(); ensure_workspace(coverage, g.user.id)
     audit("coverage.create", "coverage", coverage.id, {"ticker": ticker, "validation_source": validation.source}); db.session.commit()
     enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
+    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 3}, priority=35)
     if provider_status(g.user.id).get("sec"):
         enqueue_job("SEC_INGEST", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=40)
     else:
         enqueue_job("RESEARCH_PREFILL", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=50)
-    flash(f"{ticker} added to Coverage. Market, evidence and auto-draft jobs queued where available.", "success")
+    flash(f"{ticker} added to Coverage. Quote, price history and evidence jobs queued where available.", "success")
     return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
 
 
