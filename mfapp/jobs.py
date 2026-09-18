@@ -261,8 +261,10 @@ def _bulk(user_id: int) -> dict[str, Any]:
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
-        specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70)]
-        if sec_ready: specs.insert(1, ("SEC_INGEST", 40))
+        specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75)]
+        if sec_ready:
+            specs.insert(1, ("SEC_INGEST", 40))
+            specs.append(("MANAGEMENT_SCAN", 80))
         for kind, priority in specs:
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
             if getattr(job, "_mf_reused", False): reused += 1
@@ -291,8 +293,15 @@ def _stale(user_id: int) -> dict[str, Any]:
         last_finra = RefreshRun.query.filter_by(security_id=security.id, refresh_type="FINRA_IMPORT", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
         if last_finra is None or last_finra.finished_at is None or (now - last_finra.finished_at).total_seconds() > 24 * 3600:
             specs.append(("FINRA_IMPORT", 70))
+        last_positioning = RefreshRun.query.filter_by(security_id=security.id, refresh_type="POSITIONING_REFRESH", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
+        if last_positioning is None or last_positioning.finished_at is None or (now - last_positioning.finished_at).total_seconds() > 24 * 3600:
+            specs.append(("POSITIONING_REFRESH", 75))
+        if sec_ready:
+            last_management = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="MANAGEMENT_SCAN", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
+            if last_management is None or last_management.finished_at is None or (now - last_management.finished_at).total_seconds() > 7 * 24 * 3600:
+                specs.append(("MANAGEMENT_SCAN", 80))
         if specs:
-            specs.append(("RECALCULATE", 80))
+            specs.append(("RECALCULATE", 90))
         for kind, priority in specs:
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
             if getattr(job, "_mf_reused", False):
