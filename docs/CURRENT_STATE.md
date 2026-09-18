@@ -14,7 +14,8 @@
 **Production:** 0.2.6 on Namecheap  
 **Main code release:** 0.2.7 merged at `ef02e56596da90d3768601994219fca9284a49df` via PR #24  
 **0.2.7 PR CI:** run `35369138874` / run #797 = completed / success  
-**0.2.7 post-merge main CI:** pending  
+**0.2.7 post-merge main CI:** run `35369300915` / run #798 = completed / success on merge commit  
+**CURRENT_STATE sync CI:** run `35369397930` / run #801 = completed / success on clean main state  
 **0.2.6 Namecheap deploy:** run `35363441025` / deploy #35 = completed / success; candidate health + post-cleanup health passed; no rollback  
 **Release phase:** 0.2.7 is in `main`; production deploy pending  
 **Branch:** `main`
@@ -435,7 +436,7 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
-**Current phase:** PR #24 merged to `main` at `ef02e56596da90d3768601994219fca9284a49df`; post-merge main CI and Namecheap deploy are pending.
+**Current phase:** PR #24 merged to `main` at `ef02e56596da90d3768601994219fca9284a49df`; post-merge main CI and state-sync CI are green; Namecheap deploy is pending.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
