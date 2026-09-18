@@ -10,7 +10,7 @@
     <strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}</strong>
     <form class="gate-approval-form" method="post" action="{{ url_for('web.approve_research_gate', ticker=security.ticker, gate_key=gate.key) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      {% if gate.approved %}<input type="hidden" name="action" value="revoke"><button class="button micro" type="submit">Reopen</button>{% elif gate.evidence_ready %}<button class="button micro primary" type="submit">Approve</button>{% else %}<span class="muted">—</span>{% endif %}
+      {% if gate.approved %}<button class="button micro" type="submit" name="action" value="revoke">Reopen</button>{% elif gate.evidence_ready %}<button class="button micro primary" type="submit" name="action" value="approve">Approve</button>{% else %}<span class="muted">—</span>{% endif %}
     </form>
   </div>
   {% endfor %}
