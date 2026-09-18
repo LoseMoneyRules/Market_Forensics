@@ -7,25 +7,35 @@
 > job execution, provider/data logic, SEC normalization, Discovery, Fundamentals, analytical
 > engines, reports/publication, security, Portfolio/Risk, or a material product workflow changes.
 
-**State-Version: 0.2.7**  
+**State-Version: 0.2.8**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
 **Production:** 0.2.7 on Namecheap  
-**Main code release:** 0.2.7 merged at `ef02e56596da90d3768601994219fca9284a49df` via PR #24  
-**0.2.7 PR CI:** run `35369138874` / run #797 = completed / success  
-**0.2.7 post-merge main CI:** run `35369300915` / run #798 = completed / success on merge commit  
-**CURRENT_STATE sync CI:** run `35369397930` / run #801 = completed / success on clean main state  
-**0.2.7 Namecheap deploy:** run `35369640385` / deploy #36 = completed / success; candidate health + post-cleanup health passed; no rollback  
-**Deploy-vendor hotfix:** PR #25 merged to `main` at `8908092dedf3a5390f54774848852cd860b12d5b`; PR CI #809 and post-merge main CI #810 were green, but deploy #37 exposed an lftp exclusion bug in the backup mirror  
-**Deploy #37:** run `35371633874` = cancelled during backup before candidate swap; production remained untouched. Cache detection correctly returned `MF_REPORTING_VENDOR_UPLOAD=0`, but `--exclude-glob _reporting_vendor*` did not exclude the directory because lftp matches directories with a trailing slash.  
-**Recursive vendor-exclusion fix:** PR #26 merged to `main` at `0555a2f8b19456852185ec3a3cc90824da2d270f`; PR CI run `35372218619` / #814 = success; post-merge main CI run `35372328821` / #815 = success  
-**Release phase:** 0.2.7 remains LIVE from deploy #36; corrected recursive vendor exclusion and fail-closed backup-plan preflight are active in `main` for the next deploy  
-**Branch:** `main`
+**Verified production baseline:** deploy run `35372729870` / deploy #38 = completed / success on main commit `564ea20a6eb0663380f88a375f80b3f109cf54e9`; candidate health + post-cleanup health passed; `reports = rich`  
+**Persistent report vendor verification:** deploy #38 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; the remote backup dry-run proved `_reporting_vendor` was excluded before transfer  
+**Main baseline before 0.2.8:** `564ea20a6eb0663380f88a375f80b3f109cf54e9`; VERSION `0.2.7`  
+**Latest verified 0.2.7 main CI:** run `35372328821` / #815 = completed / success on merge commit `0555a2f8b19456852185ec3a3cc90824da2d270f`; the later CURRENT_STATE sync commit used `[skip ci]`  
+**0.2.8 candidate:** branch `release/0.2.8`; VERSION `0.2.8`; CI / merge / production deploy pending  
+**Release phase:** 0.2.7 remains LIVE; 0.2.8 is the active candidate and must pass its release gates before merge  
+**Branch:** `release/0.2.8`
 
-0.2.7 remains the authoritative production release on Namecheap from deploy #36. Deploy #37 did not reach candidate upload or restart. PR #26 is merged and replaces the faulty glob with the explicit lftp extended regex `^_reporting_vendor(/|$)` in backup, candidate upload and rollback mirrors. The next deploy must first pass a real remote `mirror --just-print` preflight; if any `_reporting_vendor` path appears in the plan, the deploy fails before transfer.
-
+Deploy #38 is the authoritative proof that ordinary releases do not retransmit the persistent reporting runtime when its dependency hash is unchanged. 0.2.8 additionally excludes obsolete `_vendor` paths from normal application mirrors. Production remains 0.2.7 until a separate 0.2.8 merge and successful Namecheap deployment complete.
 ---
+
+## 0.2.8 release scope
+
+0.2.8 is a correctness and workflow consolidation release built from the verified 0.2.7 production baseline:
+- Overview has one curated Evidence block only, placed at the bottom immediately before report export. FOR, AGAINST, compact Evidence Signals, diagnostic score and blockers live together; no duplicate Evidence Signals card remains.
+- PDF and DOCX exports no longer rely on Flask/Werkzeug `send_file(BytesIO)`. In-memory report bytes are returned as normal HTTP responses so Passenger / WSGI file wrappers cannot fail after the renderer fallback boundary.
+- Expectations is forward-looking again. The repeated current Fundamentals strip is removed; Bear/Base/Bull operating path, price-implied expectations, variant perception and analyst expectation inputs remain.
+- Gross Margin ingestion now accepts direct SEC Cost of Revenue / COGS facts and derives Gross Profit only through the exact Revenue − COGS bridge when Gross Profit is absent.
+- Alpha Vantage, when the existing CONTROL API key is configured, is an optional secondary fundamental fallback for missing income-statement, balance-sheet and cash-flow fields. It never overwrites a valid SEC fact, matches exact fiscal period end dates and records separate provenance. SEC remains primary.
+- ROIC remains filing/fundamental-data backed: broader source coverage may populate missing debt/equity/cash/tax inputs, but ROIC is still withheld rather than guessed when the required inputs cannot be proven.
+- Income Statement Financial Flows is a sequential Revenue-to-Net waterfall rather than a split Sankey: Revenue → costs → Gross Profit → operating costs → Operating Income → other/interest → Pre-Tax → tax → Net Income. Cash Flow keeps the existing magnitude-flow renderer.
+- Validate is restored as a first-class Research tab immediately after Sources / Audit and Decision Lenses link to the real validation route.
+- Normal Namecheap application backup/upload/rollback mirrors explicitly exclude both `_reporting_vendor` and obsolete `_vendor`; the report vendor is still uploaded only when its dependency hash changes.
+- Dedicated regression coverage lives in `tests/test_028_release.py`.
 
 ## 0.2.7 release scope
 
@@ -192,12 +202,11 @@ Location remains Research → Financial Flows, with Income Statement and Cash Fl
 
 The renderer:
 - uses full available desktop width;
-- keeps signed negatives signed;
-- never creates fake positive ribbons;
-- keeps the final graph column at the usable right edge;
-- uses taller nodes so a two-line label cannot cover the numeric value;
-- has no obsolete category legend;
+- renders Income Statement as a sequential Revenue-to-Net waterfall so each deduction/addition and remaining subtotal are explicit;
+- keeps Cash Flow as a magnitude-flow diagram;
+- keeps signed negatives signed and never fabricates positive widths;
 - uses a ledger representation on mobile;
+- exposes reconciliation warnings separately from the accounting bridge;
 - exposes no internal build/calculation version.
 
 ### Portfolio — independent from Research again
@@ -312,6 +321,8 @@ production release as healthy.
 Report exports must never expose private Portfolio shares/cost/P&L/sizing/private notes/journal data.
 Report requests read stored/materialized data and do not perform heavy provider work synchronously.
 
+Research and Discovery report downloads are in-memory artifacts and must be returned as normal response bytes. Do not reintroduce `send_file(BytesIO)` or another path that delegates an already-rendered in-memory artifact to Passenger's / the WSGI server's file wrapper.
+
 ---
 
 ## 6. Discovery — forensic contract retained
@@ -416,38 +427,33 @@ Permanent UI rules:
 
 ---
 
-## 10. 0.2.7 release gates
+## 10. 0.2.8 release gates
 
-0.2.6 baseline/parity/security gates remain inherited. Before merge, 0.2.7 must additionally pass:
+All 0.2.7 architecture/parity/security gates remain inherited. Before merge, 0.2.8 must additionally pass:
 
 1. Python syntax, JavaScript syntax, workflow YAML and the full regression suite.
-2. dedicated `tests/test_027_deep_release.py`.
-3. PDF and Word research-report routes return valid artifacts even when branding/render/audit persistence is deliberately faulted.
-4. production-minimal rich-report smoke remains green; `reports = rich` is still required.
-5. Gross Margin is available from reported Gross Profit or the exact Revenue − COGS accounting bridge; no estimated gross profit.
-6. ROIC remains visible but is never fabricated when required filing facts are missing.
-7. Expectations exposes Current basis, Revenue growth, Gross Margin, Operating Margin, FCF Margin, Cash Quality and ROIC.
-8. Refresh Runs is collapsed by default like Recent Jobs.
-9. Research Conclusion is plain text; Next Action/Lens wrap safely; Manage remains inside the command table.
-10. Research Command Center has no Discover/Portfolio shortcut and places Refresh stale/all under the Process/Validate explanation.
-11. Monitoring and Decision Journal readiness update from live DB state without waiting for RECALCULATE.
-12. approved gates remain approved until explicit CONTROL reopen/revoke; changed evidence is visibly flagged for review.
-13. Business macro context is sourced, background-only and split into FOR / AGAINST with dated provenance.
-14. automatic peer triangulation remains auditable and cannot create a peer-only valuation.
-15. peer fair-value overlay requires >=2 peers and >=2 independent valuation methods, uses only 15–20% peer weight, and is capped at +/-10% scenario movement.
-16. private research, reports, snapshots and publications use the same forensic valuation contract while retaining intrinsic scenarios in audit metadata.
-17. normal GET navigation performs no new external macro/provider fetches.
-18. VERSION == State-Version == 0.2.7.
-19. ordinary Namecheap deploys must not transfer `mfapp/_reporting_vendor` when `requirements-reporting.txt` is unchanged; backup, candidate upload and rollback mirrors must exclude the persistent vendor tree with `^_reporting_vendor(/|$)`.
-20. every production deploy must dry-run the backup mirror first and fail before transfer if `_reporting_vendor` appears in the planned mirror operations.
+2. dedicated `tests/test_028_release.py`.
+3. Full PDF and Full Word routes must return valid artifacts even with a hostile `wsgi.file_wrapper`; report delivery must not call `send_file(BytesIO)`.
+4. Overview contains a single combined FOR / AGAINST / Signals evidence area after the editable research/readiness area and immediately before report export.
+5. Expectations does not repeat the current Fundamentals KPI strip; forward Bear/Base/Bull path, price-implied expectations, variant perception and expectation inputs remain.
+6. SEC normalization must ingest direct COGS/Cost of Revenue and recover Gross Profit only with the exact Revenue − COGS bridge when needed.
+7. Optional Alpha Vantage fundamental fallback fills only missing fields, never overwrites SEC, matches fiscal period end and stores provider provenance.
+8. Gross Margin and ROIC remain visible core Fundamentals outputs; no invented Gross Profit, debt, tax rate or ROIC is permitted.
+9. Income Statement Financial Flows exposes `presentation = WATERFALL` and a sequential Revenue-to-Net bridge whose deltas reconcile to reported subtotals.
+10. Cash Flow rendering remains intact and signed exceptions remain signed.
+11. Validate appears immediately after Sources / Audit and links to the actual point-in-time validation route.
+12. ordinary deploy backup/upload/rollback mirrors exclude both `^_reporting_vendor(/|$)` and `^_vendor(/|$)`.
+13. unchanged reporting requirements keep `MF_REPORTING_VENDOR_UPLOAD=0`; changed requirements remain the only condition that stages/replaces the persistent report runtime.
+14. VERSION == State-Version == 0.2.8.
+15. normal GET navigation performs no new synchronous external fundamental fetches; provider refresh stays job/action driven.
+16. no production merge/deploy state is claimed until the corresponding GitHub CI and Namecheap health results exist.
 
 The release is blocked by a broken capability even if its page returns HTTP 200.
-
 ---
 
 ## 11. Merge / deploy state
 
-**Current phase:** 0.2.7 is LIVE on Namecheap via deploy #36 (`35369640385`). Deploy #37 (`35371633874`) was cancelled during backup before candidate upload; production was not changed. PR #26 is merged to `main` at `0555a2f8b19456852185ec3a3cc90824da2d270f`; PR CI #814 and post-merge main CI #815 are green. The corrected lftp regex exclusion plus fail-closed remote dry-run preflight are now the required deploy path.
+**Current phase:** 0.2.7 is LIVE on Namecheap via successful deploy #38 (`35372729870`) from main commit `564ea20a6eb0663380f88a375f80b3f109cf54e9`. The deployment proved the recursive reporting-vendor exclusion in the real remote mirror plan, reused the persistent rich-report runtime with `MF_REPORTING_VENDOR_UPLOAD=0`, and passed candidate plus post-cleanup production health. 0.2.8 is currently a candidate on `release/0.2.8`; merge and deploy are pending.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
@@ -455,13 +461,9 @@ CURRENT_STATE transition rule:
 - immediately after successful Namecheap deploy: update this file on `main` again with the deploy run, production version and production health result;
 - never leave an older production/main statement in this file after either transition.
 
-Completed 0.2.7 release sequence:
+Required 0.2.8 sequence:
 
-`0.2.7 branch → PR CI green → merge main → post-merge main CI green → Namecheap deploy #36 → production health green`
-
-Completed deployment-workflow hotfix sequence:
-
-`PR #25 CI #809 green → merge main → main CI #810 green → next release deploy reuses persistent report vendor when requirements hash is unchanged`
+`0.2.7 production baseline verified → 0.2.8 branch → PR CI green → merge main → post-merge main CI green → Namecheap deploy → production health green → CURRENT_STATE production sync`
 
 Do not merge merely because individual fixes look correct.
 
@@ -473,7 +475,6 @@ Production health for a release remains mandatory:
 - `reports = rich`.
 
 If candidate health fails, deployment must fail/rollback rather than silently accepting a degraded report backend.
-
 ---
 
 ## 12. Mandatory update rule

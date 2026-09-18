@@ -128,6 +128,60 @@
     root.appendChild(mobile);
     return true;
   }
+  function drawWaterfall(root,data,steps){
+    const rows=steps.filter(s=>Number.isFinite(Number(s.result))&&Number.isFinite(Number(s.value)));
+    if(!rows.length)return false;
+    const visible=Math.floor(root.getBoundingClientRect().width||0);
+    const width=Math.max(760,visible>0?visible-24:760,rows.length*118+70);
+    const height=360,top=40,bottom=292,left=42,right=24,barW=Math.min(72,Math.max(48,(width-left-right)/rows.length*.58));
+    const values=[0];
+    rows.forEach(s=>{values.push(Number(s.result)); if(['START','SUBTOTAL','RESULT'].includes(String(s.kind||'').toUpperCase()))values.push(Number(s.value))});
+    let min=Math.min(...values),max=Math.max(...values);
+    const span=Math.max(1,max-min,Math.abs(max)*.08);
+    min-=span*.10; max+=span*.10;
+    if(min>0)min=0;if(max<0)max=0;
+    const y=v=>top+(max-Number(v))/(max-min)*(bottom-top);
+    const stepX=i=>left+((width-left-right)/(rows.length))*i+((width-left-right)/(rows.length))/2;
+    const svg=makeSvg('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':'Sequential income statement bridge '+String(data.period||'')});
+    svg.classList.add('flow-waterfall-svg');
+    const zeroY=y(0);
+    svg.appendChild(makeSvg('line',{x1:left-12,y1:zeroY,x2:width-right+8,y2:zeroY,stroke:css('--line','#ccd3da'),'stroke-width':1}));
+    let previous=0;
+    rows.forEach((step,i)=>{
+      const kind=String(step.kind||'').toUpperCase(),result=Number(step.result),value=Number(step.value),x=stepX(i);
+      let from=0,to=result;
+      if(kind==='DEDUCTION'||kind==='CONTRIBUTION'){from=previous;to=result}
+      const y1=y(from),y2=y(to),rectY=Math.min(y1,y2),rectH=Math.max(3,Math.abs(y2-y1));
+      let fill=css('--semantic-info','#3a6f99');
+      if(kind==='DEDUCTION')fill=css('--semantic-negative','#a04444');
+      else if(kind==='CONTRIBUTION')fill=css('--semantic-positive','#39745d');
+      else if(kind==='RESULT')fill=css('--navy','#0b1f33');
+      const rect=makeSvg('rect',{x:x-barW/2,y:rectY,width:barW,height:rectH,rx:5,fill});
+      rect.setAttribute('opacity',kind==='SUBTOTAL'?'.82':'.92');svg.appendChild(rect);
+      const shown=(kind==='DEDUCTION'||kind==='CONTRIBUTION')?value:result;
+      const valueText=makeSvg('text',{x,y:Math.max(18,rectY-7),'text-anchor':'middle',fill:css('--text','#14212b'),'font-size':12,'font-weight':800});
+      valueText.textContent=(shown>0&&kind==='CONTRIBUTION'?'+':'')+fmt(shown);svg.appendChild(valueText);
+      const label=makeSvg('text',{x,y:318,'text-anchor':'middle',fill:css('--muted','#66727c'),'font-size':11,'font-weight':700});
+      wrapText(step.label,18).forEach((line,idx)=>{const t=makeSvg('tspan',{x,dy:idx===0?0:13});t.textContent=line;label.appendChild(t)});svg.appendChild(label);
+      if(i<rows.length-1){
+        const connectorY=y(result),nextX=stepX(i+1);
+        svg.appendChild(makeSvg('line',{x1:x+barW/2,y1:connectorY,x2:nextX-barW/2,y2:connectorY,stroke:css('--line-strong','#9ba8b3'),'stroke-width':1.5,'stroke-dasharray':'4 3'}));
+      }
+      previous=result;
+    });
+    const scroll=make('div','flow-diagram-scroll flow-waterfall-scroll');scroll.appendChild(svg);root.appendChild(scroll);
+    const mobile=make('div','flow-mobile-ledger flow-waterfall-ledger');
+    rows.forEach(step=>{
+      const kind=String(step.kind||'').toUpperCase(),row=make('div','flow-mobile-edge');
+      row.dataset.semantic=kind==='DEDUCTION'?'negative':kind==='CONTRIBUTION'?'positive':'info';
+      const copy=make('div');copy.append(make('strong',null,step.label),make('span',null,kind));
+      const shown=(kind==='DEDUCTION'||kind==='CONTRIBUTION')?Number(step.value):Number(step.result);
+      row.append(copy,make('b',null,(shown>0&&kind==='CONTRIBUTION'?'+':'')+fmt(shown)));mobile.appendChild(row);
+    });
+    root.appendChild(mobile);
+    return true;
+  }
+
   function render(root,suppliedData=null){
     const data=suppliedData||safeData(root); root.innerHTML='';
     const rawEdges=Array.isArray(data.edges)?data.edges:[];
@@ -137,9 +191,13 @@
 
     const head=make('div','flow-title');
     const title=make('div');title.append(make('strong',null,String(data.flow_type||'Financial Flow').replaceAll('_',' ')),make('small','muted',String(data.period||'')));
-    const scale=make('span','flow-scale-note','Ribbon width = magnitude');head.append(title,scale);root.appendChild(head);
+    const bridge=Array.isArray(data.bridge_steps)?data.bridge_steps:[];
+    const isIncomeBridge=String(data.flow_type||'').toUpperCase()==='INCOME_STATEMENT'&&bridge.length;
+    const scale=make('span','flow-scale-note',isIncomeBridge?'Revenue → subtract/add → Net Income':'Ribbon width = magnitude');head.append(title,scale);root.appendChild(head);
 
-    if(!edges.length){
+    if(isIncomeBridge){
+      drawWaterfall(root,data,bridge);
+    }else if(!edges.length){
       const empty=make('div','empty-state');empty.append(make('h2',null,'No reconciled positive flow stored'),make('p',null,'Negative and exceptional facts remain signed below; they are never converted into fake positive ribbons.'));root.appendChild(empty);
     }else drawDiagram(root,data,edges,nodeRows);
 

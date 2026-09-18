@@ -43,7 +43,7 @@ SECTIONS = [
     ("expectations", "Expectations"), ("valuation", "Valuation"), ("bear-case", "Bear Case"),
     ("catalysts", "Catalysts"), ("financial-flows", "Financial Flows"),
     ("management", "Management"), ("tape", "Tape / Flows"), ("monitoring", "Monitoring"),
-    ("journal", "Decision Journal"), ("audit", "Sources / Audit"),
+    ("journal", "Decision Journal"), ("audit", "Sources / Audit"), ("validate", "Validate"),
 ]
 SECTION_KEYS = {key for key, _ in SECTIONS}
 RESEARCH_FIELDS = {
@@ -603,6 +603,8 @@ def company_section(ticker, section):
     require_control_view()
     if section == "numbers":
         return redirect(url_for("web.company_section", ticker=ticker.upper(), section="fundamentals"), code=301)
+    if section == "validate":
+        return redirect(url_for("web.validate_company", ticker=ticker.upper()), code=302)
     if section not in SECTION_KEYS: abort(404)
     ctx = _ctx(ticker); company = ctx["company"]; coverage = ctx["coverage"]; extra = {}
     cache = ctx.get("research_cache") or {}
@@ -626,28 +628,8 @@ def company_section(ticker, section):
                 peer_query = peer_query.filter(db.text("1=0"))
             extra["peer_candidates"] = peer_query.order_by(Company.display_name.asc()).limit(12).all()
     if section == "expectations":
-        basis = current_row(company.id)
-        basis_metrics = dict((basis or {}).get("metrics") or {})
-        cash_conversion = basis_metrics.get("cfo_to_net_income")
-        if cash_conversion is None:
-            cash_quality = "UNAVAILABLE"
-        elif float(cash_conversion) >= 1.0:
-            cash_quality = "STRONG"
-        elif float(cash_conversion) >= 0.7:
-            cash_quality = "MIXED"
-        else:
-            cash_quality = "WEAK"
-        extra["expectations_basis"] = {
-            "period_label": (basis or {}).get("period_label"),
-            "period_end": (basis or {}).get("period_end"),
-            "revenue_growth_pct": basis_metrics.get("revenue_growth_pct"),
-            "gross_margin_pct": basis_metrics.get("gross_margin_pct"),
-            "operating_margin_pct": basis_metrics.get("operating_margin_pct"),
-            "fcf_margin_pct": basis_metrics.get("fcf_margin_pct"),
-            "cfo_to_net_income": cash_conversion,
-            "cash_quality": cash_quality,
-            "roic_pct": basis_metrics.get("roic_pct"),
-        }
+        # Expectations is forward-looking by design. Current operating facts live in
+        # Fundamentals and are not repeated here.
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 5)
         extra["scenario_forecasts"] = scenario_forecasts(company.id, ctx["model"], 5)

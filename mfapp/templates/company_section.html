@@ -23,36 +23,16 @@
       {% if intelligence.warnings %}<div class="notice amber"><strong>Review before relying on the read.</strong> {{ intelligence.warnings|join(' ') }}</div>{% endif %}
     </div>
 
-    <div class="panel evidence-summary-panel">
-      <div class="panel-head">
-        <div><p class="eyebrow">EVIDENCE</p><h2>For / against</h2></div>
-        <div class="evidence-score-compact">
-          <span>Diagnostic score</span>
-          <strong>{{ '%+.2f'|format(intelligence.score) }}</strong>
-          <small>sum of visible weights · Decision Lenses / readiness / validation remain canonical</small>
-        </div>
-      </div>
-      <div class="evidence-sides">
-        <div>
-          <h3>FOR</h3>
-          {% for s in intelligence.supporting_evidence[:5] %}
-          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight positive">{{ '%+.2f'|format(s.weight) }}</b></p>
-          {% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}
-        </div>
-        <div>
-          <h3>AGAINST</h3>
-          {% for s in intelligence.opposing_evidence[:5] %}
-          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight negative">{{ '%+.2f'|format(s.weight) }}</b></p>
-          {% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}
-        </div>
-      </div>
-      {% if intelligence.blockers %}<div class="decision-blockers compact">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
-    </div>
-
     <div class="panel decision-map">
       <div class="panel-head"><div><p class="eyebrow">DECISION MAP</p><h2>From evidence to validation</h2></div><span class="status-chip">{{ decision_lenses.research_conclusion }}</span></div>
       <div class="lens-grid mature-lenses">
-        {% for lens in decision_lenses.rows %}<a class="lens-card lens-state" href="{{ url_for('web.company_section', ticker=security.ticker, section=(lens.section if lens.section != 'validate' else 'overview')) }}"><span>{{ lens.label }}</span><strong>{{ lens.state }}</strong></a>{% endfor %}
+        {% for lens in decision_lenses.rows %}
+          {% if lens.section == 'validate' %}
+            <a class="lens-card lens-state" href="{{ url_for('web.validate_company', ticker=security.ticker) }}"><span>{{ lens.label }}</span><strong>{{ lens.state }}</strong></a>
+          {% else %}
+            <a class="lens-card lens-state" href="{{ url_for('web.company_section', ticker=security.ticker, section=lens.section) }}"><span>{{ lens.label }}</span><strong>{{ lens.state }}</strong></a>
+          {% endif %}
+        {% endfor %}
       </div>
       <div class="decision-questions-grid">
         <div><h3>WHY NOW</h3>{% for item in synthesis.why_now %}<p>{{ item }}</p>{% endfor %}</div>
@@ -76,8 +56,40 @@
       </form>
       <div class="stack-gap">
         {% include "_process_readiness.html" %}
-                <div class="panel"><div class="panel-head"><h2>Evidence signals</h2></div>{% for signal in intelligence.signals[:8] %}<div class="list-row"><div><strong>{{ signal.label }}</strong><p>{{ signal.detail }}</p></div><span class="status-chip">{{ signal.tone|upper }}</span></div>{% else %}<p class="muted">Refresh SEC and market evidence to populate signals.</p>{% endfor %}</div>
+
       </div>
+    </div>
+
+    <div class="panel evidence-summary-panel evidence-consolidated">
+      <div class="panel-head">
+        <div><p class="eyebrow">EVIDENCE</p><h2>For / against / signals</h2><p class="muted">One evidence view. Weighted items show direction and strength; supporting signals add context without bypassing readiness or validation.</p></div>
+        <div class="evidence-score-compact">
+          <span>Diagnostic score</span>
+          <strong>{{ '%+.2f'|format(intelligence.score) }}</strong>
+          <small>diagnostic only · Decision Lenses, readiness and validation remain canonical</small>
+        </div>
+      </div>
+      <div class="evidence-consolidated-grid">
+        <div class="evidence-column evidence-for">
+          <h3>FOR</h3>
+          {% for s in intelligence.supporting_evidence[:6] %}
+          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight positive">{{ '%+.2f'|format(s.weight) }}</b></p>
+          {% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}
+        </div>
+        <div class="evidence-column evidence-against">
+          <h3>AGAINST</h3>
+          {% for s in intelligence.opposing_evidence[:6] %}
+          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight negative">{{ '%+.2f'|format(s.weight) }}</b></p>
+          {% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}
+        </div>
+        <div class="evidence-column evidence-signals">
+          <h3>SIGNALS</h3>
+          {% for signal in intelligence.signals[:8] %}
+          <div class="evidence-signal-compact"><span><strong>{{ signal.label }}</strong> · {{ signal.detail }}</span><small>{{ signal.tone|upper }}</small></div>
+          {% else %}<p class="muted">Refresh SEC and market evidence to populate signals.</p>{% endfor %}
+        </div>
+      </div>
+      {% if intelligence.blockers %}<div class="decision-blockers compact">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
     </div>
 
     <section class="panel export-research" aria-label="Export Research">
@@ -196,15 +208,6 @@
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='fundamentals') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Analyst notes</h2><button class="button primary">Save</button></div><textarea name="text" rows="7">{{ research.numbers|clean_auto }}</textarea></form>
 
   {% elif section == 'expectations' %}
-    <div class="current-strip expectations-basis-strip">
-      <div class="current-kpi"><span>Current basis</span><strong>{{ expectations_basis.period_label or 'REFRESH' }}</strong><small>{{ expectations_basis.period_end or 'Refresh fundamentals' }}</small></div>
-      <div class="current-kpi"><span>Revenue growth</span><strong>{{ pct(expectations_basis.revenue_growth_pct) }}</strong><small>TTM/FY observed</small></div>
-      <div class="current-kpi"><span>Gross margin</span><strong>{{ pct(expectations_basis.gross_margin_pct) }}</strong><small>Current profitability basis</small></div>
-      <div class="current-kpi"><span>Operating margin</span><strong>{{ pct(expectations_basis.operating_margin_pct) }}</strong><small>Current operating basis</small></div>
-      <div class="current-kpi"><span>FCF margin</span><strong>{{ pct(expectations_basis.fcf_margin_pct) }}</strong><small>Cash conversion basis</small></div>
-      <div class="current-kpi"><span>Cash quality</span><strong>{{ expectations_basis.cash_quality }}</strong><small>{% if expectations_basis.cfo_to_net_income is not none %}CFO / NI {{ '%.2f'|format(expectations_basis.cfo_to_net_income) }}x{% else %}CFO / NI unavailable{% endif %}</small></div>
-      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(expectations_basis.roic_pct) }}</strong><small>Current capital efficiency</small></div>
-    </div>
     <div class="panel">
       <div class="panel-head"><div><p class="eyebrow">5Y OPERATING PATH</p><h2>Bear / Base / Bull fundamentals</h2><p class="muted">Operating scenarios are kept distinct from valuation-method outputs.</p></div><span class="status-chip">Driven by Valuation assumptions</span></div>
       <div class="table-card embedded scroll"><table class="data-table numeric">

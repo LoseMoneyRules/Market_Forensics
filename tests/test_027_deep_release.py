@@ -157,7 +157,7 @@ def test_027_readiness_approvals_are_monotonic_and_monitoring_journal_close_live
         assert gates["journal"]["evidence_ready"] is True
 
 
-def test_027_expectations_and_fundamentals_always_show_current_basis_contract(tmp_path, monkeypatch):
+def test_027_fundamentals_keeps_current_basis_while_expectations_stays_forward_looking(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "basis")
     uid, _, _ = seed_control_workspace(app)
     client = app.test_client()
@@ -166,16 +166,17 @@ def test_027_expectations_and_fundamentals_always_show_current_basis_contract(tm
     expectations = client.get("/company/EXM/expectations")
     assert expectations.status_code == 200
     html = expectations.get_data(as_text=True)
-    for label in ("Current basis", "Revenue growth", "Gross margin", "Operating margin", "FCF margin", "Cash quality", "ROIC"):
-        assert label in html
-    assert "Refresh fundamentals" in html
+    assert "expectations-basis-strip" not in html
+    assert "5Y OPERATING PATH" in html
+    assert "PRICE-IMPLIED EXPECTATIONS" in html
+    assert "VARIANT PERCEPTION" in html
 
     fundamentals = client.get("/company/EXM/fundamentals")
     assert fundamentals.status_code == 200
     html = fundamentals.get_data(as_text=True)
+    assert "Current basis" in html
     assert "Gross margin" in html
     assert "ROIC" in html
-    assert "Needs operating income, tax, debt, equity & cash" not in html or "ROIC" in html
 
 
 

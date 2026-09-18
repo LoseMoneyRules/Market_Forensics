@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, url_for
+from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
 
 from .access import audit, effective_role, require_control_view
 from .core_models import Company, Coverage, InvestmentState, Job, PortfolioRiskPlan, Position, PositionProfile, Publication, RefreshRun, RiskPlan, Security, Snapshot
@@ -19,6 +19,23 @@ from .reporting import emergency_discovery_report_stream, emergency_research_rep
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
+
+
+def _memory_download(stream, *, mimetype: str, download_name: str):
+    """Serve an in-memory artifact without delegating to the WSGI file wrapper.
+
+    Passenger/mod_wsgi deployments can wrap Flask's send_file() object after the
+    route has returned, which bypasses our renderer/fallback exception boundary.
+    Reports are already bounded in-memory artifacts, so materialize the bytes
+    here and return a normal response instead.
+    """
+    stream.seek(0)
+    payload = stream.getvalue() if hasattr(stream, "getvalue") else stream.read()
+    response = current_app.response_class(payload, mimetype=mimetype)
+    response.headers["Content-Disposition"] = f'attachment; filename="{download_name}"'
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def _job_target_map(jobs: list[Job]) -> dict[int, dict]:
@@ -222,7 +239,7 @@ def discovery_report():
         current_app.logger.exception("Discovery report audit failed; export will still be served")
         db.session.rollback()
     stream.seek(0)
-    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery.pdf", max_age=0, conditional=False)
+    return _memory_download(stream, mimetype="application/pdf", download_name="Market_Forensics_Discovery.pdf")
 
 
 @bp.get("/company/<ticker>/report/<fmt>")
@@ -257,7 +274,7 @@ def research_report(ticker, fmt):
         current_app.logger.exception("Research report audit failed for %s; export will still be served", ctx["security"].ticker)
         db.session.rollback()
     stream.seek(0)
-    return send_file(stream, mimetype=mimetype, as_attachment=True, download_name=f"{stem}.{suffix}", max_age=0, conditional=False)
+    return _memory_download(stream, mimetype=mimetype, download_name=f"{stem}.{suffix}")
 
 
 @bp.get("/portfolio")

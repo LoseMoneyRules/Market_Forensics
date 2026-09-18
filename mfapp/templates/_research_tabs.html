@@ -4,6 +4,8 @@
       {% set href = url_for('web.valuation_company', ticker=security.ticker) %}
     {% elif key == 'financial-flows' %}
       {% set href = url_for('web.financial_flows', ticker=security.ticker) %}
+    {% elif key == 'validate' %}
+      {% set href = url_for('web.validate_company', ticker=security.ticker) %}
     {% else %}
       {% set href = url_for('web.company_section', ticker=security.ticker, section=key) %}
     {% endif %}

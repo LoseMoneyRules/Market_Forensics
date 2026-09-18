@@ -43,6 +43,79 @@ def _node(label: str, value: float | None, role: str, order: int, field: str, de
     return {"label": label, "value": value, "role": role, "order": order, "source_field": field, "derived": derived}
 
 
+def _bridge_step(label: str, kind: str, value: float, result: float, field: str, *, derived: bool = False) -> dict[str, Any]:
+    return {
+        "label": label,
+        "kind": kind,
+        "value": value,
+        "result": result,
+        "source_field": field,
+        "derived": derived,
+    }
+
+
+def _income_bridge_steps(
+    rev: float | None,
+    cogs: float | None,
+    gp: float | None,
+    op_inc: float | None,
+    pretax: float | None,
+    tax: float | None,
+    net: float | None,
+) -> list[dict[str, Any]]:
+    """Build a sequential Revenue-to-Net waterfall.
+
+    Every delta moves from the preceding verified subtotal to the next reported
+    subtotal. This is deliberately different from a Sankey split: the user can
+    read Revenue, subtract costs, and follow the remaining earnings step by step.
+    """
+    if rev is None:
+        return []
+    steps = [_bridge_step("Revenue", "START", rev, rev, "revenue")]
+    current = rev
+
+    if gp is not None:
+        delta = gp - current
+        if abs(delta) > 1e-9:
+            label = "COGS / Cost of Revenue" if cogs is not None else "Cost to Gross Profit"
+            steps.append(_bridge_step(label, "DEDUCTION" if delta < 0 else "CONTRIBUTION", delta, gp, "cogs", derived=cogs is None))
+        steps.append(_bridge_step("Gross Profit", "SUBTOTAL", gp, gp, "gross_profit", derived=cogs is not None and abs((rev - cogs) - gp) <= max(1.0, abs(rev)) * 0.015))
+        current = gp
+
+    if op_inc is not None:
+        delta = op_inc - current
+        if abs(delta) > 1e-9:
+            steps.append(_bridge_step("Operating Expenses / Costs", "DEDUCTION" if delta < 0 else "CONTRIBUTION", delta, op_inc, "operating_expenses", derived=True))
+        steps.append(_bridge_step("Operating Income", "SUBTOTAL", op_inc, op_inc, "operating_income"))
+        current = op_inc
+
+    if pretax is not None:
+        delta = pretax - current
+        if abs(delta) > 1e-9:
+            steps.append(_bridge_step("Other / Interest", "DEDUCTION" if delta < 0 else "CONTRIBUTION", delta, pretax, "derived_other_pre_tax", derived=True))
+        steps.append(_bridge_step("Pre-Tax Income", "SUBTOTAL", pretax, pretax, "pretax_income"))
+        current = pretax
+
+    if net is not None:
+        if tax is not None and pretax is not None:
+            after_tax = current - tax
+            tax_delta = after_tax - current
+            if abs(tax_delta) > 1e-9:
+                steps.append(_bridge_step("Income Tax", "DEDUCTION" if tax_delta < 0 else "CONTRIBUTION", tax_delta, after_tax, "income_tax"))
+            current = after_tax
+            remainder = net - current
+            if abs(remainder) > max(1.0, abs(net), abs(current)) * 0.015:
+                steps.append(_bridge_step("Below-line / Reconciliation", "DEDUCTION" if remainder < 0 else "CONTRIBUTION", remainder, net, "derived_below_line", derived=True))
+            current = net
+        else:
+            delta = net - current
+            if abs(delta) > 1e-9:
+                steps.append(_bridge_step("Tax / Below-line", "DEDUCTION" if delta < 0 else "CONTRIBUTION", delta, net, "derived_final_bridge", derived=True))
+            current = net
+        steps.append(_bridge_step("Net Income" if net >= 0 else "Net Loss", "RESULT", net, net, "net_income"))
+    return steps
+
+
 def build_income_statement_flow(row: dict[str, Any]) -> dict[str, Any]:
     rev = n(row.get("revenue"))
     cogs = n(row.get("cogs"))
@@ -70,9 +143,9 @@ def build_income_statement_flow(row: dict[str, Any]) -> dict[str, Any]:
     if rev is None or rev <= 0:
         warnings.append("Positive Revenue is unavailable; a Revenue-to-Net bridge cannot be drawn reliably.")
         return {
-            "flow_type": "INCOME_STATEMENT", "period": period, "edges": [], "nodes": [], "statement_chain": [],
-            "signed_exceptions": [], "derived": derived, "reconciliations": reconciliations,
-            "warnings": warnings, "calculation_version": FLOW_VERSION,
+            "flow_type": "INCOME_STATEMENT", "period": period, "presentation": "WATERFALL", "bridge_steps": [],
+            "edges": [], "nodes": [], "statement_chain": [], "signed_exceptions": [], "derived": derived,
+            "reconciliations": reconciliations, "warnings": warnings, "calculation_version": FLOW_VERSION,
         }
 
     nodes.append(_node("Revenue", rev, "ANCHOR", 0, "revenue")); chain.append("Revenue")
@@ -178,6 +251,8 @@ def build_income_statement_flow(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "flow_type": "INCOME_STATEMENT",
         "period": period,
+        "presentation": "WATERFALL",
+        "bridge_steps": _income_bridge_steps(rev, cogs, gp, op_inc, pretax, tax, net),
         "edges": [x for x in edges if x],
         "nodes": nodes,
         "statement_chain": chain,
