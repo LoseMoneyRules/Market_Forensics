@@ -288,6 +288,21 @@ def test_027_command_center_and_settings_contract():
     assert "font-weight:400" in css
 
 
+def test_027_evidence_diagnostic_is_consolidated_and_weighted():
+    template = Path("mfapp/templates/company_section.html").read_text()
+    css = Path("mfapp/static/css/app.css").read_text()
+
+    assert "Weighted support / opposition" not in template
+    assert "Positive threshold" not in template
+    assert "Negative threshold" not in template
+    assert "Diagnostic score" in template
+    assert "sum of visible weights" in template
+    assert "s.weight" in template
+    assert "evidence-weight positive" in template
+    assert "evidence-weight negative" in template
+    assert ".evidence-score-compact" in css
+
+
 def test_027_version_and_state_are_locked():
     assert Path("VERSION").read_text().strip() == "0.2.7"
     state = Path("docs/CURRENT_STATE.md").read_text()
