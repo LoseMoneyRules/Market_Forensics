@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, url_for
 
 from .access import audit, effective_role, require_control_view
@@ -7,7 +12,7 @@ from .core_models import Company, Coverage, InvestmentState, Job, Position, Publ
 from .data_providers import latest_snapshot, provider_overview, provider_status, set_secret
 from .extensions import db
 from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
-from .jobs import enqueue_job, run_jobs
+from .jobs import enqueue_job
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
 from .reporting import get_report_branding, render_discovery_pdf, render_docx, render_pdf, research_report_data, set_report_branding
@@ -32,6 +37,33 @@ def _queue_status(user_id: int) -> dict:
         "last_finished_at": finished.finished_at.isoformat() if finished and finished.finished_at else None,
         "executor": "cron",
     }
+
+
+def _spawn_job_runner(user_id: int) -> int:
+    """Start one queue consumer outside the Passenger request.
+
+    The CLI owns a cross-process lock, so cron, multiple tabs and repeated kicks
+    cannot execute the same queue concurrently.
+    """
+    root = Path(current_app.root_path).resolve().parent
+    manage = root / "manage.py"
+    if not manage.exists():
+        raise RuntimeError("manage.py not found for background executor")
+    command = [
+        sys.executable, str(manage), "run-jobs",
+        "--limit", "1", "--user-id", str(int(user_id)),
+    ]
+    proc = subprocess.Popen(
+        command,
+        cwd=str(root),
+        env=os.environ.copy(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        start_new_session=True,
+    )
+    return int(proc.pid)
 
 
 def _job_flash(job: Job) -> str:
@@ -232,9 +264,16 @@ def job_status():
 def pump_jobs():
     require_control_view()
     before = _queue_status(g.user.id)
-    processed = run_jobs(limit=1, user_id=g.user.id) if before["due"] or before["running"] else []
-    after = _queue_status(g.user.id)
-    return jsonify({"processed": processed, **after})
+    if not before["due"]:
+        return jsonify({"spawned": False, "reason": "NO_DUE_JOBS", **before})
+    if before["running"]:
+        return jsonify({"spawned": False, "reason": "EXECUTOR_ACTIVE", **before})
+    try:
+        pid = _spawn_job_runner(g.user.id)
+    except Exception as exc:
+        current_app.logger.exception("Unable to start Market Forensics background job executor")
+        return jsonify({"spawned": False, "reason": "SPAWN_FAILED", "error": type(exc).__name__, **before}), 503
+    return jsonify({"spawned": True, "pid": pid, "executor": "detached-cli", **before}), 202
 
 
 @bp.get("/settings")
