@@ -37,46 +37,56 @@
         <strong>Guardrails</strong>
         <span>Unknown Long ≥ ${{ '%.0f'|format(market_scan.guardrails.get('min_long_price',5)) }}</span>
         <span>Unknown Short ≥ ${{ '%.0f'|format(market_scan.guardrails.get('min_short_price',10)) }}</span>
-        <span>Dollar volume ≥ ${{ '%.0f'|format((market_scan.guardrails.get('min_dollar_volume',25000000)|float)/1000000) }}M when available</span>
-        <span>No unknown name gets a fake target</span>
+        <span>Dollar volume ≥ ${{ '%.0f'|format((market_scan.guardrails.get('min_dollar_volume',50000000)|float)/1000000) }}M</span>
+        <span>Major US exchange + active/tradable</span>
+        <span>Short must be shortable</span>
+        <span>No quota · no fake targets</span>
       </div>
 
       <div class="discovery-side-grid">
         <section class="discovery-side long-side">
-          <div class="discovery-side-head"><div><p class="eyebrow">LONG RADAR</p><h3>Best downside dislocations / value gaps</h3></div><span class="status-chip" data-status-value="LONG">{{ market_scan.long_count }}</span></div>
-          <div class="discovery-priority-list">
-            {% for item in market_scan.long_candidates[:16] %}
-            <article class="discovery-priority-card">
-              <div class="discovery-priority-top"><div><span class="priority-badge priority-{{ item.priority|lower }}">{{ item.priority }}</span><strong>{{ item.ticker }}</strong></div><span class="status-chip">{{ item.radar_label }}</span></div>
-              <div class="discovery-card-metrics">
-                <span>Price <strong>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</strong></span>
-                <span>Move <strong>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}%{% else %}—{% endif %}</strong></span>
-                <span>Base gap <strong>{% if item.base_gap_pct is not none %}{{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Unknown{% endif %}</strong></span>
+          <div class="discovery-side-head"><div><p class="eyebrow">LONG RADAR</p><h3>Qualified research leads</h3></div><span class="status-chip" data-status-value="LONG">{{ market_scan.long_count }}</span></div>
+          <div class="discovery-list">
+            {% for item in market_scan.long_candidates %}
+            <div class="discovery-list-row">
+              <div class="discovery-list-main">
+                <div class="discovery-list-title"><span class="priority-badge priority-{{ item.priority|lower }}">{{ item.priority }}</span><strong>{{ item.ticker }}</strong><span>{{ item.name }}</span></div>
+                <div class="discovery-list-metrics">
+                  <span>{{ item.exchange }}</span>
+                  <span>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
+                  <span>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}% day{% else %}move —{% endif %}</span>
+                  <span>{% if item.base_gap_pct is not none %}Base {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Base unknown{% endif %}</span>
+                </div>
+                <div class="discovery-list-reason"><strong>{{ item.priority_reason }}</strong><span>{{ item.radar_label }} · {{ item.target_status }}</span></div>
               </div>
-              <p class="discovery-priority-reason">{{ item.priority_reason }} · {{ item.target_status }}</p>
-              <div class="discovery-why">{% for reason in item.why_found[:3] %}<span>{{ reason }}</span>{% endfor %}</div>
-              <div class="discovery-card-action">{% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Open Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}</div>
-            </article>
-            {% else %}<div class="empty-state compact"><h3>No qualified Long lead</h3><p>The scan did not find a Long candidate that passed current guardrails.</p></div>{% endfor %}
+              <div class="discovery-list-action">
+                {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
+              </div>
+            </div>
+            {% else %}<div class="empty-state compact"><h3>No qualified Long lead</h3><p>The engine does not fill the list with weak names.</p></div>{% endfor %}
           </div>
         </section>
 
         <section class="discovery-side short-side">
-          <div class="discovery-side-head"><div><p class="eyebrow">SHORT RADAR</p><h3>Best overvaluation / upside overextension leads</h3></div><span class="status-chip" data-status-value="SHORT">{{ market_scan.short_count }}</span></div>
-          <div class="discovery-priority-list">
-            {% for item in market_scan.short_candidates[:16] %}
-            <article class="discovery-priority-card">
-              <div class="discovery-priority-top"><div><span class="priority-badge priority-{{ item.priority|lower }}">{{ item.priority }}</span><strong>{{ item.ticker }}</strong></div><span class="status-chip">{{ item.radar_label }}</span></div>
-              <div class="discovery-card-metrics">
-                <span>Price <strong>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</strong></span>
-                <span>Move <strong>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}%{% else %}—{% endif %}</strong></span>
-                <span>Base gap <strong>{% if item.base_gap_pct is not none %}{{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Unknown{% endif %}</strong></span>
+          <div class="discovery-side-head"><div><p class="eyebrow">SHORT RADAR</p><h3>Qualified research leads</h3></div><span class="status-chip" data-status-value="SHORT">{{ market_scan.short_count }}</span></div>
+          <div class="discovery-list">
+            {% for item in market_scan.short_candidates %}
+            <div class="discovery-list-row">
+              <div class="discovery-list-main">
+                <div class="discovery-list-title"><span class="priority-badge priority-{{ item.priority|lower }}">{{ item.priority }}</span><strong>{{ item.ticker }}</strong><span>{{ item.name }}</span></div>
+                <div class="discovery-list-metrics">
+                  <span>{{ item.exchange }}</span>
+                  <span>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
+                  <span>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}% day{% else %}move —{% endif %}</span>
+                  <span>{% if item.base_gap_pct is not none %}Base {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Base unknown{% endif %}</span>
+                </div>
+                <div class="discovery-list-reason"><strong>{{ item.priority_reason }}</strong><span>{{ item.radar_label }} · {{ item.target_status }}</span></div>
               </div>
-              <p class="discovery-priority-reason">{{ item.priority_reason }} · {{ item.target_status }}</p>
-              <div class="discovery-why">{% for reason in item.why_found[:3] %}<span>{{ reason }}</span>{% endfor %}</div>
-              <div class="discovery-card-action">{% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Open Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}</div>
-            </article>
-            {% else %}<div class="empty-state compact"><h3>No qualified Short lead</h3><p>Low-price and weak-liquidity movers are deliberately filtered out.</p></div>{% endfor %}
+              <div class="discovery-list-action">
+                {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
+              </div>
+            </div>
+            {% else %}<div class="empty-state compact"><h3>No qualified Short lead</h3><p>Inactive, non-shortable, penny and weak-liquidity names are filtered rather than displayed.</p></div>{% endfor %}
           </div>
         </section>
       </div>
