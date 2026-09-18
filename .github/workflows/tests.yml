@@ -20,6 +20,16 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Python syntax check
         run: python -m compileall -q app.py manage.py mfapp tests
+      - name: Workflow YAML validation
+        run: |
+          python - <<'PY'
+          import yaml
+          for path in (".github/workflows/tests.yml", ".github/workflows/deploy-namecheap.yml"):
+              with open(path, "r", encoding="utf-8") as handle:
+                  data = yaml.safe_load(handle)
+              assert isinstance(data, dict) and ("jobs" in data), path
+              print(path, "ok")
+          PY
       - name: JavaScript syntax check
         run: |
           node --check mfapp/static/js/app.js
