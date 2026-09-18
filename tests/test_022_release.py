@@ -168,8 +168,8 @@ def test_022_workflows_never_hardcode_release_version():
 
 
 def test_022_release_identity_and_state_contract():
-    assert Path("VERSION").read_text().strip() == "0.2.2"
+    version = Path("VERSION").read_text().strip()
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert "**State-Version: 0.2.2**" in state
+    assert f"**State-Version: {version}**" in state
     assert "non-disruptive" in state.lower()
     assert "LONG / SHORT" in state

@@ -5,16 +5,9 @@
 {% macro pct(v) %}{% if v is not none %}{{ '%+.1f'|format(v|float) }}%{% else %}—{% endif %}{% endmacro %}
 {% block content %}
 <section class="page company-page">
-  <div class="company-head">
-    <div>
-      <div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>{{ security.exchange or 'Validated security' }}</span></div>
-      <h1>{{ company.display_name }}</h1>
-      <div class="company-states"><span>Research <strong>{{ coverage.research_state }}</strong></span><span>Coverage <strong>{{ coverage.status }}</strong></span><span>Process <strong>{{ readiness.done }}/{{ readiness.total }} approved</strong></span></div>
-    </div>
-    <div class="company-actions">
-      <div class="company-market"><span>Current price · refreshes every 5 min</span><strong data-live-price>{% if market %}${{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</strong><small data-live-price-meta>{% if market %}<i class="live-dot"></i>{{ market.provider }} · {{ market.as_of.strftime('%Y-%m-%d %H:%M') }}{% else %}<i class="live-dot stale"></i>No stored quote{% endif %}</small></div>
-    </div>
-  </div>
+  {% set company_header_context = security.exchange or 'Validated security' %}
+  {% set company_header_states = [('Research', coverage.research_state), ('Coverage', coverage.status), ('Process', readiness.done ~ '/' ~ readiness.total ~ ' approved')] %}
+  {% include "_company_header.html" %}
   {% set section=section %}{% include "_research_tabs.html" %}
 
   {% if section == 'overview' %}
@@ -77,15 +70,8 @@
         <div class="form-grid three"><label>Narrative fitting<textarea name="narrative_fit_notes" rows="3">{{ research.narrative_fit_notes|clean_auto }}</textarea></label><label>Confirmation bias<textarea name="confirmation_bias_notes" rows="3">{{ research.confirmation_bias_notes|clean_auto }}</textarea></label><label>Thesis drift<textarea name="thesis_drift_notes" rows="3">{{ research.thesis_drift_notes|clean_auto }}</textarea></label></div>
       </form>
       <div class="stack-gap">
-        <div class="panel process-readiness"><div class="panel-head"><div><p class="eyebrow">RESEARCH CONTROL</p><h2>Process readiness</h2><p class="muted">Evidence can be ready automatically. A gate remains pending until you approve the current evidence snapshot.</p></div><strong>{{ readiness.done }}/{{ readiness.total }}</strong></div>
-          {% if readiness.ready_to_validate %}<div class="notice teal ready-to-validate"><strong>READY TO VALIDATE.</strong> Research gates are current and approved. <a class="button micro primary" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>{% endif %}
-          {% for gate in readiness.gates %}<div class="gate-row"><span>{{ gate.label }}</span><strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}</strong><form method="post" action="{{ url_for('web.approve_research_gate', ticker=security.ticker, gate_key=gate.key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% if gate.approved %}<input type="hidden" name="action" value="revoke"><button class="button micro" type="submit">Reopen</button>{% elif gate.evidence_ready %}<button class="button micro primary" type="submit">Approve</button>{% else %}<span class="muted">—</span>{% endif %}</form></div>{% endfor %}
-          <div class="publish-readiness {{ 'ready' if readiness.ready_to_validate else 'pending' }}">
-            <div><strong>Publish research</strong><small>{{ 'All required Research gates are approved. Publication preview is available.' if readiness.ready_to_validate else 'Complete and approve every required Research gate to enable publishing.' }}</small></div>
-            <form method="post" action="{{ url_for('web.snapshot_company', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit" {% if not readiness.ready_to_validate %}disabled aria-disabled="true"{% endif %}>Publish</button></form>
-          </div>
-        </div>
-        <div class="panel"><div class="panel-head"><h2>Evidence signals</h2></div>{% for signal in intelligence.signals[:8] %}<div class="list-row"><div><strong>{{ signal.label }}</strong><p>{{ signal.detail }}</p></div><span class="status-chip">{{ signal.tone|upper }}</span></div>{% else %}<p class="muted">Refresh SEC and market evidence to populate signals.</p>{% endfor %}</div>
+        {% include "_process_readiness.html" %}
+                <div class="panel"><div class="panel-head"><h2>Evidence signals</h2></div>{% for signal in intelligence.signals[:8] %}<div class="list-row"><div><strong>{{ signal.label }}</strong><p>{{ signal.detail }}</p></div><span class="status-chip">{{ signal.tone|upper }}</span></div>{% else %}<p class="muted">Refresh SEC and market evidence to populate signals.</p>{% endfor %}</div>
       </div>
     </div>
 

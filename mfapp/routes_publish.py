@@ -21,6 +21,24 @@ from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
 
 
+def _job_target_map(jobs: list[Job]) -> dict[int, dict]:
+    security_ids = {int(job.security_id) for job in jobs if job.security_id}
+    company_ids = {int(job.company_id) for job in jobs if job.company_id}
+    securities = {row.id: row for row in Security.query.filter(Security.id.in_(security_ids)).all()} if security_ids else {}
+    companies = {row.id: row for row in Company.query.filter(Company.id.in_(company_ids)).all()} if company_ids else {}
+    out = {}
+    for job in jobs:
+        security = securities.get(job.security_id)
+        company = companies.get(job.company_id)
+        if security is not None:
+            out[job.id] = {"label": str(security.ticker).upper(), "ticker": str(security.ticker).upper(), "scope": "SECURITY"}
+        elif company is not None:
+            out[job.id] = {"label": company.display_name or company.legal_name or f"Company #{company.id}", "ticker": None, "scope": "COMPANY"}
+        else:
+            out[job.id] = {"label": "GLOBAL", "ticker": None, "scope": "GLOBAL"}
+    return out
+
+
 def _queue_status(user_id: int) -> dict:
     # Status checks also recover dead leases, so a dead worker cannot block the
     # browser fallback forever while the UI still says RUNNING.
@@ -35,11 +53,24 @@ def _queue_status(user_id: int) -> dict:
         Job.status.in_(["DONE", "FAILED", "CANCELLED"]),
         Job.finished_at.is_not(None),
     ).order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    active = Job.query.filter(
+        Job.user_id == user_id, Job.status.in_(["QUEUED", "RUNNING"])
+    ).order_by(Job.status.desc(), Job.priority.asc(), Job.id.asc()).limit(12).all()
+    targets = _job_target_map(active)
+    active_jobs = [{
+        "id": job.id,
+        "type": job.job_type,
+        "status": job.status,
+        "target": targets[job.id]["label"],
+        "scope": targets[job.id]["scope"],
+        "ticker": targets[job.id]["ticker"],
+    } for job in active]
     return {
         "due": due, "queued": queued, "running": running, "failed": failed, "cancelled": cancelled,
         "recovered_stale": recovered,
         "last_finished_id": finished.id if finished else None,
         "last_finished_at": finished.finished_at.isoformat() if finished and finished.finished_at else None,
+        "active_jobs": active_jobs,
         "executor": "cron+browser-fallback",
     }
 
@@ -180,7 +211,7 @@ def discovery_report():
     stream = render_discovery_pdf(scan, branding)
     audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
     db.session.commit()
-    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.2.pdf", max_age=0)
+    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.3.pdf", max_age=0)
 
 
 @bp.get("/company/<ticker>/report/<fmt>")
@@ -192,7 +223,7 @@ def research_report(ticker, fmt):
     branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
     data = research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
-    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.2"
+    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.3"
     if fmt == "docx":
         stream = render_docx(data)
         mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -239,14 +270,14 @@ def queue_refresh(ticker, kind):
     require_control_view(); ctx = _ctx(ticker)
     mapping = {
         "market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE",
-        "prefill": "RESEARCH_PREFILL", "finra": "FINRA_IMPORT", "validate": "DEEP_VALIDATION",
+        "prefill": "RESEARCH_PREFILL", "finra": "FINRA_IMPORT", "prices": "PRICE_HISTORY_REFRESH", "validate": "DEEP_VALIDATION",
         "management": "MANAGEMENT_SCAN", "positioning": "POSITIONING_REFRESH",
     }
     job_type = mapping.get(kind)
     if not job_type: abort(404)
-    priorities = {"market": 10, "sec": 30, "recalculate": 45, "prefill": 50, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
+    priorities = {"market": 10, "sec": 30, "prices": 35, "recalculate": 45, "prefill": 50, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
-                      payload={"coverage_id": ctx["coverage"].id}, priority=priorities.get(kind, 50))
+                      payload={"coverage_id": ctx["coverage"].id, **({"lookback_years": 3} if kind == "prices" else {})}, priority=priorities.get(kind, 50))
     audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
@@ -312,12 +343,15 @@ def settings():
     require_control_view()
     queue_status = _queue_status(g.user.id)
     jobs = Job.query.filter_by(user_id=g.user.id).order_by(Job.created_at.desc()).limit(50).all()
+    job_targets = _job_target_map(jobs)
+    job_items = [{"job": job, "target": job_targets[job.id]} for job in jobs]
     refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
     return render_template(
         "settings.html",
         providers=provider_status(g.user.id),
         provider_catalog=provider_overview(g.user.id),
         jobs=jobs,
+        job_items=job_items,
         refreshes=refreshes,
         queue_status=queue_status,
         number_formats=NUMBER_FORMATS,

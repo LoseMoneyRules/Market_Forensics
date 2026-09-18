@@ -6,17 +6,17 @@
 > It MUST be updated in the same pull request whenever VERSION, architecture, deployment state,
 > release gates, job execution, or a material product workflow changes.
 
-**State-Version: 0.2.2**  
+**State-Version: 0.2.3**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → heavy jobs in background → cached results → non-disruptive live updates / user-controlled full refresh  
-**Last release family:** 0.2.2 candidate
+**Last release family:** 0.2.3 candidate
 
 ---
 
 ## 1. Current release objective
 
-0.2.0 remains the clean web-native architectural baseline. 0.2.2 is a regression-closure and research-surface refinement release. It fixes the MARKET_REFRESH/reload loop, restores two-sided transparent Discovery, simplifies the Research Command Center, repairs dark-mode analytical values and Valuation chart fallback behavior, normalizes Financial Flows typography, and restores the intended Tape / Flows historical positioning view. It does not reopen the MariaDB, security/auth, Research/Portfolio separation, valuation engine, expectations engine or background-job architecture.
+0.2.0 remains the clean web-native architectural baseline. 0.2.3 is a reliability and interaction-closure release built cleanly on that architecture. It keeps the 0.2.2 market-refresh protections and closes remaining web regressions: Command Center sizing, compact Financial Flows, fail-safe-but-visible Discovery errors, automatic ticker-specific historical-price backfill, one canonical company ticker/price header, explicit job targets, clear Validate semantics, and immediate Process Readiness state changes. It does not reopen MariaDB, security/auth, Research/Portfolio separation, valuation mathematics, expectations logic or the background-job architecture.
 
 Product flow:
 
@@ -48,11 +48,11 @@ Do NOT reset or delete:
 GitHub `main` is NOT automatically production.
 Production changes only after the manual Namecheap deployment workflow succeeds.
 
-The repository does not infer the currently deployed Namecheap version. 0.2.2 is not LIVE until the manual Namecheap workflow succeeds and external health returns:
+The repository does not infer the currently deployed Namecheap version. 0.2.3 is not LIVE until the manual Namecheap workflow succeeds and external health returns:
 
 - HTTP 200
 - `status = ok`
-- `version = 0.2.2`
+- `version = 0.2.3`
 - `architecture = web-native`
 
 A failed candidate health check must roll back automatically.
@@ -88,10 +88,9 @@ Normal pages read:
 
 When a cache is missing, the page renders immediately with an UPDATING state and queues work.
 
-When a background job finishes:
+When a background job finishes, the browser updates lightweight live fields where possible and offers a user-controlled full refresh. It MUST NOT force a full-page reload or flash while the user is working.
 
-- if the user is not editing a form, the data page refreshes automatically;
-- if a form is dirty, the UI offers a safe refresh instead of losing edits.
+Lightweight CONTROL mutations that only change application state — for example Process Readiness Approve/Reopen — execute synchronously and update the visible UI immediately. They are not background jobs. External-network, bulk-data and analytical computation remain background work.
 
 This performance model is a release gate and has automated tests.
 
@@ -111,7 +110,7 @@ Minimum acceptable cadence for the five-minute quote freshness objective:
 
 **every 5 minutes**
 
-0.2.0 includes a CONTROL browser fallback, retained unchanged in principle by 0.2.2:
+0.2.0 includes a CONTROL browser fallback, retained unchanged in principle by 0.2.3:
 
 - the browser observes queue status;
 - if jobs are due and no executor is RUNNING, it calls `/jobs/pump`;
@@ -121,7 +120,7 @@ Minimum acceptable cadence for the five-minute quote freshness objective:
 
 Queued jobs must therefore progress even if cron is missing/late while CONTROL is open, without sacrificing page responsiveness.
 
-0.2.2 hardens job operations without changing that architecture:
+0.2.3 retains the hardened job operations and makes job scope explicit:
 
 - Recent Jobs exposes clear QUEUED / RUNNING / DONE / FAILED / CANCELLED states;
 - CONTROL may cancel QUEUED or RUNNING jobs;
@@ -129,7 +128,9 @@ Queued jobs must therefore progress even if cron is missing/late while CONTROL i
 - RUNNING jobs carry an executor identity for best-effort verified termination;
 - DISCOVERY_SCAN has a short lease in addition to its 90-second hard execution deadline;
 - stale RUNNING attempts are closed cleanly and retry or fail according to max attempts;
-- queue/lock cleanup must prevent a dead process from leaving a job RUNNING forever.
+- queue/lock cleanup must prevent a dead process from leaving a job RUNNING forever;
+- every visible job identifies its target as a ticker, a company, or **GLOBAL**;
+- ticker-specific historical market backfill runs as `PRICE_HISTORY_REFRESH`; simple Research gate toggles never enter the queue.
 
 ---
 
@@ -172,7 +173,7 @@ It performs:
 
 For names with an existing Research cache, stored Base-gap evidence controls target-room classification: material positive Base gap can enter LONG radar, material negative Base gap can enter SHORT radar, and names within ±7.5% of stored Base are demoted to **NO EDGE · AT / NEAR BASE**. For names without stored Research valuation, a large move may create only a LONG LEAD or SHORT LEAD; Discovery must say **TARGET UNKNOWN** and explain why the candidate was found.
 
-Discovery always exposes the reason (market mover, activity rank, stored Base gap, or required deep-research check). It does NOT run per-symbol SEC, valuation or fundamentals for the whole market and never invents a target for an unknown name.
+Discovery always exposes the reason (market mover, activity rank, stored Base gap, or required deep-research check). It does NOT run per-symbol SEC, valuation or fundamentals for the whole market and never invents a target for an unknown name. Provider/search failures and malformed old scan payloads must not turn the Discovery page into a generic 500: the page stays usable and shows the explicit failed job/provider condition without inventing fallback candidates.
 
 Expected runtime:
 
@@ -193,14 +194,17 @@ Canonical Research sequence:
 
 Overview is the single-company cockpit.
 
-0.2.2 Research-surface rules:
-- Research Command Center shows Price, **Base** and Base gap; Bear/Bull are not repeated in the coverage table.
+0.2.3 Research-surface rules:
+- Research Command Center shows Price, **Base** and Base gap; Bear/Bull are not repeated in the coverage table. Desktop column headings remain on one line, column widths follow content/title needs, and Manage collapses to the action-button width.
 - Command Center KPI blocks stay on one desktop row; Exceptions identify the ticker and use normal readable type.
 - Research Conclusion remains dominant but its desktop block is compact rather than occupying the majority of the strip.
-- Valuation historical chart must never render as an unexplained blank: when historical price cache is absent it still shows the current reference against available Bear/Base/Bull levels and states that history is pending.
+- Valuation historical chart must never render as an unexplained blank. A missing or incomplete two-year price cache automatically queues one ticker-scoped `PRICE_HISTORY_REFRESH` with cooldown protection, exposes stored row/span/provider/job status, and still shows current Bear/Base/Bull references while backfill is pending.
 - Tape / Flows restores two explicit historical views: **Price + FINRA Short Interest** on the same 6M/12M chart, plus a separate **FINRA Daily Short Volume %** chart. Tape context never substitutes for intrinsic value.
-- Financial Flows keeps the 0.2.1 accounting/layout logic; hidden-tab SVG text is re-rendered and scale-normalized so Cash Flow typography matches Income Statement.
+- Financial Flows keeps the stabilized accounting logic; hidden-tab SVG text is re-rendered and scale-normalized, and diagram/container geometry is compact enough to match the actual content instead of leaving oversized empty boxes.
 - Dark mode analytical values (including evidence thresholds and MODEL INPUT BASIS) must use theme tokens with readable contrast.
+- Company-detail surfaces use one canonical ticker/company/current-price/provider/timestamp header across Research sections, Valuation, Financial Flows, Validate and Portfolio security.
+- Process Readiness Approve/Reopen updates immediately in-place and patches cached readiness synchronously; it does not enqueue RECALCULATE just to change a button.
+- Command Center **Validate** means the latest point-in-time walk-forward validation state, while **Process** means approved Research gates.
 
 Canonical analytical lenses:
 
@@ -294,6 +298,7 @@ Never publish:
 - institutional blue theme
 - centralized semantic status colors: positive green, negative red, caution/neutral amber or gray, informational blue
 - purpose-built light and dark themes
+- one canonical company-detail ticker/price header component
 - responsive tables/charts/forms
 - Financial Flows readable on desktop and mobile without falsifying negative values
 - footer: Lose Money Rules
@@ -309,7 +314,7 @@ Before merge:
 1. Python syntax
 2. JavaScript syntax
 3. workflow YAML validation
-4. complete 0.2.0 release/parity suite plus 0.2.1 and 0.2.2 regression contracts
+4. complete 0.2.0 release/parity suite plus 0.2.1, 0.2.2 and 0.2.3 regression contracts
 5. production-minimal startup smoke
 6. fast cached-navigation contract
 7. real RECALCULATE → Research cache test
@@ -322,38 +327,44 @@ Before merge:
 14. two-sided Discovery / target-room transparency contract
 15. Command Center Base-only / ticker Exceptions contract
 16. Valuation fallback chart, Tape combined positioning and Cash Flow typography contracts
+17. Command Center one-line headers / compact Manage contract
+18. Discovery request resilience and explicit-error contract
+19. ticker-scoped historical-price backfill / coverage-diagnostic contract
+20. canonical company ticker/price header contract
+21. job target ticker/company/GLOBAL contract
+22. synchronous Process Readiness interaction / no-simple-job contract
 
 After merge:
 
-17. main CI green
+23. main CI green
 
 Production:
 
-18. manual Namecheap deploy
-19. candidate /health HTTP 200
-20. version 0.2.2
-21. architecture web-native
-22. rollback automatically if candidate fails
+24. manual Namecheap deploy
+25. candidate /health HTTP 200
+26. version 0.2.3
+27. architecture web-native
+28. rollback automatically if candidate fails
 
-Only after step 21 succeeds is 0.2.2 considered LIVE. Until then, the deployed version must be treated as the last externally verified healthy release.
+Only after step 27 succeeds is 0.2.3 considered LIVE. Until then, the deployed version must be treated as the last externally verified healthy release.
 
 ---
 
 ## 12. Current development note
 
-0.2.2 is currently a release candidate, not production.
+0.2.3 is currently a release candidate, not production.
 
-Its scope is deliberately limited to:
+Its scope is deliberately limited to closing the remaining web interaction and visibility regressions without changing the analytical thesis model:
 
-- stop repeated MARKET_REFRESH enqueueing and full-page job-completion flashing;
-- make Discovery genuinely two-sided and explain candidate/target-room logic;
-- simplify Research Command Center to Base-only scenario visibility and ticker-aware readable Exceptions;
-- reduce Research Conclusion width without reducing type size;
-- fix dark-mode analytical-value contrast;
-- normalize Cash Flow typography without changing Financial Flows accounting logic;
-- guarantee a useful Valuation chart even before historical prices are cached;
-- restore Tape / Flows price-versus-Short-Interest history plus separate Daily Short Volume;
-- preserve the stabilized mobile navigation, security, MariaDB, publication and fast-navigation contracts.
+- keep every Research Command Center title on one line and make Manage action-width;
+- compact Financial Flows containers while preserving accounting and readable typography;
+- make Discovery survive provider/stored-payload failures with explicit visible errors;
+- detect missing/incomplete ticker price history, queue a bounded 3Y backfill, and expose its audit status in Valuation;
+- use one company ticker/current-price header everywhere a company detail surface shows that identity;
+- label jobs with ticker, company or GLOBAL scope;
+- define Validate as point-in-time walk-forward status, distinct from Process readiness;
+- make Process Readiness Approve/Reopen synchronous and immediately visible, with no unnecessary RECALCULATE job;
+- preserve 0.2.2 MARKET_REFRESH cooldown/non-disruptive completion, stabilized Tape, dark-mode, security, MariaDB, publication and fast-navigation contracts.
 
 Before telling the user to deploy, verify PR CI green, merge to main, verify post-merge main CI green, and only then run the manual Namecheap deployment workflow.
 
@@ -381,6 +392,6 @@ If VERSION changes and **State-Version** does not match, CI must fail.
 
 Detailed release-specific audit remains in:
 
-`docs/RELEASE_0_2_0.md` remains the 0.2.0 baseline audit. 0.2.2 release evidence belongs in its release PR/tests and any dedicated 0.2.2 audit added before FINAL.
+`docs/RELEASE_0_2_0.md` remains the 0.2.0 baseline audit. 0.2.3 release evidence belongs in its release PR/tests and any dedicated 0.2.3 audit added before FINAL.
 
 This file is the concise handoff; release audit documents provide the deeper evidence.

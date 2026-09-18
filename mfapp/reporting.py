@@ -447,7 +447,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = title.add_run(f"{data['ticker']} · {data['company']}")
     run.bold = True; run.font.size = Pt(20)
-    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.2 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.3 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     p = doc.add_paragraph(subtitle)
@@ -555,7 +555,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
             doc.add_paragraph(f"{row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}", style="List Bullet")
 
     footer=doc.sections[0].footer.paragraphs[0]
-    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'} 0.2.2"
+    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'} 0.2.3"
     footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
 
     out=BytesIO(); doc.save(out); out.seek(0); return out
@@ -575,7 +575,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     logo = _safe_logo(str(brand.get("logo_url") or ""))
     if logo:
         story += [RLImage(logo, width=1.1*inch, height=.38*inch), Spacer(1,4)]
-    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.2 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.3 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     story += [Paragraph(f"{data['ticker']} · {data['company']}",styles["MFTitle"]),

@@ -19,6 +19,7 @@ from .core_models import (
 from .data_providers import latest_snapshot, provider_status, refresh_security_quote
 from .extensions import db
 from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
+from .historical_data import refresh_historical_prices
 from .historical_engine import run_historical_test
 from .management_promises import extract_promises, html_to_text, store_promises
 from .market_discovery import market_scan
@@ -504,6 +505,10 @@ def _execute(job: Job) -> dict[str, Any]:
         if not result.ok: raise RuntimeError(result.message or "Market refresh failed")
         recalc_job_id = _queue_recalculate_after_evidence(job, security, coverage_id)
         return {"provider": result.provider, "price": result.price, "quality": result.quality, "as_of": result.as_of.isoformat() if result.as_of else None, "evidence": result.payload or {}, "recalculate_job_id": recalc_job_id}
+    if kind == "PRICE_HISTORY_REFRESH":
+        if not security: raise RuntimeError("Security not found")
+        lookback_years = max(2, min(int((job.payload or {}).get("lookback_years") or 3), 10))
+        return refresh_historical_prices(security, job.user_id, lookback_years)
     if kind == "SEC_INGEST":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")

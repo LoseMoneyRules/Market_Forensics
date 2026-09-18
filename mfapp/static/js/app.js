@@ -274,6 +274,39 @@
   }
   applySemanticStatuses();
 
+  // Lightweight Research Control mutations update immediately. These are simple
+  // database state changes, not background analytical jobs.
+  document.addEventListener('submit', async (event) => {
+    const form = event.target.closest?.('.gate-approval-form');
+    if (!form) return;
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    const prior = button?.textContent || '';
+    if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {Accept: 'application/json', 'X-CSRFToken': csrf},
+        body: new FormData(form),
+        cache: 'no-store'
+      });
+      if (!response.ok) throw new Error('gate '+response.status);
+      const payload = await response.json();
+      const current = document.querySelector('[data-process-readiness]');
+      if (!payload?.ok || !payload?.html || !current) throw new Error('gate response');
+      const shell = document.createElement('div');
+      shell.innerHTML = payload.html.trim();
+      const next = shell.firstElementChild;
+      if (!next) throw new Error('gate markup');
+      current.replaceWith(next);
+      applySemanticStatuses(next);
+      dirty = false;
+    } catch (_) {
+      if (button) { button.disabled = false; button.textContent = prior; }
+    }
+  });
+
   // CONTROL background-job observer + detached executor fallback.
   // Page requests stay fast: /jobs/pump only starts a separate CLI process and returns.
   const workerChip = document.getElementById('mf-worker-chip');
@@ -291,10 +324,16 @@
   function renderJobs(state){
     if(!workerChip)return;
     const queued=Number(state?.queued||0),running=Number(state?.running||0),failed=Number(state?.failed||0);
+    const active=Array.isArray(state?.active_jobs)?state.active_jobs:[];
+    const lead=active.find((row)=>row.status==='RUNNING')||active[0]||null;
+    const target=lead?.target?String(lead.target):'';
+    workerChip.title=active.length
+      ? active.slice(0,6).map((row)=>'#'+row.id+' '+row.type+' · '+row.target+' · '+row.status).join('\n')
+      : 'No active background jobs.';
     if(refreshOffered){workerChip.textContent='Data updated · refresh';workerChip.classList.add('job-updated');return}
     workerChip.classList.remove('job-updated');
-    if(running)workerChip.textContent='Jobs · running · '+queued+' queued';
-    else if(queued)workerChip.textContent='Jobs · starting · '+queued+' queued';
+    if(running)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · running · '+queued+' queued';
+    else if(queued)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · queued · '+queued;
     else if(failed)workerChip.textContent='Jobs · idle · '+failed+' failed';
     else workerChip.textContent='Jobs · idle';
   }

@@ -1,0 +1,18 @@
+<div class="company-head company-head-standard">
+  <div>
+    <div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>{{ company_header_context if company_header_context is defined else (security.exchange or 'Validated security') }}</span></div>
+    <h1>{{ company.display_name }}</h1>
+    {% if company_header_states is defined and company_header_states %}
+    <div class="company-states">
+      {% for item in company_header_states %}<span>{{ item[0] }} <strong>{{ item[1] }}</strong></span>{% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  <div class="company-actions">
+    <div class="company-market">
+      <span>Current price · refreshes every 5 min</span>
+      <strong data-live-price>{% if market %}${{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</strong>
+      <small data-live-price-meta>{% if market %}<i class="live-dot"></i>{{ market.provider }} · {{ market.as_of.strftime('%Y-%m-%d %H:%M') }}{% else %}<i class="live-dot stale"></i>No stored quote{% endif %}</small>
+    </div>
+  </div>
+</div>

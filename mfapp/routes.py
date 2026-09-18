@@ -403,16 +403,89 @@ def dashboard():
     return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts, alert_items=alert_items, cache_building=cache_building)
 
 
+def _normalized_market_scan(job: Job | None) -> dict:
+    def as_float(value, default=0.0):
+        try:
+            return float(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def as_int(value, default=0):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
+    raw_scan = raw_result.get("market_scan")
+    scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
+    raw_candidates = scan.get("candidates")
+    candidates = []
+    if isinstance(raw_candidates, list):
+        for raw in raw_candidates:
+            if not isinstance(raw, dict):
+                continue
+            ticker = str(raw.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+            row = dict(raw)
+            row.update({
+                "ticker": ticker,
+                "research_side": str(raw.get("research_side") or "RESEARCH"),
+                "scan_score": as_float(raw.get("scan_score"), 0.0),
+                "move_pct": raw.get("move_pct"),
+                "base_gap_pct": raw.get("base_gap_pct"),
+                "target_status": str(raw.get("target_status") or "TARGET UNKNOWN"),
+                "why_found": list(raw.get("why_found") or []) if isinstance(raw.get("why_found") or [], list) else [],
+                "lenses": list(raw.get("lenses") or []) if isinstance(raw.get("lenses") or [], list) else [],
+                "in_coverage": bool(raw.get("in_coverage")),
+            })
+            candidates.append(row)
+    errors = scan.get("errors")
+    scan["candidates"] = candidates
+    scan["errors"] = [str(x) for x in errors] if isinstance(errors, list) else ([] if not errors else [str(errors)])
+    scan["candidate_count"] = as_int(scan.get("candidate_count"), len(candidates))
+    scan["known_enriched"] = as_int(scan.get("known_enriched"), sum(1 for x in candidates if x.get("in_coverage")))
+    scan["long_count"] = as_int(scan.get("long_count"), sum(1 for x in candidates if str(x.get("research_side") or "").startswith("LONG")))
+    scan["short_count"] = as_int(scan.get("short_count"), sum(1 for x in candidates if str(x.get("research_side") or "").startswith("SHORT")))
+    scan["no_edge_count"] = as_int(scan.get("no_edge_count"), sum(1 for x in candidates if x.get("research_side") == "NO EDGE"))
+    return scan
+
+
 @bp.get("/discovery")
 @login_required
 def discovery():
     require_control_view()
     q = str(request.args.get("q") or "").strip().upper()
-    external = search_universe(q, g.user.id) if q else {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
-    latest_scan_job = Job.query.filter_by(user_id=g.user.id, job_type="DISCOVERY_SCAN", status="DONE").order_by(Job.finished_at.desc(), Job.id.desc()).first()
-    market_scan = dict(((latest_scan_job.result or {}).get("market_scan") or {}) if latest_scan_job else {})
+    external_error = ""
+    if q:
+        try:
+            external = search_universe(q, g.user.id)
+        except Exception as exc:
+            current_app.logger.exception("Discovery universe search failed")
+            external = {"query": q, "results": [], "outside_coverage": [], "covered_matches": [], "provider": "Unavailable"}
+            external_error = f"{type(exc).__name__}: provider search unavailable"
+    else:
+        external = {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
+
+    latest_scan_job = Job.query.filter_by(
+        user_id=g.user.id, job_type="DISCOVERY_SCAN", status="DONE"
+    ).order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    latest_scan_attempt = Job.query.filter_by(
+        user_id=g.user.id, job_type="DISCOVERY_SCAN"
+    ).order_by(Job.created_at.desc(), Job.id.desc()).first()
+    market_scan = _normalized_market_scan(latest_scan_job)
+    scan_failure = ""
+    if latest_scan_attempt and latest_scan_attempt.status == "FAILED":
+        done_is_older = latest_scan_job is None or latest_scan_attempt.id > latest_scan_job.id
+        if done_is_older:
+            scan_failure = f"Job #{latest_scan_attempt.id} failed: {latest_scan_attempt.error_message or 'provider scan failed'}"
     rows, cache_building = _cached_coverage_rows(g.user.id)
-    return render_template("discovery.html", rows=rows, q=q, external=external, market_scan=market_scan, market_scan_job=latest_scan_job, cache_building=cache_building)
+    return render_template(
+        "discovery.html", rows=rows, q=q, external=external, external_error=external_error,
+        market_scan=market_scan, market_scan_job=latest_scan_job, scan_failure=scan_failure,
+        cache_building=cache_building,
+    )
 
 
 @bp.post("/coverage")
