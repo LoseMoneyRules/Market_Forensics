@@ -36,6 +36,43 @@ jobs:
           python -m compileall -q app.py manage.py mfapp tests
           pytest -q
 
+      - name: Production-minimal startup smoke
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/mf-prod-min
+          /tmp/mf-prod-min/bin/pip install -q -r requirements.txt
+          MF_SECRET_KEY=test-secret-key \
+          MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+          /tmp/mf-prod-min/bin/python - <<'PY'
+          import tempfile
+          from mfapp import create_app
+          from mfapp.reporting import report_backend_status, render_docx, render_pdf
+
+          db = tempfile.NamedTemporaryFile(suffix='.db', delete=False).name
+          app = create_app({
+              'TESTING': True,
+              'AUTO_MIGRATE': True,
+              'SQLALCHEMY_DATABASE_URI': 'sqlite:///' + db,
+              'SECRET_KEY': 'deploy-prod-min',
+          })
+          health = app.test_client().get('/health')
+          assert health.status_code == 200, health.data
+          payload = health.get_json()
+          assert payload['status'] == 'ok' and payload['version'] == '0.2.0'
+          assert payload['reports'] == 'stdlib-fallback'
+          data = {
+              'branding':{'title':'Market Forensics','footer':'Lose Money Rules'},
+              'ticker':'TEST','company':'Production Smoke','action':'DATA REVIEW','stance':'UNVERIFIED',
+              'confidence':'UNVALIDATED','market_price':10,'bear':8,'base':12,'bull':15,'base_gap_pct':20,
+              'validation_state':'NOT RUN','decision_lenses':[],'thesis':'Smoke','counter_evidence':'',
+              'variant_market':'','variant_us':'','supporting':[],'opposing':[],'implied_expectations':{},
+              'mode':'executive','sources':[],
+          }
+          assert render_pdf(data).getvalue().startswith(b'%PDF-')
+          assert render_docx(data).getvalue().startswith(b'PK')
+          print(payload)
+          PY
+
       - name: Build production payload
         run: |
           set -euo pipefail
@@ -45,7 +82,7 @@ jobs:
           echo "Preparing Market Forensics $MF_RELEASE_VERSION"
           rm -rf .release-payload .production-backup .empty-cleanup
           mkdir -p .release-payload .production-backup .empty-cleanup
-          cp app.py manage.py requirements.txt VERSION .release-payload/
+          cp app.py manage.py requirements.txt requirements-reporting.txt VERSION .release-payload/
           cp -a mfapp .release-payload/
           find .release-payload -type d -name __pycache__ -prune -exec rm -rf {} +
           find .release-payload -type f -name '*.pyc' -delete
@@ -102,6 +139,14 @@ jobs:
           echo "MF_ROLLBACK_VERSION=$MF_ROLLBACK_VERSION" >> "$GITHUB_ENV"
           echo "Rollback target: $MF_ROLLBACK_VERSION"
 
+      - name: Confirm rollback baseline is healthy before swap
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health)"
+          echo "$body"
+          printf '%s' "$body" | grep -q '"status":"ok"'
+          printf '%s' "$body" | grep -q "\"version\":\"${MF_ROLLBACK_VERSION}\""
+
       - name: Upload release candidate and restart Passenger
         env:
           FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
@@ -125,6 +170,7 @@ jobs:
           put -O . .release-payload/app.py
           put -O . .release-payload/manage.py
           put -O . .release-payload/requirements.txt
+          put -O . .release-payload/requirements-reporting.txt
           put -O . .release-payload/VERSION
           put /tmp/restart.txt -o tmp/restart.txt
           bye
@@ -136,17 +182,49 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            body="$(curl -fsS --max-time 12 https://mf.losemoneyrules.com/health || true)"
-            if printf '%s' "$body" | grep -q '"status":"ok"' \
+            code="$(curl -sS --max-time 12 -o /tmp/mf-health-body.txt -w '%{http_code}' https://mf.losemoneyrules.com/health || true)"
+            body="$(cat /tmp/mf-health-body.txt 2>/dev/null || true)"
+            echo "health attempt $attempt: HTTP $code body=$body"
+            if [ "$code" = "200" ] \
+              && printf '%s' "$body" | grep -q '"status":"ok"' \
               && printf '%s' "$body" | grep -q "\"version\":\"${MF_RELEASE_VERSION}\"" \
               && printf '%s' "$body" | grep -q '"architecture":"web-native"'; then
-              echo "$body"
               exit 0
             fi
             sleep 6
           done
           echo "$MF_RELEASE_VERSION candidate health check failed."
           exit 1
+
+      - name: Capture candidate runtime diagnostics
+        if: steps.health.outcome == 'failure'
+        continue-on-error: true
+        env:
+          FTP_HOST: ${{ secrets.NAMECHEAP_FTP_HOST }}
+          FTP_USER: ${{ secrets.NAMECHEAP_FTP_USER }}
+          FTP_PASS: ${{ secrets.NAMECHEAP_FTP_PASSWORD }}
+        run: |
+          set -u
+          rm -rf /tmp/mf-prod-diag && mkdir -p /tmp/mf-prod-diag
+          timeout --signal=TERM 60s lftp <<LFTP || true
+          set cmd:fail-exit no
+          set ssl:verify-certificate yes
+          set ftp:ssl-force yes
+          set ftp:ssl-protect-data yes
+          set net:max-retries 1
+          set net:timeout 15
+          open -u "$FTP_USER","$FTP_PASS" "ftp://$FTP_HOST"
+          get ./stderr.log -o /tmp/mf-prod-diag/stderr.log
+          get ./error_log -o /tmp/mf-prod-diag/error_log
+          get ./passenger.log -o /tmp/mf-prod-diag/passenger.log
+          get ./tmp/restart.txt -o /tmp/mf-prod-diag/restart.txt
+          bye
+          LFTP
+          for file in /tmp/mf-prod-diag/*; do
+            [ -f "$file" ] || continue
+            echo "===== $(basename "$file") ====="
+            tail -n 160 "$file" | sed -E 's#(mysql[^ ]*://)[^@ ]+@#\1***@#g; s#(password|secret|token|api[_-]?key)([=:][^ ,;]+)#\1=***#Ig'
+          done
 
       - name: Roll back runtime if candidate health failed
         if: steps.health.outcome == 'failure'
