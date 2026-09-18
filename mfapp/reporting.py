@@ -803,6 +803,37 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     out.seek(0); return out
 
 
+def emergency_research_report_stream(fmt: str, *, ticker: str = "", company: str = "", mode: str = "full") -> BytesIO:
+    """Last-resort, dependency-free report stream.
+
+    This is intentionally tiny and uses only the stdlib fallback writers. A
+    report request must still return a valid downloadable artifact when rich
+    rendering, branding, or audit persistence fails unexpectedly.
+    """
+    lines = [
+        "Market Forensics",
+        f"{ticker or 'Security'} · {company or 'Research report'}",
+        f"{str(mode or 'full').upper()} REPORT",
+        "",
+        "Report rendering degraded safely. Core research remains available in the application.",
+        "Retry after reviewing Settings / Data if rich report diagnostics show an issue.",
+        "",
+        "Lose Money Rules",
+    ]
+    return _fallback_docx(lines) if str(fmt).lower() == "docx" else _fallback_pdf(lines)
+
+
+def emergency_discovery_report_stream() -> BytesIO:
+    return _fallback_pdf([
+        "Market Forensics · Discovery",
+        "",
+        "Discovery report rendering degraded safely.",
+        "The application retained the underlying scan; retry the export after reviewing report diagnostics.",
+        "",
+        "Lose Money Rules",
+    ], landscape_page=True)
+
+
 def render_docx_safe(data: dict[str, Any]) -> BytesIO:
     try:
         return render_docx(data)
@@ -889,4 +920,4 @@ def render_discovery_pdf_safe(scan: dict[str, Any], branding: dict[str, str] | N
         return _fallback_pdf(lines, landscape_page=True)
 
 
-__all__=["get_report_branding","set_report_branding","research_report_data","safe_research_report_data","render_docx","render_pdf","render_discovery_pdf","render_docx_safe","render_pdf_safe","render_discovery_pdf_safe","report_backend_status"]
+__all__=["get_report_branding","set_report_branding","research_report_data","safe_research_report_data","render_docx","render_pdf","render_discovery_pdf","render_docx_safe","render_pdf_safe","render_discovery_pdf_safe","emergency_research_report_stream","emergency_discovery_report_stream","report_backend_status"]
