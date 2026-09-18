@@ -44,7 +44,7 @@ jobs:
           if [ -z "${MF_ENCRYPTION_KEY:-}" ]; then export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"; fi
           pytest -q
 
-      - name: Production-minimal startup and report fallback smoke
+      - name: Production-minimal startup and rich report smoke
         run: |
           set -euo pipefail
           python -m venv /tmp/mf-prod-min
@@ -67,7 +67,7 @@ jobs:
           assert response.status_code == 200, response.data
           release_version = open("VERSION", encoding="utf-8").read().strip()
           assert response.get_json()["version"] == release_version
-          assert report_backend_status()["backend"] == "stdlib-fallback"
+          assert report_backend_status()["backend"] == "rich"
           data = {
               "branding": {"title":"Market Forensics","footer":"Lose Money Rules"},
               "ticker":"TEST","company":"Production Minimal Smoke","action":"DATA REVIEW",
