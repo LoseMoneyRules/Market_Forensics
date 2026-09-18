@@ -39,7 +39,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.2.4",
+        VERSION="0.2.5",
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
@@ -107,5 +107,5 @@ def create_app(test_config: dict | None = None) -> Flask:
         with app.app_context():
             schema_result = bootstrap_schema(migrate_legacy=True)
             preference_result = migrate_semantic_preferences()
-            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {"schema": schema_result, "preferences": preference_result, "release": "0.2.4"}
+            app.config["SCHEMA_BOOTSTRAP_RESULT"] = {"schema": schema_result, "preferences": preference_result, "release": "0.2.5"}
     return app

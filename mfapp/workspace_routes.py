@@ -39,11 +39,21 @@ def _gate_context(ticker: str) -> dict:
 @bp.post("/company/<ticker>/readiness/<gate_key>")
 @role_required("CONTROL")
 def approve_research_gate(ticker: str, gate_key: str):
+    return _mutate_research_gate(ticker, gate_key, str(request.form.get("action") or "approve").lower())
+
+
+@bp.post("/company/<ticker>/readiness/<gate_key>/<action>")
+@role_required("CONTROL")
+def approve_research_gate_action(ticker: str, gate_key: str, action: str):
+    return _mutate_research_gate(ticker, gate_key, action)
+
+
+def _mutate_research_gate(ticker: str, gate_key: str, action: str):
     require_control_view(); ctx = _gate_context(ticker)
     gate = next((row for row in research_readiness(ctx["coverage"])["gates"] if row["key"] == gate_key), None)
     if gate is None:
         abort(404)
-    action = str(request.form.get("action") or "approve").lower()
+    action = str(action or "").lower()
     if action not in {"approve", "revoke"}:
         return jsonify({"ok": False, "message": "Unsupported readiness action."}), 400
     existing = ResearchGateApproval.query.filter_by(coverage_id=ctx["coverage"].id, gate_key=gate_key).first()

@@ -627,7 +627,7 @@ def test_020_tape_reads_options_borrow_turnover_and_resilience(tmp_path, monkeyp
         assert metrics["rank_score"] is not None
 
 
-def test_020_market_wide_discovery_uses_screeners_without_guessing_fair_value(tmp_path, monkeypatch):
+def test_020_market_wide_discovery_screen_is_only_a_funnel_for_forensic_value(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
     uid, _, _, _ = seed_workspace(app)
     import mfapp.market_discovery as md
@@ -646,27 +646,37 @@ def test_020_market_wide_discovery_uses_screeners_without_guessing_fair_value(tm
             return FakeResponse({"gainers": [{"symbol": "AAA", "percent_change": 12.5}], "losers": [{"symbol": "BBB", "percent_change": -9.0}]})
         raise AssertionError(url)
 
-    monkeypatch.setattr(md, "_headers", lambda user_id: {"APCA-API-KEY-ID": "x", "APCA-API-SECRET-KEY": "y"})
+    monkeypatch.setattr(md, "_headers", lambda user_id: {"x": "y"})
     monkeypatch.setattr(md.requests, "get", fake_get)
     monkeypatch.setattr(md, "_snapshot_map", lambda symbols, headers, errors: {
         "AAA": {"price": 50.0, "daily_volume": 2_000_000, "dollar_volume": 100_000_000},
         "BBB": {"price": 25.0, "daily_volume": 4_000_000, "dollar_volume": 100_000_000},
     })
+    monkeypatch.setattr(md, "_asset_map", lambda symbols, headers, errors: {
+        "AAA": {"name": "AAA Corp", "status": "active", "exchange": "NASDAQ", "tradable": True, "shortable": True},
+        "BBB": {"name": "BBB Corp", "status": "active", "exchange": "NYSE", "tradable": True, "shortable": True},
+    })
+    monkeypatch.setattr(md, "_coverage_context_map", lambda user_id, symbols: {})
+    monkeypatch.setattr(md, "enrich_forensic_candidates", lambda user_id, pool, context, errors: {
+        "AAA": {"base": 30.0, "gap_pct": -40.0, "quality": "INTRINSIC", "short_score": 36, "long_score": 0,
+                "signals": [{"side": "SHORT", "label": "OPERATING DELEVERAGE", "detail": "Op margin -250 bps", "points": 18}],
+                "snapshot": {}, "source": "TEST"},
+        "BBB": {"base": 35.0, "gap_pct": 40.0, "quality": "INTRINSIC", "short_score": 0, "long_score": 36,
+                "signals": [{"side": "LONG", "label": "OPERATING LEVERAGE", "detail": "Op margin +220 bps", "points": 18}],
+                "snapshot": {}, "source": "TEST"},
+    })
+
     with app.app_context():
         result = md.market_scan(uid)
-        assert result["configured"] is True
-        tickers = {row["ticker"] for row in result["candidates"]}
-        assert {"AAA", "BBB"} <= tickers
-        aaa = next(row for row in result["candidates"] if row["ticker"] == "AAA")
-        assert "HIGH ACTIVITY" in aaa["lenses"]
-        assert "PRICE DISLOCATION" in aaa["lenses"]
-        assert "DEEP RESEARCH REQUIRED" in aaa["lenses"]
-        bbb = next(row for row in result["candidates"] if row["ticker"] == "BBB")
-        assert bbb["research_side"] == "LONG LEAD"
-        assert "DOWNSIDE DISLOCATION" in bbb["lenses"]
-        assert aaa["research_side"] == "SHORT LEAD"
-        assert aaa["target_status"] == "TARGET UNKNOWN"
-        assert not aaa.get("known_context")
+        rows = {row["ticker"]: row for row in result["candidates"]}
+        assert rows["AAA"]["research_side"] == "SHORT"
+        assert rows["AAA"]["fair_value"] == 30.0
+        assert rows["BBB"]["research_side"] == "LONG"
+        assert rows["BBB"]["fair_value"] == 35.0
+        assert result["contract_version"] == "FORENSIC_FAIR_VALUE_V1"
+        assert result["enrichment_mode"] == "FAIR_VALUE_FORENSIC_STAGE"
+
+
 
 
 def test_020_report_branding_is_persisted_and_rejects_non_https_logo(tmp_path, monkeypatch):
@@ -946,16 +956,15 @@ def test_020_job_pump_spawns_detached_executor_without_running_inline(tmp_path, 
         assert queued.started_at is None
 
 
-def test_020_discovery_scan_is_batch_cached_and_hard_bounded():
+def test_020_discovery_scan_is_two_stage_and_hard_bounded():
     discovery = Path("mfapp/market_discovery.py").read_text()
+    forensic = Path("mfapp/discovery_forensics.py").read_text()
     jobs = Path("mfapp/jobs.py").read_text()
-    assert "_coverage_context_map" in discovery
-    assert "latest_cache_map" in discovery
-    assert "_known_context" not in discovery
-    assert "research_readiness" not in discovery
-    assert "valuation_result" not in discovery
-    assert 'timeout=(5, 12)' in discovery
-    assert 'return 90 if str(job_type).upper() == "DISCOVERY_SCAN"' in jobs
+    assert "_coverage_context_map" in discovery and "latest_cache_map" in discovery
+    assert "enrich_forensic_candidates" in discovery
+    assert "default_cases" in forensic and "evaluate" in forensic
+    assert "FORENSIC_ENRICH_PER_SIDE" in forensic
+    assert "return 300 if str(job_type).upper() == \"DISCOVERY_SCAN\"" in jobs
     assert "_execute_with_deadline(job)" in jobs
 
 

@@ -173,6 +173,55 @@
     rows.forEach((row,i)=>{if(i%Math.max(1,Math.ceil(rows.length/6))===0||i===rows.length-1)ctx.fillText(String(row.label||row.date||''),Math.max(pad.l,x(i)-18),h-10)});
     defs.forEach((d)=>{ctx.strokeStyle=d.color;ctx.lineWidth=d.width||2.2;ctx.setLineDash(d.dash?[6,5]:[]);ctx.beginPath();let started=false;rows.forEach((row,i)=>{const v=Number(row[d.key]);if(!Number.isFinite(v))return;const xx=x(i),yy=y(v);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)});ctx.stroke();ctx.setLineDash([]);});
   }
+  function revenueFcfChart(canvas, rows) {
+    rows=(rows||[]).filter(row=>optionalNumber(row.revenue)!==null || optionalNumber(row.forecast_revenue)!==null || optionalNumber(row.fcf)!==null);
+    if(!canvas||!rows.length)return;
+    const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
+    const w=Math.max(360,rect.width),h=Math.max(220,rect.height||270),pad={l:62,r:70,t:30,b:42};
+    canvas.width=w*dpr;canvas.height=h*dpr;
+    const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+    const revVals=rows.map(r=>optionalNumber(r.revenue)??optionalNumber(r.forecast_revenue)).filter(v=>v!==null);
+    const fcfVals=rows.map(r=>optionalNumber(r.fcf)).filter(v=>v!==null);
+    if(!revVals.length&&!fcfVals.length)return;
+    let revMax=Math.max(1,...revVals.map(v=>Math.max(0,v)));
+    let fMin=fcfVals.length?Math.min(0,...fcfVals):0,fMax=fcfVals.length?Math.max(1,...fcfVals):1;
+    revMax*=1.12;
+    if(fMin===fMax){fMin-=1;fMax+=1}
+    const fSpan=fMax-fMin;fMin-=fSpan*.08;fMax+=fSpan*.08;
+    const plotW=w-pad.l-pad.r,plotH=h-pad.t-pad.b,slot=plotW/rows.length,barW=Math.max(8,Math.min(42,slot*.58));
+    const x=i=>pad.l+slot*i+slot/2;
+    const yRev=v=>pad.t+plotH*(1-Math.max(0,v)/revMax);
+    const yFcf=v=>pad.t+plotH*(1-(v-fMin)/(fMax-fMin));
+    ctx.font='10px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.lineWidth=1;
+    for(let i=0;i<4;i++){
+      const yy=pad.t+plotH*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
+      ctx.fillText(compact(revMax*(1-i/3)),4,yy+4);
+      ctx.textAlign='right';ctx.fillText(compact(fMax-(fMax-fMin)*i/3),w-5,yy+4);ctx.textAlign='left';
+    }
+    rows.forEach((row,i)=>{
+      const hist=optionalNumber(row.revenue),forecast=optionalNumber(row.forecast_revenue),rev=hist??forecast;
+      if(rev!==null){
+        const yy=yRev(rev),base=pad.t+plotH;
+        ctx.globalAlpha=forecast!==null&&hist===null?.45:.88;
+        ctx.fillStyle=css('--mf-chart-price','#3a6f99');
+        ctx.fillRect(x(i)-barW/2,yy,barW,Math.max(1,base-yy));
+        ctx.globalAlpha=1;
+      }
+      if(i%Math.max(1,Math.ceil(rows.length/7))===0||i===rows.length-1){
+        ctx.fillStyle=css('--mf-chart-text','#4f6272');
+        ctx.fillText(String(row.label||''),Math.max(pad.l,x(i)-18),h-12);
+      }
+    });
+    let started=false;ctx.strokeStyle=css('--mf-chart-bull','#1f7a54');ctx.lineWidth=2.5;ctx.beginPath();
+    rows.forEach((row,i)=>{
+      const value=optionalNumber(row.fcf);if(value===null){started=false;return}
+      const xx=x(i),yy=yFcf(value);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy);
+    });ctx.stroke();
+    rows.forEach((row,i)=>{const value=optionalNumber(row.fcf);if(value===null)return;ctx.beginPath();ctx.arc(x(i),yFcf(value),2.6,0,Math.PI*2);ctx.fillStyle=css('--mf-chart-bull','#1f7a54');ctx.fill()});
+    ctx.fillStyle=css('--mf-chart-price','#3a6f99');ctx.fillText('Revenue · columns',pad.l,pad.t-10);
+    ctx.textAlign='right';ctx.fillStyle=css('--mf-chart-bull','#1f7a54');ctx.fillText('FCF · line',w-pad.r,pad.t-10);ctx.textAlign='left';
+  }
+
   function optionalNumber(value) {
     if (value === null || value === undefined || value === '') return null;
     const out=Number(value);
@@ -235,7 +284,7 @@
   }
   const primary=css('--primary','#3a6f99'), secondary='#7b96ad', accent='#5f8a86';
   function renderCharts(){
-    document.querySelectorAll('canvas[data-mf-chart="numbers-scale"]').forEach((node)=>lineChart(node,parseData(node),[{key:'revenue',label:'Revenue',color:primary},{key:'fcf',label:'FCF',color:accent},{key:'forecast_revenue',label:'Revenue forecast',color:primary,dash:true}],false));
+    document.querySelectorAll('canvas[data-mf-chart="numbers-scale"]').forEach((node)=>revenueFcfChart(node,parseData(node)));
     document.querySelectorAll('canvas[data-mf-chart="numbers-margin"]').forEach((node)=>lineChart(node,parseData(node),[{key:'op_margin',label:'Operating margin',color:primary},{key:'fcf_margin',label:'FCF margin',color:accent},{key:'forecast_op_margin',label:'Op margin forecast',color:primary,dash:true}],true));
     document.querySelectorAll('canvas[data-mf-chart="working-capital"]').forEach((node)=>lineChart(node,parseData(node),[{key:'inventory',label:'Inventory',color:primary},{key:'receivables',label:'Receivables',color:secondary}],false));
     document.querySelectorAll('canvas[data-mf-chart="tape-price-short"]').forEach(tapePriceShortChart);
@@ -322,9 +371,10 @@
     const prior = button?.textContent || '';
     if (button) { button.disabled = true; button.textContent = 'Saving…'; }
     const formData = new FormData(form);
-    if (event.submitter?.name) formData.set(event.submitter.name, event.submitter.value);
+    const endpoint = form.getAttribute('action');
+    if (!endpoint) return;
     try {
-      const response = await fetch(form.action, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {Accept: 'application/json', 'X-CSRFToken': csrf},

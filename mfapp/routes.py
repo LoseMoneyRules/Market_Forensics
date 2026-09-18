@@ -9,7 +9,7 @@ from flask import Blueprint, abort, current_app, flash, g, redirect, render_temp
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
-from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, scenario_forecasts
+from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, numbers_completeness, quarterly_rows, scenario_forecasts
 from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_series
 from .management_promises import evaluate_promises
 from .extensions import db
@@ -419,6 +419,15 @@ def _normalized_market_scan(job: Job | None) -> dict:
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
+    if scan and scan.get("contract_version") != "FORENSIC_FAIR_VALUE_V1":
+        return {
+            "candidates": [], "long_candidates": [], "short_candidates": [],
+            "candidate_count": 0, "long_count": 0, "short_count": 0,
+            "p1_count": 0, "p2_count": 0, "known_enriched": 0,
+            "excluded_count": 0, "excluded_breakdown": {}, "guardrails": {},
+            "errors": [], "stale_contract": True,
+            "contract_version": scan.get("contract_version") or "LEGACY",
+        }
     raw_candidates = scan.get("candidates")
     candidates = []
     if isinstance(raw_candidates, list):
@@ -438,6 +447,11 @@ def _normalized_market_scan(job: Job | None) -> dict:
                 "scan_score": as_float(raw.get("scan_score"), 0.0) or 0.0,
                 "move_pct": as_float(raw.get("move_pct")),
                 "base_gap_pct": as_float(raw.get("base_gap_pct")),
+                "fair_value": as_float(raw.get("fair_value")),
+                "forensic_score": as_int(raw.get("forensic_score"), 0),
+                "forensic_signals": list(raw.get("forensic_signals") or []) if isinstance(raw.get("forensic_signals") or [], list) else [],
+                "fair_value_quality": str(raw.get("fair_value_quality") or ""),
+                "forensic_source": str(raw.get("forensic_source") or ""),
                 "price": as_float(raw.get("price")),
                 "dollar_volume": as_float(raw.get("dollar_volume")),
                 "target_status": str(raw.get("target_status") or "TARGET UNKNOWN"),
@@ -615,9 +629,31 @@ def company_section(ticker, section):
             or {"available": False, "classification": "CALCULATING" if ctx.get("cache_pending") else "UNAVAILABLE", "drivers": [], "errors": []}
         )
     elif section == "numbers":
-        extra["financials"] = annual_rows(company.id, 15)
-        extra["current_financial"] = current_row(company.id)
-        extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 3)
+        financials = annual_rows(company.id, 15)
+        quarterly_financials = quarterly_rows(company.id, 12)
+        current_financial = current_row(company.id)
+        forecasts = forecast_rows(company.id, ctx["model"], 3)
+        scale_series = [
+            {"label": f"FY{row.get('fiscal_year')}", "revenue": row.get("revenue"), "fcf": row.get("fcf")}
+            for row in reversed(financials)
+        ]
+        if current_financial and current_financial.get("period_type") == "TTM":
+            scale_series.append({
+                "label": "TTM",
+                "revenue": current_financial.get("revenue"),
+                "fcf": current_financial.get("fcf"),
+            })
+        scale_series.extend({
+            "label": row.get("period_label"), "forecast_revenue": row.get("revenue")
+        } for row in forecasts)
+        extra.update({
+            "financials": financials,
+            "quarterly_financials": quarterly_financials,
+            "current_financial": current_financial,
+            "numbers_completeness": numbers_completeness(company.id),
+            "forecast_rows": forecasts,
+            "numbers_scale_series": scale_series,
+        })
         extra["quality_issues"] = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").order_by(DataQualityIssue.detected_at.desc()).all()
     elif section == "valuation":
         extra["scenarios"] = {s.name.upper(): s for s in ctx["model"].scenarios}; extra["sensitivity"] = valuation_sensitivity(ctx["valuation"].get("base"), ctx["valuation"].get("current_price"))

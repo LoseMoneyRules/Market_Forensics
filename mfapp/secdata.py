@@ -114,7 +114,25 @@ def _sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda r: (str(r.get("filed") or ""), str(r.get("end") or ""), str(r.get("accn") or "")))
 
 
-def _annual_duration(companyfacts: dict, tags: Iterable[str]) -> dict[int, dict[str, Any]]:
+def _fiscal_year_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> int | None:
+    """Resolve the fiscal year from the fact's own period end, not the later filing's fy.
+
+    SEC Companyfacts repeats comparative periods in later filings. Using row['fy']
+    alone can therefore attach an old comparative fact to the newest fiscal year.
+    """
+    try:
+        end = date.fromisoformat(str(row.get("end") or "")[:10])
+    except Exception:
+        return None
+    fye = str(fiscal_year_end or "").strip()
+    if len(fye) == 4 and fye.isdigit():
+        month, day = int(fye[:2]), int(fye[2:])
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return end.year + (1 if (end.month, end.day) > (month, day) else 0)
+    return end.year
+
+
+def _annual_duration(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "") -> dict[int, dict[str, Any]]:
     output: dict[int, dict[str, Any]] = {}
     for tag in tags:
         candidates: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -124,9 +142,8 @@ def _annual_duration(companyfacts: dict, tags: Iterable[str]) -> dict[int, dict[
             days = _duration_days(row)
             if days is None or not 300 <= days <= 430:
                 continue
-            try:
-                fy = int(row.get("fy"))
-            except Exception:
+            fy = _fiscal_year_from_end(row, fiscal_year_end)
+            if fy is None:
                 continue
             if _as_decimal(row.get("val")) is None:
                 continue
@@ -137,16 +154,15 @@ def _annual_duration(companyfacts: dict, tags: Iterable[str]) -> dict[int, dict[
     return output
 
 
-def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "us-gaap") -> dict[int, dict[str, Any]]:
+def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "us-gaap", fiscal_year_end: str = "") -> dict[int, dict[str, Any]]:
     output: dict[int, dict[str, Any]] = {}
     for tag in tags:
         candidates: dict[int, list[dict[str, Any]]] = defaultdict(list)
         for row in _facts(companyfacts, namespace, tag):
             if row.get("form") not in {"10-K", "10-K/A"} or row.get("start"):
                 continue
-            try:
-                fy = int(row.get("fy"))
-            except Exception:
+            fy = _fiscal_year_from_end(row, fiscal_year_end)
+            if fy is None:
                 continue
             if _as_decimal(row.get("val")) is None:
                 continue
@@ -157,7 +173,7 @@ def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "u
     return output
 
 
-def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str]) -> tuple[dict[tuple[int, str], dict[str, Any]], dict[tuple[int, str], dict[str, Any]]]:
+def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "") -> tuple[dict[tuple[int, str], dict[str, Any]], dict[tuple[int, str], dict[str, Any]]]:
     """Return quarter-only and YTD 10-Q facts, preserving tag priority.
 
     Income-statement facts often expose a ~90-day quarter and a YTD context. Cash-flow
@@ -175,9 +191,8 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str]) -> tuple[
             days = _duration_days(row)
             if days is None or _as_decimal(row.get("val")) is None:
                 continue
-            try:
-                fy = int(row.get("fy"))
-            except Exception:
+            fy = _fiscal_year_from_end(row, fiscal_year_end)
+            if fy is None:
                 continue
             key = (fy, fp)
             if 60 <= days <= 120:
@@ -193,8 +208,8 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str]) -> tuple[
     return direct, ytd
 
 
-def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: dict[int, dict[str, Any]], *, shares_metric: bool = False) -> dict[tuple[int, str], dict[str, Any]]:
-    direct, ytd = _quarter_duration_sources(companyfacts, tags)
+def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: dict[int, dict[str, Any]], *, shares_metric: bool = False, fiscal_year_end: str = "") -> dict[tuple[int, str], dict[str, Any]]:
+    direct, ytd = _quarter_duration_sources(companyfacts, tags, fiscal_year_end)
     years = sorted(set(fy for fy, _ in set(direct) | set(ytd)) | set(annual))
     out: dict[tuple[int, str], dict[str, Any]] = {}
     for fy in years:
@@ -237,7 +252,7 @@ def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: di
     return out
 
 
-def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = "us-gaap") -> dict[tuple[int, str], dict[str, Any]]:
+def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = "us-gaap", fiscal_year_end: str = "") -> dict[tuple[int, str], dict[str, Any]]:
     out: dict[tuple[int, str], dict[str, Any]] = {}
     for tag in tags:
         candidates: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
@@ -252,9 +267,8 @@ def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = 
                 quarter = "Q4"
             else:
                 continue
-            try:
-                fy = int(row.get("fy"))
-            except Exception:
+            fy = _fiscal_year_from_end(row, fiscal_year_end)
+            if fy is None:
                 continue
             candidates[(fy, quarter)].append(row)
         for key, rows in candidates.items():
@@ -354,9 +368,10 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     companyfacts = _json(f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json", user_agent)
     source = _source_for(company, meta, user_agent, companyfacts)
 
-    duration = {key: _annual_duration(companyfacts, tags) for key, tags in DURATION_TAGS.items()}
-    instant = {key: _annual_instant(companyfacts, tags) for key, tags in INSTANT_TAGS.items()}
-    dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei")
+    fiscal_year_end = meta.get("fiscal_year_end") or ""
+    duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
+    instant = {key: _annual_instant(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
+    dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_shares:
         instant["shares_outstanding"] = dei_shares
     years = sorted(set().union(*(set(rows) for rows in duration.values()), *(set(rows) for rows in instant.values())))
@@ -393,9 +408,9 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
 
     quarter_duration: dict[str, dict[tuple[int, str], dict[str, Any]]] = {}
     for field, tags in DURATION_TAGS.items():
-        quarter_duration[field] = _quarter_duration_values(companyfacts, tags, duration[field], shares_metric=(field == "diluted_shares"))
-    quarter_instant = {field: _quarter_instants(companyfacts, tags) for field, tags in INSTANT_TAGS.items()}
-    dei_quarter_shares = _quarter_instants(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei")
+        quarter_duration[field] = _quarter_duration_values(companyfacts, tags, duration[field], shares_metric=(field == "diluted_shares"), fiscal_year_end=fiscal_year_end)
+    quarter_instant = {field: _quarter_instants(companyfacts, tags, fiscal_year_end=fiscal_year_end) for field, tags in INSTANT_TAGS.items()}
+    dei_quarter_shares = _quarter_instants(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_quarter_shares:
         quarter_instant["shares_outstanding"] = dei_quarter_shares
 
