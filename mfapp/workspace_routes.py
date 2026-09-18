@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from flask import abort, g, jsonify, redirect, render_template, request, url_for
 
 from .access import audit, require_control_view
-from .core_models import Job, ResearchGateApproval
+from .core_models import Company, Coverage, Job, ResearchGateApproval, Security
 from .data_providers import latest_snapshot
 from .extensions import db
 from .jobs import enqueue_job
@@ -19,10 +19,26 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _gate_context(ticker: str) -> dict:
+    security = Security.query.filter(
+        db.func.upper(Security.ticker) == str(ticker).upper(),
+        Security.active.is_(True),
+    ).order_by(Security.is_primary.desc(), Security.id.asc()).first()
+    if security is None:
+        abort(404)
+    coverage = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if coverage is None:
+        abort(404)
+    company = db.session.get(Company, security.company_id)
+    if company is None:
+        abort(404)
+    return {"coverage": coverage, "security": security, "company": company}
+
+
 @bp.post("/company/<ticker>/readiness/<gate_key>")
 @role_required("CONTROL")
 def approve_research_gate(ticker: str, gate_key: str):
-    require_control_view(); ctx = _ctx(ticker)
+    require_control_view(); ctx = _gate_context(ticker)
     gate = next((row for row in research_readiness(ctx["coverage"])["gates"] if row["key"] == gate_key), None)
     if gate is None:
         abort(404)
