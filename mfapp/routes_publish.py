@@ -192,7 +192,7 @@ def research_report(ticker, fmt):
     branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
     data = research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
-    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.0"
+    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.1"
     if fmt == "docx":
         stream = render_docx(data)
         mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
