@@ -4,12 +4,10 @@ from typing import Any
 
 import requests
 
-from .core_models import Company, Coverage, Security, ValuationModel
-from .current_financials import current_row
-from .data_providers import get_secret, latest_snapshot
+from .core_models import Coverage, Security
+from .data_providers import get_secret
 from .extensions import db
-from .readiness import research_readiness
-from .services import valuation_result
+from .research_cache import latest_cache_map
 
 
 def _headers(user_id: int) -> dict[str, str] | None:
@@ -27,66 +25,59 @@ def _n(value: Any) -> float | None:
         return None
 
 
-def _known_context(symbol: str, user_id: int) -> dict[str, Any]:
-    security = Security.query.filter(db.func.upper(Security.ticker) == symbol.upper(), Security.active.is_(True)).order_by(Security.is_primary.desc()).first()
-    if not security:
+def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str, Any]]:
+    """One batched DB read for all locally known candidates.
+
+    Discovery must never run fundamentals/readiness/valuation engines per symbol.
+    Those are materialized by RECALCULATE jobs into the research cache.
+    """
+    if not symbols:
         return {}
-    company = db.session.get(Company, security.company_id)
-    row = current_row(company.id) if company else None
-    metrics = (row or {}).get("metrics") or {}
-    coverage = Coverage.query.filter_by(user_id=user_id, security_id=security.id).first()
-    valuation = valuation_result(coverage) if coverage else {}
-    market = latest_snapshot(security.id)
-    price = _n(market.price) if market else None
-    base = _n(valuation.get("base"))
-    gap = ((base / price - 1.0) * 100.0) if base is not None and price not in (None, 0) else None
-    return {
-        "known": True,
-        "company_id": company.id if company else None,
-        "coverage_id": coverage.id if coverage else None,
-        "revenue_growth_pct": _n(metrics.get("revenue_growth_pct")),
-        "operating_margin_pct": _n(metrics.get("operating_margin_pct")),
-        "fcf_margin_pct": _n(metrics.get("fcf_margin_pct")),
-        "inventory_growth_pct": _n(metrics.get("inventory_growth_pct")),
-        "receivables_growth_pct": _n(metrics.get("receivables_growth_pct")),
-        "base_gap_pct": gap,
-        "readiness": research_readiness(coverage) if coverage else None,
-    }
 
+    rows = (
+        db.session.query(Coverage, Security)
+        .join(Security, Coverage.security_id == Security.id)
+        .filter(
+            Coverage.user_id == user_id,
+            Coverage.status != "ARCHIVED",
+            Security.active.is_(True),
+            db.func.upper(Security.ticker).in_(sorted(symbols)),
+        )
+        .all()
+    )
+    if not rows:
+        return {}
 
-def _local_lenses(context: dict[str, Any]) -> list[str]:
-    if not context:
-        return []
-    labels: list[str] = []
-    rev = context.get("revenue_growth_pct")
-    op = context.get("operating_margin_pct")
-    fcf = context.get("fcf_margin_pct")
-    inv = context.get("inventory_growth_pct")
-    rec = context.get("receivables_growth_pct")
-    gap = context.get("base_gap_pct")
-
-    quality = (op is not None and op > 8) and (fcf is not None and fcf > 5)
-    if quality and gap is not None and gap >= 20:
-        labels.append("QUALITY AT DISCOUNT")
-    if rev is not None and rev >= 8 and fcf is not None and fcf > 0:
-        labels.append("FUNDAMENTAL INFLECTION")
-    if gap is not None and gap >= 25:
-        labels.append("LONG DISLOCATION")
-    if gap is not None and gap <= -15:
-        labels.append("SHORT DISLOCATION")
-    if gap is not None and gap >= 25 and not quality:
-        labels.append("POTENTIAL VALUE TRAP")
-    if rev is not None and ((inv is not None and inv - rev >= 12) or (rec is not None and rec - rev >= 12)):
-        labels.append("FORENSIC DIVERGENCE")
-    return labels
+    coverage_ids = [coverage.id for coverage, _ in rows]
+    caches = latest_cache_map(coverage_ids)
+    out: dict[str, dict[str, Any]] = {}
+    for coverage, security in rows:
+        cache = dict(caches.get(coverage.id) or {})
+        valuation = dict(cache.get("valuation") or {})
+        readiness = dict(cache.get("readiness") or {})
+        lenses = dict(cache.get("decision_lenses") or {})
+        out[security.ticker.upper()] = {
+            "known": True,
+            "coverage_id": coverage.id,
+            "base_gap_pct": (cache.get("intelligence") or {}).get("base_gap_pct"),
+            "readiness": readiness,
+            "decision_lenses": lenses,
+            "discovery_labels": list(cache.get("discovery_labels") or []),
+            "valuation": {
+                "current_price": valuation.get("current_price"),
+                "base": valuation.get("base"),
+            },
+            "cache_ready": bool(cache),
+        }
+    return out
 
 
 def market_scan(user_id: int) -> dict[str, Any]:
-    """Hosting-friendly market-wide discovery.
+    """Fast market-wide discovery for shared hosting.
 
-    Alpaca's screeners reduce the full tradable universe to the day's most active
-    and largest movers. We then enrich known names with stored fundamental/valuation
-    evidence. Unknown names are deliberately not assigned fair values.
+    Two bounded provider calls build the broad market radar. Local enrichment is
+    a single batch cache read; no per-symbol fundamentals or valuation work is
+    allowed inside this job.
     """
     headers = _headers(user_id)
     if not headers:
@@ -113,11 +104,10 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "https://data.alpaca.markets/v1beta1/screener/stocks/most-actives",
             headers=headers,
             params={"by": "volume", "top": 100},
-            timeout=15,
+            timeout=(5, 12),
         )
         if response.status_code == 200:
-            rows = (response.json() or {}).get("most_actives") or []
-            for idx, row in enumerate(rows, start=1):
+            for idx, row in enumerate((response.json() or {}).get("most_actives") or [], start=1):
                 item = touch(row.get("symbol"))
                 item["activity_rank"] = idx
                 item["activity_volume"] = _n(row.get("volume"))
@@ -134,7 +124,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "https://data.alpaca.markets/v1beta1/screener/stocks/movers",
             headers=headers,
             params={"top": 50},
-            timeout=15,
+            timeout=(5, 12),
         )
         if response.status_code == 200:
             payload = response.json() or {}
@@ -153,26 +143,25 @@ def market_scan(user_id: int) -> dict[str, Any]:
     except Exception as exc:
         errors.append(f"Market-movers screener: {type(exc).__name__}")
 
-    covered = {
-        row[0].upper()
-        for row in db.session.query(Security.ticker)
-        .join(Coverage, Coverage.security_id == Security.id)
-        .filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED")
-        .all()
-    }
-
+    local_context = _coverage_context_map(user_id, set(by_symbol))
     for symbol, item in by_symbol.items():
-        context = _known_context(symbol, user_id)
-        local = _local_lenses(context)
+        context = dict(local_context.get(symbol) or {})
+        local = list(context.get("discovery_labels") or [])
+
+        # Market-only lens: this does not assert a short thesis; it promotes a
+        # large downside dislocation into the research queue.
         if item.get("move_pct") is not None and float(item["move_pct"]) <= -8:
             local.append("POTENTIAL SHORT")
+
         item["known_context"] = context
+        item["in_coverage"] = bool(context)
         item["lenses"] = list(dict.fromkeys(local + item["lenses"]))
-        item["in_coverage"] = symbol in covered
         if local:
             item["scan_score"] += min(25.0, len(local) * 6.0)
-        if not local:
+        if not context:
             item["lenses"].append("DEEP RESEARCH REQUIRED")
+        elif not context.get("cache_ready"):
+            item["lenses"].append("RESEARCH CACHE UPDATING")
         item["scan_score"] = round(item["scan_score"], 2)
 
     candidates = sorted(by_symbol.values(), key=lambda row: row["scan_score"], reverse=True)[:120]
@@ -183,6 +172,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "universe_source": "Alpaca most-active + market-movers screeners",
         "candidate_count": len(candidates),
         "known_enriched": sum(1 for row in candidates if row.get("known_context")),
+        "enrichment_mode": "BATCH_CACHE_ONLY",
     }
 
 
