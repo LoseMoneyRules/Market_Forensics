@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, url_for
@@ -246,7 +246,7 @@ def _cached_tape_for_months(tape: dict, months: int) -> dict:
     cutoff = date.today().replace(day=1)
     # Six calendar months is close enough for display slicing; calculations remain the cached 12M context.
     for _ in range(6):
-        cutoff = (cutoff.replace(day=1) - __import__("datetime").timedelta(days=1)).replace(day=1)
+        cutoff = (cutoff.replace(day=1) - timedelta(days=1)).replace(day=1)
     cutoff_iso = cutoff.isoformat()
     out = dict(tape)
     out["months"] = months
