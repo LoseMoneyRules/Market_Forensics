@@ -163,7 +163,8 @@ def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "u
                 continue
             fy = _fiscal_year_from_end(row, fiscal_year_end)
             if fy is None:
-                continue            if _as_decimal(row.get("val")) is None:
+                continue
+            if _as_decimal(row.get("val")) is None:
                 continue
             candidates[fy].append(row)
         for fy, rows in candidates.items():
@@ -192,7 +193,8 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
                 continue
             fy = _fiscal_year_from_end(row, fiscal_year_end)
             if fy is None:
-                continue            key = (fy, fp)
+                continue
+            key = (fy, fp)
             if 60 <= days <= 120:
                 direct_candidates[key].append(row)
             elif 121 <= days <= 310:
@@ -267,7 +269,8 @@ def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = 
                 continue
             fy = _fiscal_year_from_end(row, fiscal_year_end)
             if fy is None:
-                continue            candidates[(fy, quarter)].append(row)
+                continue
+            candidates[(fy, quarter)].append(row)
         for key, rows in candidates.items():
             if key not in out:
                 out[key] = _sort_rows(rows)[-1]
