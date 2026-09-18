@@ -168,6 +168,66 @@ def threshold_history(ticker: str, user_id: int) -> list[dict[str, Any]]:
     return normalized
 
 
+def weekly_otc_summary(ticker: str, user_id: int) -> list[dict[str, Any]]:
+    """Aggregate FINRA Weekly Summary into delayed ATS vs non-ATS ticker activity.
+
+    The venue/member rows are useful as market-plumbing evidence only. They never
+    identify the beneficial buyer or seller.
+    """
+    fields = [
+        "issueSymbolIdentifier", "issueName", "weekStartDate", "summaryTypeCode",
+        "tierIdentifier", "marketParticipantName", "totalWeeklyShareQuantity",
+        "totalWeeklyTradeCount", "lastUpdateDate",
+    ]
+    grouped: dict[str, dict[str, Any]] = {}
+    for summary_type, bucket in (("ATS_W_SMBL", "ATS"), ("OTC_W_SMBL", "NON_ATS")):
+        rows = _query_dataset(
+            user_id,
+            "weeklySummary",
+            filters=[
+                {"compareType": "EQUAL", "fieldName": "issueSymbolIdentifier", "fieldValue": ticker.upper()},
+                {"compareType": "EQUAL", "fieldName": "summaryTypeCode", "fieldValue": summary_type},
+            ],
+            fields=fields,
+            limit=5000,
+        )
+        for row in rows:
+            week = str(row.get("weekStartDate") or "")[:10]
+            if not week:
+                continue
+            item = grouped.setdefault(week, {
+                "week_start": week,
+                "ats_shares": 0.0,
+                "ats_trades": 0.0,
+                "non_ats_shares": 0.0,
+                "non_ats_trades": 0.0,
+                "last_update": "",
+                "tier": row.get("tierIdentifier"),
+            })
+            shares = _to_float(row.get("totalWeeklyShareQuantity")) or 0.0
+            trades = _to_float(row.get("totalWeeklyTradeCount")) or 0.0
+            if bucket == "ATS":
+                item["ats_shares"] += shares
+                item["ats_trades"] += trades
+            else:
+                item["non_ats_shares"] += shares
+                item["non_ats_trades"] += trades
+            update = str(row.get("lastUpdateDate") or "")[:10]
+            if update > str(item.get("last_update") or ""):
+                item["last_update"] = update
+
+    out = []
+    for week in sorted(grouped):
+        item = grouped[week]
+        total = float(item["ats_shares"]) + float(item["non_ats_shares"])
+        item["total_otc_shares"] = total
+        item["ats_share_pct"] = (float(item["ats_shares"]) / total * 100.0) if total else None
+        trades = float(item["ats_trades"]) + float(item["non_ats_trades"])
+        item["avg_trade_size"] = (total / trades) if trades else None
+        out.append(item)
+    return out
+
+
 def refresh_bundle(ticker: str, user_id: int, lookback_days: int = 35) -> dict[str, Any]:
     daily = daily_short_volume(ticker, lookback_days)
     result: dict[str, Any] = {
@@ -176,6 +236,7 @@ def refresh_bundle(ticker: str, user_id: int, lookback_days: int = 35) -> dict[s
         "daily_short_volume": daily,
         "short_interest": [],
         "threshold_history": [],
+        "weekly_otc": [],
         "api_configured": api_configured(user_id),
         "errors": [],
     }
@@ -188,6 +249,10 @@ def refresh_bundle(ticker: str, user_id: int, lookback_days: int = 35) -> dict[s
             result["threshold_history"] = threshold_history(ticker, user_id)
         except Exception as exc:
             result["errors"].append(f"threshold_list: {type(exc).__name__}: {exc}")
+        try:
+            result["weekly_otc"] = weekly_otc_summary(ticker, user_id)
+        except Exception as exc:
+            result["errors"].append(f"weekly_otc: {type(exc).__name__}: {exc}")
     return result
 
 
@@ -222,5 +287,5 @@ def stored_summary(company_id: int) -> dict[str, Any]:
 
 __all__ = [
     "api_configured", "daily_short_volume", "consolidated_short_interest", "threshold_history",
-    "refresh_bundle", "stored_summary",
+    "weekly_otc_summary", "refresh_bundle", "stored_summary",
 ]
