@@ -543,7 +543,7 @@ def _valuation_chart_png(data: dict[str, Any]) -> BytesIO:
 
 def _docx_add_heading(doc: Document, text: str, level: int = 1) -> None:
     p = doc.add_heading(text, level=level)
-    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_before = Pt(9)
     p.paragraph_format.space_after = Pt(4)
 
 
@@ -552,150 +552,266 @@ def _docx_add_text(doc: Document, text: str) -> None:
     p.paragraph_format.space_after = Pt(5)
 
 
+def _docx_hex(hex_value: str):
+    value = str(hex_value or "0B1F33").strip().lstrip("#")
+    return RGBColor(int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+
+
+def _docx_shade(cell, fill: str) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shd = tc_pr.find(qn("w:shd"))
+    if shd is None:
+        shd = OxmlElement("w:shd")
+        tc_pr.append(shd)
+    shd.set(qn("w:fill"), fill.replace("#", "").upper())
+
+
+def _docx_cell(cell, text: str, *, bold: bool = False, size: float = 10.5, color: str = "#0b1f33",
+               align=None) -> None:
+    cell.text = ""
+    p = cell.paragraphs[0]
+    if align is not None:
+        p.alignment = align
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    r = p.add_run(str(text if text not in (None, "") else "—"))
+    r.bold = bold
+    r.font.size = Pt(size)
+    r.font.color.rgb = _docx_hex(color)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def _docx_kpi_strip(doc: Document, items: list[tuple[str, str, str]]) -> None:
+    table = doc.add_table(rows=2, cols=len(items))
+    table.style = "Table Grid"
+    for idx, (label, value, tone) in enumerate(items):
+        _docx_cell(table.cell(0, idx), label.upper(), bold=True, size=8.5, color="#607384", align=WD_ALIGN_PARAGRAPH.CENTER)
+        _docx_cell(table.cell(1, idx), value, bold=True, size=11.5, color=tone, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _docx_shade(table.cell(0, idx), "EAF0F5")
+        _docx_shade(table.cell(1, idx), "FFFFFF")
+    doc.add_paragraph().paragraph_format.space_after = Pt(1)
+
+
+def _docx_two_panel(doc: Document, left_title: str, left_text: str, right_title: str, right_text: str,
+                    *, left_fill: str = "F4F7F9", right_fill: str = "F4F7F9") -> None:
+    table = doc.add_table(rows=2, cols=2)
+    table.style = "Table Grid"
+    _docx_cell(table.cell(0, 0), left_title.upper(), bold=True, size=9, color="#0b1f33")
+    _docx_cell(table.cell(0, 1), right_title.upper(), bold=True, size=9, color="#0b1f33")
+    _docx_shade(table.cell(0, 0), left_fill); _docx_shade(table.cell(0, 1), right_fill)
+    _docx_cell(table.cell(1, 0), left_text or "—", size=10)
+    _docx_cell(table.cell(1, 1), right_text or "—", size=10)
+    doc.add_paragraph().paragraph_format.space_after = Pt(1)
+
+
 def render_docx(data: dict[str, Any]) -> BytesIO:
     if not _load_report_libs():
         return _fallback_docx(_plain_research_lines(data))
+
     doc = Document()
     sec = doc.sections[0]
-    sec.top_margin = Inches(.55); sec.bottom_margin = Inches(.55); sec.left_margin = Inches(.65); sec.right_margin = Inches(.65)
+    sec.top_margin = Inches(.45); sec.bottom_margin = Inches(.55); sec.left_margin = Inches(.55); sec.right_margin = Inches(.55)
+    try:
+        doc.styles["Normal"].font.size = Pt(10.5)
+        doc.styles["Normal"].paragraph_format.space_after = Pt(4)
+    except Exception:
+        pass
 
     brand = data.get("branding") or {}
     logo = _safe_logo(str(brand.get("logo_url") or ""))
     if logo:
-        doc.add_picture(logo, width=Inches(1.25))
+        doc.add_picture(logo, width=Inches(1.15))
+
+    eyebrow = doc.add_paragraph()
+    eyebrow.paragraph_format.space_after = Pt(1)
+    er = eyebrow.add_run(str(brand.get("title") or "Market Forensics").upper())
+    er.bold = True; er.font.size = Pt(9); er.font.color.rgb = _docx_hex("#3a6f99")
+
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    title.paragraph_format.space_after = Pt(1)
     run = title.add_run(f"{data['ticker']} · {data['company']}")
-    run.bold = True; run.font.size = Pt(20)
-    subtitle = f"{brand.get('title') or 'Market Forensics'} · {data['action']} · {data['stance']} · {data['confidence']} confidence"
-    if brand.get("prepared_by"):
-        subtitle += f" · Prepared by {brand['prepared_by']}"
-    p = doc.add_paragraph(subtitle)
-    p.runs[0].font.size = Pt(11)
+    run.bold = True; run.font.size = Pt(22); run.font.color.rgb = _docx_hex("#0b1f33")
+    meta = " · ".join(x for x in [data.get("sector"), data.get("industry"), data.get("market_provider")] if x)
+    p = doc.add_paragraph(meta or "Private CONTROL research")
+    p.paragraph_format.space_after = Pt(7)
+    if p.runs:
+        p.runs[0].font.size = Pt(9.5); p.runs[0].font.color.rgb = _docx_hex("#607384")
 
-    table = doc.add_table(rows=2, cols=6)
-    table.style = "Table Grid"
-    headers = ["Market","Bear","Base","Bull","Base gap","Validate"]
-    values = [_money(data["market_price"]),_money(data["bear"]),_money(data["base"]),_money(data["bull"]),_pct(data["base_gap_pct"]),data["validation_state"]]
-    for i,v in enumerate(headers): table.cell(0,i).text=v
-    for i,v in enumerate(values): table.cell(1,i).text=v
+    _docx_add_heading(doc, "Research intelligence", 1)
+    _docx_kpi_strip(doc, [
+        ("Conclusion", str(data.get("action") or "DATA REVIEW"), "#0B1F33"),
+        ("Bias", str(data.get("bias") or "NEUTRAL"), "#3A6F99"),
+        ("Confidence", str(data.get("confidence") or "UNVALIDATED"), "#0B1F33"),
+        ("Base gap", _pct(data.get("base_gap_pct")), "#3A6F99"),
+        ("Validate", str(data.get("validation_state") or "NOT RUN"), "#0B1F33"),
+    ])
+    signal_bits = []
+    for row in (data.get("top_signals") or [])[:3]:
+        signal_bits.append(f"{row.get('label') or 'Signal'} — {row.get('detail') or ''}")
+    if data.get("warnings"):
+        signal_bits.append("WATCH — " + str(data["warnings"][0]))
+    if signal_bits:
+        box = doc.add_table(rows=1, cols=1); box.style = "Table Grid"
+        _docx_cell(box.cell(0, 0), "   •   ".join(signal_bits), size=9.5, color="#334A5E")
+        _docx_shade(box.cell(0, 0), "F4F7F9")
+        doc.add_paragraph().paragraph_format.space_after = Pt(1)
 
+    _docx_add_heading(doc, "Valuation map", 1)
+    _docx_kpi_strip(doc, [
+        ("Market", _money(data.get("market_price")), "#52606D"),
+        ("Bear", _money(data.get("bear")), "#A13B3B"),
+        ("Base", _money(data.get("base")), "#3A6F99"),
+        ("Bull", _money(data.get("bull")), "#1F7A54"),
+        ("Expected value", _money(data.get("expected_value")), "#0B1F33"),
+        ("Readiness", str(data.get("readiness") or "—"), "#0B1F33"),
+    ])
     chart = _valuation_chart_png(data)
-    doc.add_picture(chart, width=Inches(6.75))
+    doc.add_picture(chart, width=Inches(6.9))
 
-    _docx_add_heading(doc, "Investment research brief", 1)
-    for label,key in [("Thesis","thesis"),("Counter-evidence","counter_evidence"),("Market view","variant_market"),("Our variant","variant_us")]:
-        _docx_add_heading(doc,label,2); _docx_add_text(doc,data[key])
+    current = dict(data.get("current_fundamentals") or {})
+    if current:
+        _docx_add_heading(doc, "Current fundamentals", 1)
+        _docx_kpi_strip(doc, [
+            ("Basis", str(current.get("period") or "—"), "#0B1F33"),
+            ("Revenue", _money(current.get("revenue")), "#0B1F33"),
+            ("Gross margin", _pct(current.get("gross_margin_pct")), "#0B1F33"),
+            ("Operating margin", _pct(current.get("operating_margin_pct")), "#0B1F33"),
+            ("FCF margin", _pct(current.get("fcf_margin_pct")), "#0B1F33"),
+            ("ROIC", _pct(current.get("roic_pct")), "#0B1F33"),
+        ])
+        leverage = current.get("net_debt_to_fcf")
+        cfo_ni = current.get("cfo_to_net_income")
+        p = doc.add_paragraph(
+            f"Cash quality · CFO/Net Income {float(cfo_ni):.2f}x" if cfo_ni is not None else "Cash quality · CFO/Net Income —"
+        )
+        if leverage is not None:
+            p.add_run(f"   ·   Net debt/FCF {float(leverage):.1f}x")
+        p.paragraph_format.space_after = Pt(6)
+        for rr in p.runs: rr.font.size = Pt(9.5); rr.font.color.rgb = _docx_hex("#607384")
+
+    _docx_add_heading(doc, "Thesis / variant perception", 1)
+    _docx_two_panel(doc, "Thesis", data.get("thesis") or "—", "Counter-evidence", data.get("counter_evidence") or "—",
+                    left_fill="EAF2F8", right_fill="F8ECEC")
+    _docx_two_panel(doc, "Market view", data.get("variant_market") or "—", "Our variant", data.get("variant_us") or "—",
+                    left_fill="F4F7F9", right_fill="EDF4FA")
+
+    _docx_add_heading(doc, "Evidence", 1)
+    for_rows = data.get("supporting") or []
+    against_rows = data.get("opposing") or []
+    for_text = "\n".join(f"• {r.get('label') or 'Evidence'} — {r.get('detail') or ''}" for r in for_rows[:7]) or "—"
+    against_text = "\n".join(f"• {r.get('label') or 'Evidence'} — {r.get('detail') or ''}" for r in against_rows[:7]) or "—"
+    _docx_two_panel(doc, "FOR", for_text, "AGAINST", against_text, left_fill="EAF5EF", right_fill="F8ECEC")
+    score = data.get("score")
+    if score is not None or data.get("blockers"):
+        diagnostic = f"Diagnostic score {float(score):+.2f}" if score is not None else "Diagnostic score —"
+        if data.get("blockers"):
+            diagnostic += "   ·   BLOCKER: " + " | ".join(str(x) for x in data["blockers"][:3])
+        p = doc.add_paragraph(diagnostic); p.paragraph_format.space_after = Pt(6)
+        if p.runs: p.runs[0].font.size = Pt(9.5); p.runs[0].font.color.rgb = _docx_hex("#607384")
 
     _docx_add_heading(doc, "Research lenses", 1)
-    lens_table = doc.add_table(rows=1, cols=2)
-    lens_table.style = "Table Grid"
-    lens_table.cell(0,0).text = "Lens"; lens_table.cell(0,1).text = "State"
+    lens_table = doc.add_table(rows=1, cols=2); lens_table.style = "Table Grid"
+    _docx_cell(lens_table.cell(0,0), "LENS", bold=True, size=9, color="#0B1F33")
+    _docx_cell(lens_table.cell(0,1), "STATE", bold=True, size=9, color="#0B1F33")
+    _docx_shade(lens_table.cell(0,0), "EAF0F5"); _docx_shade(lens_table.cell(0,1), "EAF0F5")
     for row in data.get("decision_lenses") or []:
         cells = lens_table.add_row().cells
-        cells[0].text = str(row.get("label") or row.get("key") or "")
-        cells[1].text = str(row.get("state") or "")
+        _docx_cell(cells[0], str(row.get("label") or row.get("key") or ""), size=9.5)
+        _docx_cell(cells[1], str(row.get("state") or ""), bold=True, size=9.5, color="#3A6F99")
 
     implied = data.get("implied_expectations") or {}
     if implied.get("available"):
         _docx_add_heading(doc, "Price-implied expectations", 1)
-        p = doc.add_paragraph(f"Overall: {implied.get('classification')} · {implied.get('method')}")
-        p.paragraph_format.space_after = Pt(4)
         t_imp = doc.add_table(rows=1, cols=4); t_imp.style = "Table Grid"
-        for i,v in enumerate(["Driver","Market-implied","Our Base","Read"]): t_imp.cell(0,i).text=v
+        for i,v in enumerate(["Driver","Market-implied","Our Base","Read"]):
+            _docx_cell(t_imp.cell(0,i), v.upper(), bold=True, size=8.5, color="#0B1F33"); _docx_shade(t_imp.cell(0,i), "EAF0F5")
         for row in implied.get("drivers") or []:
             cells=t_imp.add_row().cells
-            unit=row.get("unit")
-            market=row.get("market_implied"); base=row.get("base")
+            unit=row.get("unit"); market=row.get("market_implied"); base=row.get("base")
             vals=[
                 str(row.get("label") or ""),
                 (f"{float(market)*100:.1f}%" if unit=="%" and market is not None else f"{float(market):.1f}x" if market is not None else "—"),
                 (f"{float(base)*100:.1f}%" if unit=="%" and base is not None else f"{float(base):.1f}x" if base is not None else "—"),
                 str(row.get("read") or ""),
             ]
-            for i,v in enumerate(vals): cells[i].text=v
-
-    _docx_add_heading(doc, "Evidence for / against", 1)
-    for label,key in [("For","supporting"),("Against","opposing")]:
-        _docx_add_heading(doc,label,2)
-        rows=data[key]
-        if rows:
-            for row in rows[:8]: doc.add_paragraph(f"{row.get('label','Evidence')} — {row.get('detail','')}", style="List Bullet")
-        else: _docx_add_text(doc,"No weighted evidence stored.")
+            for i,v in enumerate(vals): _docx_cell(cells[i], v, size=9.2)
 
     if data["mode"] == "full":
+        doc.add_page_break()
+        _docx_add_heading(doc, "Full research detail", 1)
         for label,key in [
             ("Business","business"),("Fundamentals","numbers"),("Expectations","expectations_summary"),
             ("Valuation","valuation_notes"),("Bear Case","bear_case_summary"),("Catalysts","catalysts_summary"),
             ("Financial Flows","flows_summary"),("Management","management_summary"),("Tape / Flows","tape_summary"),
-            ("Research invalidation / risk summary","risk_summary"),
+            ("Research invalidation","risk_summary"),
         ]:
-            _docx_add_heading(doc,label,1); _docx_add_text(doc,data[key])
+            _docx_add_heading(doc,label,2); _docx_add_text(doc,data.get(key) or "—")
 
         fundamentals = data.get("fundamentals_history") or []
         if fundamentals:
             _docx_add_heading(doc, "Fundamentals history", 1)
             tf = doc.add_table(rows=1, cols=8); tf.style = "Table Grid"
-            for i,v in enumerate(["Period","Revenue","Op margin","FCF","Inv/Rev","Rec/Rev","CFO/NI","Shares YoY"]):
-                tf.cell(0,i).text = v
+            headers=["Period","Revenue","Op margin","FCF","Inv/Rev","Rec/Rev","CFO/NI","ROIC"]
+            for i,v in enumerate(headers):
+                _docx_cell(tf.cell(0,i), v.upper(), bold=True, size=8, color="#0B1F33"); _docx_shade(tf.cell(0,i), "EAF0F5")
             for row in fundamentals[-8:]:
-                cells = tf.add_row().cells
-                vals = [
-                    row.get("period") or "—",
-                    _money(row.get("revenue")),
-                    _pct(row.get("operating_margin_pct")),
-                    _money(row.get("fcf")),
-                    _pct(row.get("inventory_to_revenue_pct")),
+                cells=tf.add_row().cells
+                vals=[
+                    row.get("period") or "—", _money(row.get("revenue")), _pct(row.get("operating_margin_pct")),
+                    _money(row.get("fcf")), _pct(row.get("inventory_to_revenue_pct")),
                     _pct(row.get("receivables_to_revenue_pct")),
                     (f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"),
-                    _pct(row.get("share_count_growth_pct")),
+                    _pct(row.get("roic_pct")),
                 ]
-                for i,v in enumerate(vals): cells[i].text = str(v)
+                for i,v in enumerate(vals): _docx_cell(cells[i], str(v), size=8.8)
 
-        if data["expectations"]:
+        if data.get("expectations"):
             _docx_add_heading(doc,"Expectation variants",1)
             t=doc.add_table(rows=1,cols=5); t.style="Table Grid"
-            for i,v in enumerate(["Metric","Period","Market","Ours","Confidence"]): t.cell(0,i).text=v
+            for i,v in enumerate(["Metric","Period","Market","Ours","Confidence"]):
+                _docx_cell(t.cell(0,i),v.upper(),bold=True,size=8.5); _docx_shade(t.cell(0,i),"EAF0F5")
             for row in data["expectations"]:
                 cells=t.add_row().cells
                 vals=[row["metric"],row["period"],str(row["market"] if row["market"] is not None else "—"),str(row["ours"] if row["ours"] is not None else "—"),row["confidence"]]
-                for i,v in enumerate(vals): cells[i].text=v
+                for i,v in enumerate(vals): _docx_cell(cells[i],v,size=9)
 
-        tri = data.get("triangulation") or {}
+        tri=data.get("triangulation") or {}
         if tri.get("available"):
             _docx_add_heading(doc,"Automatic triangulation",1)
             _docx_add_text(doc, f"{tri.get('method')} · SIC {tri.get('sic') or '—'} · {len(tri.get('peers') or [])} peers")
             for row in (tri.get("signals") or [])[:8]:
                 doc.add_paragraph(f"{row.get('state')} · {row.get('detail')}", style="List Bullet")
 
-        promises = data.get("management_promises") or []
+        promises=data.get("management_promises") or []
         if promises:
             _docx_add_heading(doc,"Management promises vs actuals",1)
             t_prom=doc.add_table(rows=1,cols=5); t_prom.style="Table Grid"
-            for i,v in enumerate(["FY","Metric","Promise","Actual","Status"]): t_prom.cell(0,i).text=v
+            for i,v in enumerate(["FY","Metric","Promise","Actual","Status"]):
+                _docx_cell(t_prom.cell(0,i),v.upper(),bold=True,size=8.5); _docx_shade(t_prom.cell(0,i),"EAF0F5")
             for row in promises[:20]:
                 cells=t_prom.add_row().cells
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
                 promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
                 vals=[str(row.get("target_year") or ""),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")]
-                for i,v in enumerate(vals): cells[i].text=v
+                for i,v in enumerate(vals): _docx_cell(cells[i],v,size=9)
 
         tape=data.get("tape_metrics") or {}
         _docx_add_heading(doc,"Tape / positioning context",1)
         _docx_add_text(doc, " · ".join([
             f"Regime {tape.get('regime') or '—'}",
+            f"Posture {tape.get('posture') or '—'}",
+            f"Pressure {tape.get('pressure_direction') or '—'}",
             f"Confidence {tape.get('confidence') or '—'}",
-            f"Put/Call OI {tape.get('put_call_oi'):.2f}" if tape.get("put_call_oi") is not None else "Put/Call OI —",
-            f"Borrow {tape.get('borrow_status') or 'unknown'}",
             f"Net tape {tape.get('net_tape'):.1f}" if tape.get("net_tape") is not None else "Net tape —",
         ]))
 
         _docx_add_heading(doc,"Sources",1)
-        for row in data["sources"][:30]:
+        for row in data.get("sources",[])[:30]:
             doc.add_paragraph(f"{row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}", style="List Bullet")
 
     footer=doc.sections[0].footer.paragraphs[0]
-    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'}"
+    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'} · {data['ticker']}"
     footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
 
     out=BytesIO(); doc.save(out); out.seek(0); return out
@@ -704,43 +820,132 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
 def render_pdf(data: dict[str, Any]) -> BytesIO:
     if not _load_report_libs():
         return _fallback_pdf(_plain_research_lines(data))
+
     out=BytesIO()
-    doc=SimpleDocTemplate(out,pagesize=LETTER,rightMargin=.55*inch,leftMargin=.55*inch,topMargin=.5*inch,bottomMargin=.5*inch)
+    doc=SimpleDocTemplate(out,pagesize=LETTER,rightMargin=.48*inch,leftMargin=.48*inch,topMargin=.42*inch,bottomMargin=.55*inch)
     styles=getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="MFTitle",parent=styles["Title"],fontSize=18,leading=21,textColor=colors.HexColor("#0b1f33"),alignment=TA_LEFT,spaceAfter=6))
-    styles.add(ParagraphStyle(name="MFH2",parent=styles["Heading2"],fontSize=13,leading=16,textColor=colors.HexColor("#1f4e79"),spaceBefore=8,spaceAfter=4))
+    styles.add(ParagraphStyle(name="MFTitle",parent=styles["Title"],fontSize=20,leading=23,textColor=colors.HexColor("#0b1f33"),alignment=TA_LEFT,spaceAfter=2))
+    styles.add(ParagraphStyle(name="MFMeta",parent=styles["BodyText"],fontSize=9.2,leading=11,textColor=colors.HexColor("#607384"),spaceAfter=5))
+    styles.add(ParagraphStyle(name="MFH2",parent=styles["Heading2"],fontSize=12.5,leading=15,textColor=colors.HexColor("#1f4e79"),spaceBefore=8,spaceAfter=4))
     styles.add(ParagraphStyle(name="MFBody",parent=styles["BodyText"],fontSize=10.5,leading=14,spaceAfter=5))
-    brand = data.get("branding") or {}
+    styles.add(ParagraphStyle(name="MFSmall",parent=styles["BodyText"],fontSize=8.8,leading=11,textColor=colors.HexColor("#607384"),spaceAfter=2))
+    styles.add(ParagraphStyle(name="MFKpiLabel",parent=styles["BodyText"],fontSize=7.7,leading=9,textColor=colors.HexColor("#607384"),alignment=1))
+    styles.add(ParagraphStyle(name="MFKpiValue",parent=styles["BodyText"],fontSize=10.5,leading=12,textColor=colors.HexColor("#0b1f33"),alignment=1))
+    brand=data.get("branding") or {}
     story=[]
-    logo = _safe_logo(str(brand.get("logo_url") or ""))
-    if logo:
-        story += [RLImage(logo, width=1.1*inch, height=.38*inch), Spacer(1,4)]
-    subtitle = f"{brand.get('title') or 'Market Forensics'} · {data['action']} · {data['stance']} · {data['confidence']} confidence"
-    if brand.get("prepared_by"):
-        subtitle += f" · Prepared by {brand['prepared_by']}"
-    story += [Paragraph(f"{data['ticker']} · {data['company']}",styles["MFTitle"]),
-              Paragraph(escape(subtitle),styles["MFBody"])]
-    grid=[
-        ["Market","Bear","Base","Bull","Base gap","Validate"],
-        [_money(data["market_price"]),_money(data["bear"]),_money(data["base"]),_money(data["bull"]),_pct(data["base_gap_pct"]),data["validation_state"]],
+
+    def kpi_strip(items):
+        rows=[
+            [Paragraph(escape(str(label).upper()),styles["MFKpiLabel"]) for label,_ in items],
+            [Paragraph(escape(str(value if value not in (None,"") else "—")),styles["MFKpiValue"]) for _,value in items],
+        ]
+        widths=[6.55*inch/len(items)]*len(items)
+        table=Table(rows,colWidths=widths)
+        table.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),
+            ("BACKGROUND",(0,1),(-1,1),colors.white),
+            ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),
+            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
+            ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),
+        ]))
+        story.extend([table,Spacer(1,5)])
+
+    logo=_safe_logo(str(brand.get("logo_url") or ""))
+    if logo: story += [RLImage(logo,width=1.0*inch,height=.34*inch),Spacer(1,2)]
+    story += [
+        Paragraph(escape(str(brand.get("title") or "Market Forensics").upper()),styles["MFSmall"]),
+        Paragraph(f"{escape(str(data['ticker']))} · {escape(str(data['company']))}",styles["MFTitle"]),
+        Paragraph(escape(" · ".join(x for x in [data.get("sector"),data.get("industry"),data.get("market_provider"),data.get("market_as_of")] if x)),styles["MFMeta"]),
     ]
-    t=Table(grid,colWidths=[1.05*inch]*6)
-    t.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#b8c4ce")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9.5),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5)]))
-    story += [t,Spacer(1,8)]
-    chart = _valuation_chart_png(data)
-    story += [RLImage(chart, width=6.6*inch, height=1.52*inch), Spacer(1,6)]
 
-    def section(title: str, body: str):
-        story.append(Paragraph(escape(title),styles["MFH2"]))
-        story.append(Paragraph(escape(body or "—"),styles["MFBody"]))
+    story.append(Paragraph("Research intelligence",styles["MFH2"]))
+    kpi_strip([
+        ("Conclusion",data.get("action") or "DATA REVIEW"),
+        ("Bias",data.get("bias") or "NEUTRAL"),
+        ("Confidence",data.get("confidence") or "UNVALIDATED"),
+        ("Base gap",_pct(data.get("base_gap_pct"))),
+        ("Validate",data.get("validation_state") or "NOT RUN"),
+    ])
+    signals=[]
+    for row in (data.get("top_signals") or [])[:3]:
+        signals.append(f"<b>{escape(str(row.get('label') or 'Signal'))}</b> — {escape(str(row.get('detail') or ''))}")
+    if data.get("warnings"):
+        signals.append("<b>WATCH</b> — "+escape(str(data["warnings"][0])))
+    if signals:
+        st=Table([[Paragraph(" &nbsp; • &nbsp; ".join(signals),styles["MFSmall"])]],colWidths=[6.55*inch])
+        st.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#f4f7f9")),("BOX",(0,0),(-1,-1),.4,colors.HexColor("#d8e1e7")),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
+        story += [st,Spacer(1,4)]
 
-    section("Thesis",data["thesis"]); section("Counter-evidence",data["counter_evidence"])
-    section("Market view",data["variant_market"]); section("Our variant",data["variant_us"])
+    story.append(Paragraph("Valuation map",styles["MFH2"]))
+    kpi_strip([
+        ("Market",_money(data.get("market_price"))),
+        ("Bear",_money(data.get("bear"))),
+        ("Base",_money(data.get("base"))),
+        ("Bull",_money(data.get("bull"))),
+        ("Expected value",_money(data.get("expected_value"))),
+        ("Readiness",data.get("readiness") or "—"),
+    ])
+    chart=_valuation_chart_png(data)
+    story += [RLImage(chart,width=6.55*inch,height=1.34*inch),Spacer(1,3)]
+
+    current=dict(data.get("current_fundamentals") or {})
+    if current:
+        story.append(Paragraph("Current fundamentals",styles["MFH2"]))
+        kpi_strip([
+            ("Basis",current.get("period") or "—"),
+            ("Revenue",_money(current.get("revenue"))),
+            ("Gross margin",_pct(current.get("gross_margin_pct"))),
+            ("Op margin",_pct(current.get("operating_margin_pct"))),
+            ("FCF margin",_pct(current.get("fcf_margin_pct"))),
+            ("ROIC",_pct(current.get("roic_pct"))),
+        ])
+        quality=[]
+        if current.get("cfo_to_net_income") is not None: quality.append(f"CFO / Net income {float(current['cfo_to_net_income']):.2f}x")
+        if current.get("net_debt_to_fcf") is not None: quality.append(f"Net debt / FCF {float(current['net_debt_to_fcf']):.1f}x")
+        if quality: story.append(Paragraph(escape(" · ".join(quality)),styles["MFSmall"]))
+
+    story.append(Paragraph("Thesis / variant perception",styles["MFH2"]))
+    thesis_table=Table([
+        [Paragraph("<b>THESIS</b>",styles["MFSmall"]),Paragraph("<b>COUNTER-EVIDENCE</b>",styles["MFSmall"])],
+        [Paragraph(escape(data.get("thesis") or "—"),styles["MFBody"]),Paragraph(escape(data.get("counter_evidence") or "—"),styles["MFBody"])],
+        [Paragraph("<b>MARKET VIEW</b>",styles["MFSmall"]),Paragraph("<b>OUR VARIANT</b>",styles["MFSmall"])],
+        [Paragraph(escape(data.get("variant_market") or "—"),styles["MFBody"]),Paragraph(escape(data.get("variant_us") or "—"),styles["MFBody"])],
+    ],colWidths=[3.23*inch,3.23*inch])
+    thesis_table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(0,0),colors.HexColor("#eaf2f8")),("BACKGROUND",(1,0),(1,0),colors.HexColor("#f8ecec")),
+        ("BACKGROUND",(0,2),(0,2),colors.HexColor("#f4f7f9")),("BACKGROUND",(1,2),(1,2),colors.HexColor("#edf4fa")),
+        ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#d3dde4")),("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),
+    ]))
+    story += [thesis_table,Spacer(1,4)]
+
+    story.append(Paragraph("Evidence",styles["MFH2"]))
+    def evidence_text(rows):
+        if not rows: return "—"
+        return "<br/>".join("• <b>"+escape(str(r.get("label") or "Evidence"))+"</b> — "+escape(str(r.get("detail") or "")) for r in rows[:7])
+    evidence=Table([
+        [Paragraph("<b>FOR</b>",styles["MFSmall"]),Paragraph("<b>AGAINST</b>",styles["MFSmall"])],
+        [Paragraph(evidence_text(data.get("supporting") or []),styles["MFBody"]),Paragraph(evidence_text(data.get("opposing") or []),styles["MFBody"])],
+    ],colWidths=[3.23*inch,3.23*inch])
+    evidence.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(0,0),colors.HexColor("#eaf5ef")),("BACKGROUND",(1,0),(1,0),colors.HexColor("#f8ecec")),
+        ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#d3dde4")),("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),
+    ]))
+    story += [evidence,Spacer(1,3)]
+    diagnostic=[]
+    if data.get("score") is not None: diagnostic.append(f"Diagnostic score {float(data['score']):+.2f}")
+    if data.get("blockers"): diagnostic.append("BLOCKER · "+" | ".join(str(x) for x in data["blockers"][:3]))
+    if diagnostic: story.append(Paragraph(escape(" · ".join(diagnostic)),styles["MFSmall"]))
+
     story.append(Paragraph("Research lenses",styles["MFH2"]))
-    lens_rows=[["Lens","State"]]+[[str(r.get("label") or r.get("key") or ""),str(r.get("state") or "")] for r in (data.get("decision_lenses") or [])]
-    lens_table=Table(lens_rows,colWidths=[2.6*inch,3.9*inch])
-    lens_table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9.5)]))
-    story += [lens_table,Spacer(1,6)]
+    lens_rows=[[Paragraph("<b>LENS</b>",styles["MFSmall"]),Paragraph("<b>STATE</b>",styles["MFSmall"])]]
+    lens_rows += [[Paragraph(escape(str(r.get("label") or r.get("key") or "")),styles["MFSmall"]),Paragraph("<b>"+escape(str(r.get("state") or ""))+"</b>",styles["MFSmall"])] for r in (data.get("decision_lenses") or [])]
+    lens_table=Table(lens_rows,colWidths=[3.1*inch,3.35*inch])
+    lens_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("GRID",(0,0),(-1,-1),.3,colors.HexColor("#cbd6de")),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+    story += [lens_table,Spacer(1,4)]
+
     implied=data.get("implied_expectations") or {}
     if implied.get("available"):
         story.append(Paragraph("Price-implied expectations · "+escape(str(implied.get("classification") or "")),styles["MFH2"]))
@@ -753,23 +958,36 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
                 (f"{float(bv)*100:.1f}%" if unit=="%" and bv is not None else f"{float(bv):.1f}x" if bv is not None else "—"),
                 str(row.get("read") or ""),
             ])
-        tt=Table(rows,colWidths=[2.35*inch,1.35*inch,1.35*inch,1.45*inch])
-        tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9)]))
-        story += [tt,Spacer(1,6)]
-
-    story.append(Paragraph("Evidence for / against",styles["MFH2"]))
-    for label,key in [("FOR","supporting"),("AGAINST","opposing")]:
-        rows=data[key][:6]
-        text="<b>"+escape(label)+"</b><br/>"+("<br/>".join("• "+escape(str(r.get("label","Evidence")))+" — "+escape(str(r.get("detail",""))) for r in rows) if rows else "—")
-        story.append(Paragraph(text,styles["MFBody"]))
+        tt=Table(rows,colWidths=[2.2*inch,1.25*inch,1.25*inch,1.75*inch])
+        tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.3,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.8),("VALIGN",(0,0),(-1,-1),"TOP")]))
+        story += [tt,Spacer(1,5)]
 
     if data["mode"] == "full":
+        story.append(PageBreak())
+        story.append(Paragraph("Full research detail",styles["MFTitle"]))
         for label,key in [
             ("Business","business"),("Fundamentals","numbers"),("Expectations","expectations_summary"),
             ("Valuation","valuation_notes"),("Bear Case","bear_case_summary"),("Catalysts","catalysts_summary"),
             ("Financial Flows","flows_summary"),("Management","management_summary"),("Tape / Flows","tape_summary"),
-            ("Research invalidation / risk summary","risk_summary"),
-        ]: section(label,data[key])
+            ("Research invalidation","risk_summary"),
+        ]:
+            story.append(Paragraph(escape(label),styles["MFH2"]))
+            story.append(Paragraph(escape(data.get(key) or "—"),styles["MFBody"]))
+
+        fundamentals=data.get("fundamentals_history") or []
+        if fundamentals:
+            story.append(Paragraph("Fundamentals history",styles["MFH2"]))
+            rows=[["Period","Revenue","Op %","FCF","Inv/Rev","Rec/Rev","CFO/NI","ROIC"]]
+            for row in fundamentals[-8:]:
+                rows.append([
+                    str(row.get("period") or "—"),_money(row.get("revenue")),_pct(row.get("operating_margin_pct")),
+                    _money(row.get("fcf")),_pct(row.get("inventory_to_revenue_pct")),_pct(row.get("receivables_to_revenue_pct")),
+                    (f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"),_pct(row.get("roic_pct")),
+                ])
+            ft=Table(rows,colWidths=[.52*inch,.92*inch,.55*inch,.86*inch,.72*inch,.72*inch,.62*inch,.62*inch],repeatRows=1)
+            ft.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.3,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.2),("VALIGN",(0,0),(-1,-1),"TOP")]))
+            story += [ft,Spacer(1,5)]
+
         tri=data.get("triangulation") or {}
         if tri.get("available"):
             story.append(Paragraph("Automatic triangulation",styles["MFH2"]))
@@ -785,25 +1003,33 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
                 promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
                 rows.append([str(row.get("target_year") or ""),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")])
-            tt=Table(rows,colWidths=[.55*inch,1.45*inch,1.9*inch,1.15*inch,.85*inch])
-            tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),9)]))
-            story += [tt,Spacer(1,6)]
+            tt=Table(rows,colWidths=[.5*inch,1.35*inch,1.8*inch,1.1*inch,1.0*inch],repeatRows=1)
+            tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.3,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.7),("VALIGN",(0,0),(-1,-1),"TOP")]))
+            story += [tt,Spacer(1,5)]
 
         tape=data.get("tape_metrics") or {}
-        section("Tape / positioning context"," · ".join([
-            f"Regime {tape.get('regime') or '—'}",
-            f"Confidence {tape.get('confidence') or '—'}",
-            f"Put/Call OI {tape.get('put_call_oi'):.2f}" if tape.get("put_call_oi") is not None else "Put/Call OI —",
-            f"Borrow {tape.get('borrow_status') or 'unknown'}",
+        story.append(Paragraph("Tape / positioning context",styles["MFH2"]))
+        story.append(Paragraph(escape(" · ".join([
+            f"Regime {tape.get('regime') or '—'}",f"Posture {tape.get('posture') or '—'}",
+            f"Pressure {tape.get('pressure_direction') or '—'}",f"Confidence {tape.get('confidence') or '—'}",
             f"Net tape {tape.get('net_tape'):.1f}" if tape.get("net_tape") is not None else "Net tape —",
-        ]))
+        ])),styles["MFBody"]))
 
-        if data["sources"]:
-            story.append(PageBreak()); story.append(Paragraph("Sources",styles["MFH2"]))
+        if data.get("sources"):
+            story.append(PageBreak()); story.append(Paragraph("Sources / audit",styles["MFTitle"]))
             for row in data["sources"][:30]:
                 story.append(Paragraph("• "+escape(f"{row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}"),styles["MFBody"]))
 
-    doc.build(story)
+    def footer(canvas, _doc):
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#d6e0e7")); canvas.setLineWidth(.4)
+        canvas.line(.48*inch,.38*inch,7.9*inch,.38*inch)
+        canvas.setFillColor(colors.HexColor("#607384")); canvas.setFont("Helvetica",7.5)
+        canvas.drawString(.48*inch,.22*inch,f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'} · {data['ticker']}")
+        canvas.drawRightString(7.9*inch,.22*inch,f"Page {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    doc.build(story,onFirstPage=footer,onLaterPages=footer)
     out.seek(0); return out
 
 
