@@ -174,7 +174,7 @@ def test_021_report_exports_work_and_are_control_only(tmp_path, monkeypatch):
     assert executive.status_code==200 and executive.data.startswith(b"%PDF-")
     assert full.status_code==200 and full.data.startswith(b"%PDF-")
     assert word.status_code==200 and word.data.startswith(b"PK")
-    assert "0.2.1" in executive.headers.get("Content-Disposition","")
+    assert Path("VERSION").read_text().strip() in executive.headers.get("Content-Disposition","")
 
 
 def test_021_semantic_dark_flow_and_mobile_contracts_are_centralized():
@@ -207,4 +207,4 @@ def test_021_manage_has_remove_only_and_release_is_clean():
     assert company.count("Executive PDF")==1
     assert company.count("snapshot_company")==1
     assert ".publish-readiness{" in css
-    assert Path("VERSION").read_text().strip()=="0.2.1"
+    assert Path("VERSION").read_text().strip()=="0.2.2"
