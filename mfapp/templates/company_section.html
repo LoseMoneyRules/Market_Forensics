@@ -85,7 +85,7 @@
         <div class="evidence-column evidence-signals">
           <h3>SIGNALS</h3>
           {% for signal in intelligence.signals[:8] %}
-          <div class="evidence-signal-compact"><span><strong>{{ signal.label }}</strong> · {{ signal.detail }}</span><small>{{ signal.tone|upper }}</small></div>
+          <div class="evidence-signal-compact tone-{{ signal.tone }}" data-status-value="{{ signal.tone }}"><span><strong>{{ signal.label }}</strong> · {{ signal.detail }}</span><small>{{ signal.tone|upper }}</small></div>
           {% else %}<p class="muted">Refresh SEC and market evidence to populate signals.</p>{% endfor %}
         </div>
       </div>
@@ -169,7 +169,7 @@
       <div class="current-kpi"><span>FCF margin</span><strong>{{ pct(current_financial.metrics.fcf_margin_pct) if current_financial else '—' }}</strong></div>
       <div class="current-kpi"><span>CFO / Net income</span><strong>{% if current_financial and current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div>
       <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.roic_pct is none %}Needs operating income, tax, debt, equity & cash{% else %}NOPAT / invested capital{% endif %}</small></div>
-      <div class="current-kpi"><span>Net debt / FCF</span><strong>{% if current_financial and current_financial.metrics.net_debt_to_fcf is not none %}{{ '%.1f'|format(current_financial.metrics.net_debt_to_fcf) }}x{% else %}—{% endif %}</strong></div>
+      <div class="current-kpi"><span>Net debt / FCF</span><strong>{% if leverage_display and leverage_display.value is not none %}{{ '%.1f'|format(leverage_display.value) }}x{% else %}—{% endif %}</strong><small>{% if leverage_display and leverage_display.value is not none %}{{ leverage_display.basis }}{% else %}{{ leverage_display.reason if leverage_display else 'Debt/cash or positive FCF unavailable' }}{% endif %}</small></div>
     </div>
     <div class="panel numbers-data-quality">
       <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>What the Fundamentals page is actually built from</h2></div><span class="status-chip" data-status-value="{{ 'PASS' if numbers_completeness.ttm_ready else 'REVIEW' }}">{{ 'TTM READY' if numbers_completeness.ttm_ready else 'FY / PARTIAL' }}</span></div>
@@ -297,6 +297,9 @@
         <div><span>Battle intensity</span><strong>{{ '%.0f'|format(tm.battle_intensity) if tm.battle_intensity is not none else '—' }}</strong><small>Volume / turnover / positioning conflict</small></div>
         <div><span>Net tape</span><strong>{{ '%+.1f'|format(tm.net_tape) if tm.net_tape is not none else '—' }}</strong><small>Context only — never intrinsic value</small></div>
         <div><span>Tape rank</span><strong>{{ '%.0f'|format(tm.rank_score) if tm.rank_score is not none else '—' }}</strong><small>0–100 internal context rank</small></div>
+        <div class="tape-context-card {{ tm.posture_tone or 'watch' }}"><span>Tape posture</span><strong>{{ tm.posture or 'WAIT' }}</strong><small>Context only — confirms or contradicts evidence; never changes intrinsic value by itself.</small></div>
+        <div class="tape-context-card {{ tm.pressure_tone or 'watch' }}"><span>Directional pressure</span><strong>{{ tm.pressure_direction or 'LATERAL' }}</strong><small>{{ tm.pressure_detail or 'Long and short evidence are not separated enough.' }}</small></div>
+        <div class="tape-context-card info"><span>Next confirmation</span><strong>{{ tm.confirmation_state or 'NEEDS EVIDENCE' }}</strong><small>{{ tm.next_confirmation or 'Refresh market, FINRA and positioning evidence.' }}</small></div>
       </div>
     </div>
     <div class="kpi-grid">
@@ -319,6 +322,15 @@
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='tape') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Flow interpretation</h2><button class="button primary">Save</button></div><textarea name="text" rows="8">{{ research.tape_summary|clean_auto }}</textarea></form>
 
   {% elif section == 'monitoring' %}
+    <div class="panel monitoring-how">
+      <div class="panel-head"><div><p class="eyebrow">HOW MONITORING WORKS</p><h2>Proposal → committed rule → observation / alert</h2><p class="muted">The automatic schedule below is guidance. Only rules you commit under Approved/active rules become persistent monitoring rules.</p></div><span class="status-chip">THESIS FIRST</span></div>
+      <div class="monitoring-how-grid">
+        <div><span>1 · Proposed schedule</span><strong>Automatic guidance</strong><p>Market Forensics suggests what to watch and when from valuation and operating evidence. These cards do not create thresholds by themselves.</p></div>
+        <div><span>2 · Active rule</span><strong>Your committed threshold</strong><p>Numeric rules using stored metrics are checked automatically during unattended monitoring. You can also record a manual observation at any time.</p></div>
+        <div><span>3 · Trigger / history</span><strong>Exception becomes evidence</strong><p>A breached rule writes Monitoring History and can create an alert. A locked pre-investment threshold cannot be edited retroactively.</p></div>
+      </div>
+      <p class="monitoring-metrics-note"><strong>Auto-readable metrics include:</strong> price, revenue, FCF, net income, Bear/Base/Bull/Expected Value and stored financial metrics such as revenue growth, gross/operating/FCF margin, CFO/NI, Net debt/FCF, DSO/DIO/DPO and cash-conversion days.</p>
+    </div>
     <div class="panel monitoring-exceptions">
       <div class="panel-head"><div><p class="eyebrow">EXCEPTIONS FIRST</p><h2>What changed / needs attention</h2></div><span class="status-chip">{{ monitor_exceptions|length + monitor_alerts|length }}</span></div>
       {% if monitor_exceptions %}
@@ -335,7 +347,7 @@
       <label>Thesis invalidation<textarea name="thesis_invalidation" rows="4" {% if risk.invalidation_locked_at %}readonly{% endif %}>{{ risk.thesis_invalidation }}</textarea></label>
       {% if not risk.invalidation_locked_at %}<label class="checkbox"><input type="checkbox" name="lock_invalidation" value="1"> Lock this thesis invalidation before capital is committed</label><button class="button primary" type="submit">Save invalidation</button>{% endif %}
     </form>
-    <div class="panel"><div class="panel-head"><div><p class="eyebrow">WHAT NEXT</p><h2>Monitoring schedule</h2></div><span class="status-chip">Evidence-driven</span></div><div class="monitor-plan">{% for p in monitor_plan %}<div class="monitor-plan-card"><div class="list-row"><h3>{{ p.name }}</h3><span class="status-chip">{{ p.severity }}</span></div><p><strong>When:</strong> {{ p.cadence }} · next {{ p.next_review }}</p><p><strong>Trigger:</strong> {{ p.trigger }}</p><p>{{ p.why }}</p></div>{% endfor %}</div></div>
+    <div class="panel"><div class="panel-head"><div><p class="eyebrow">WHAT NEXT · PROPOSED</p><h2>Monitoring schedule</h2><p class="muted">Suggested cadence and triggers only. Commit the thresholds you actually want enforced in Active rules below.</p></div><span class="status-chip">GUIDANCE</span></div><div class="monitor-plan">{% for p in monitor_plan %}<div class="monitor-plan-card"><div class="list-row"><h3>{{ p.name }}</h3><span class="status-chip">{{ p.severity }}</span></div><p><strong>When:</strong> {{ p.cadence }} · next {{ p.next_review }}</p><p><strong>Trigger:</strong> {{ p.trigger }}</p><p>{{ p.why }}</p></div>{% endfor %}</div></div>
     <div class="two-col"><div class="panel"><h2>Approved/active rules</h2>{% for r in monitor_rules %}<div class="monitor-rule"><div class="list-row"><div><strong>{{ r.name }}</strong><p>{{ r.metric }} {{ r.operator }} {{ r.threshold_value or r.threshold_text }} {{ r.unit }}</p></div><span class="status-chip">{{ r.severity }}</span></div><form class="inline-observation" method="post" action="{{ url_for('web.update_monitoring', ticker=security.ticker, rule_id=r.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="observed_value" placeholder="Observed"><select name="status"><option>OK</option><option selected>WATCH</option><option>FAIL</option></select><input name="note" placeholder="Observation"><button class="button small">Record</button></form></div>{% else %}<p class="muted">No manually committed rules. The proposed schedule above is guidance until you add/lock rules.</p>{% endfor %}</div><form class="panel stack" method="post" action="{{ url_for('web.add_monitoring', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>Add / commit rule</h2><label>Name<input name="name" required></label><label>Metric<input name="metric"></label><div class="form-grid two"><label>Operator<input name="operator" value="NOTE"></label><label>Numeric threshold<input name="threshold_value"></label></div><label>Text threshold<input name="threshold_text"></label><div class="form-grid two"><label>Unit<input name="unit"></label><label>Severity<select name="severity"><option>INFO</option><option selected>WATCH</option><option>FAIL</option></select></label></div><label class="checkbox"><input type="checkbox" name="locked_pre_investment" value="1"> Lock pre-investment invalidation threshold</label><button class="button primary">Add rule</button></form></div>
 
   {% elif section == 'journal' %}
