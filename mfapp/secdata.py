@@ -274,7 +274,12 @@ def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> S
         url=f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json",
         retrieved_at=utcnow(),
         content_hash=content_hash,
-        meta={"cik": meta["cik"], "user_agent_present": bool(user_agent)},
+        meta={
+            "cik": meta["cik"],
+            "sic": meta.get("sic") or "",
+            "sic_description": meta.get("sic_description") or "",
+            "user_agent_present": bool(user_agent),
+        },
     )
     db.session.add(source)
     db.session.flush()

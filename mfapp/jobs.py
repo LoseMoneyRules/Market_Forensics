@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import requests
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -17,6 +18,9 @@ from .data_providers import latest_snapshot, provider_status, refresh_security_q
 from .extensions import db
 from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
 from .historical_engine import run_historical_test
+from .management_promises import extract_promises, html_to_text, store_promises
+from .market_discovery import market_scan
+from .positioning import refresh_positioning_bundle
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
@@ -148,39 +152,119 @@ def _deep_validation(company_id: int, coverage_id: int | None) -> dict[str, Any]
 
 
 def _management_scan(company: Company, security: Security, user_id: int, limit: int = 24) -> dict[str, Any]:
-    ua = sec_user_agent(user_id); meta = sec_ticker_meta(security.ticker, ua); submissions = sec_json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", ua)
-    recent = (submissions.get("filings") or {}).get("recent") or {}; forms = recent.get("form") or []; accns = recent.get("accessionNumber") or []; filed = recent.get("filingDate") or []; docs = recent.get("primaryDocument") or []; stored = 0
-    for i, form in enumerate(forms[:max(1, min(limit, 100))]):
-        if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}: continue
-        accn = str(accns[i] if i < len(accns) else "")
-        if not accn or Source.query.filter_by(company_id=company.id, provider="SEC", accession_no=accn).first(): continue
-        doc = str(docs[i] if i < len(docs) else ""); filing_date = str(filed[i] if i < len(filed) else ""); accession_path = accn.replace("-", "")
-        url = f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/{accession_path}/{doc}" if doc else ""
-        source = Source(company_id=company.id, provider="SEC", source_type="FILING", title=f"{security.ticker} {form} {filing_date}", url=url, accession_no=accn,
-                        published_at=datetime.fromisoformat(filing_date) if filing_date else None, retrieved_at=utcnow(), meta={"form": form, "cik": meta["cik"]})
-        db.session.add(source); db.session.flush(); db.session.add(Event(company_id=company.id, source_id=source.id, event_type=f"SEC_{form.replace(' ','_').replace('-','_')}", title=source.title, event_date=source.published_at or utcnow(), payload={"form": form, "accession_no": accn, "url": url})); stored += 1
-    db.session.commit(); return {"filings_stored": stored, "cik": meta["cik"], "forms_scanned": min(len(forms), limit)}
+    ua = sec_user_agent(user_id)
+    meta = sec_ticker_meta(security.ticker, ua)
+    submissions = sec_json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", ua)
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    accns = recent.get("accessionNumber") or []
+    filed = recent.get("filingDate") or []
+    docs = recent.get("primaryDocument") or []
+    stored = promises_stored = guidance_scanned = 0
 
+    for i, form in enumerate(forms[:max(1, min(limit, 100))]):
+        if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}:
+            continue
+        accn = str(accns[i] if i < len(accns) else "")
+        if not accn:
+            continue
+        doc = str(docs[i] if i < len(docs) else "")
+        filing_date = str(filed[i] if i < len(filed) else "")
+        accession_path = accn.replace("-", "")
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/{accession_path}/{doc}" if doc else ""
+
+        source = Source.query.filter_by(company_id=company.id, provider="SEC", accession_no=accn).first()
+        if source is None:
+            source = Source(
+                company_id=company.id, provider="SEC", source_type="FILING",
+                title=f"{security.ticker} {form} {filing_date}", url=url, accession_no=accn,
+                published_at=datetime.fromisoformat(filing_date) if filing_date else None,
+                retrieved_at=utcnow(), meta={"form": form, "cik": meta["cik"]},
+            )
+            db.session.add(source)
+            db.session.flush()
+            db.session.add(Event(
+                company_id=company.id, source_id=source.id,
+                event_type=f"SEC_{form.replace(' ','_').replace('-','_')}",
+                title=source.title, event_date=source.published_at or utcnow(),
+                payload={"form": form, "accession_no": accn, "url": url},
+            ))
+            stored += 1
+
+        already_scanned = Event.query.filter_by(
+            company_id=company.id, source_id=source.id, event_type="MANAGEMENT_GUIDANCE_SCAN"
+        ).first()
+        if already_scanned or not url or form not in {"10-K", "10-Q", "8-K"}:
+            continue
+
+        try:
+            response = requests.get(
+                url,
+                headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate"},
+                timeout=12,
+            )
+            if response.status_code != 200:
+                continue
+            extracted = extract_promises(html_to_text(response.text), source_id=source.id)
+            count = store_promises(company.id, extracted, source_id=source.id)
+            promises_stored += count
+            guidance_scanned += 1
+            db.session.add(Event(
+                company_id=company.id, source_id=source.id,
+                event_type="MANAGEMENT_GUIDANCE_SCAN",
+                title=f"{security.ticker} guidance scan · {accn}",
+                event_date=source.published_at or source.retrieved_at or utcnow(),
+                payload={"form": form, "accession_no": accn, "promises_found": len(extracted), "promises_stored": count},
+            ))
+        except Exception:
+            # No completion marker: a later scan may retry a transient filing fetch/parser failure.
+            continue
+
+    db.session.commit()
+    return {
+        "filings_stored": stored,
+        "guidance_filings_scanned": guidance_scanned,
+        "promises_stored": promises_stored,
+        "cik": meta["cik"],
+        "forms_scanned": min(len(forms), limit),
+    }
 
 def _discovery(user_id: int) -> dict[str, Any]:
+    """Market-wide lightweight scan plus deep-context ranking for existing Coverage."""
     from .services import readiness, valuation_result
+    scan = market_scan(user_id)
     ranked = []
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
-        if not security: continue
-        ready = readiness(coverage); val = valuation_result(coverage); price, base = val.get("current_price"), val.get("base")
+        if not security:
+            continue
+        ready = readiness(coverage)
+        val = valuation_result(coverage)
+        price, base = val.get("current_price"), val.get("base")
         gap = ((float(base) / float(price) - 1) * 100) if base is not None and price not in (None, 0) else None
-        score = ready["done"] * 5 + (min(abs(gap), 50) if gap is not None else 0); ranked.append({"ticker": security.ticker, "readiness": f"{ready['done']}/{ready['total']}", "base_gap_pct": gap, "score": round(score, 2)})
-    ranked.sort(key=lambda row: row["score"], reverse=True); return {"coverage_scanned": len(ranked), "ranked": ranked[:25]}
-
+        score = ready["done"] * 5 + (min(abs(gap), 50) if gap is not None else 0)
+        ranked.append({
+            "ticker": security.ticker,
+            "readiness": f"{ready['done']}/{ready['total']}",
+            "base_gap_pct": gap,
+            "score": round(score, 2),
+        })
+    ranked.sort(key=lambda row: row["score"], reverse=True)
+    return {
+        "coverage_scanned": len(ranked),
+        "ranked": ranked[:25],
+        "market_scan": scan,
+    }
 
 def _bulk(user_id: int) -> dict[str, Any]:
     sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
-        specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70)]
-        if sec_ready: specs.insert(1, ("SEC_INGEST", 40))
+        specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75)]
+        if sec_ready:
+            specs.insert(1, ("SEC_INGEST", 40))
+            specs.append(("MANAGEMENT_SCAN", 80))
         for kind, priority in specs:
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
             if getattr(job, "_mf_reused", False): reused += 1
@@ -209,8 +293,15 @@ def _stale(user_id: int) -> dict[str, Any]:
         last_finra = RefreshRun.query.filter_by(security_id=security.id, refresh_type="FINRA_IMPORT", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
         if last_finra is None or last_finra.finished_at is None or (now - last_finra.finished_at).total_seconds() > 24 * 3600:
             specs.append(("FINRA_IMPORT", 70))
+        last_positioning = RefreshRun.query.filter_by(security_id=security.id, refresh_type="POSITIONING_REFRESH", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
+        if last_positioning is None or last_positioning.finished_at is None or (now - last_positioning.finished_at).total_seconds() > 24 * 3600:
+            specs.append(("POSITIONING_REFRESH", 75))
+        if sec_ready:
+            last_management = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="MANAGEMENT_SCAN", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
+            if last_management is None or last_management.finished_at is None or (now - last_management.finished_at).total_seconds() > 7 * 24 * 3600:
+                specs.append(("MANAGEMENT_SCAN", 80))
         if specs:
-            specs.append(("RECALCULATE", 80))
+            specs.append(("RECALCULATE", 90))
         for kind, priority in specs:
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
             if getattr(job, "_mf_reused", False):
@@ -266,6 +357,18 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "FINRA_IMPORT":
         if not security: raise RuntimeError("Security not found")
         return _store_finra_bundle(security, refresh_finra_bundle(security.ticker, job.user_id, int((job.payload or {}).get("lookback_days") or 35)))
+    if kind == "POSITIONING_REFRESH":
+        if not security: raise RuntimeError("Security not found")
+        bundle = refresh_positioning_bundle(security.ticker, job.user_id)
+        db.session.add(Event(
+            company_id=security.company_id,
+            event_type="ALPACA_POSITIONING",
+            title=f"{security.ticker} borrow/options positioning",
+            event_date=utcnow(),
+            payload=bundle,
+        ))
+        db.session.commit()
+        return bundle
     if kind == "DEEP_VALIDATION":
         if not job.company_id: raise RuntimeError("company_id is required")
         return _deep_validation(job.company_id, coverage_id)

@@ -1,22 +1,25 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
 from mfapp.alert_engine import alert_email as account_alert_email
 from mfapp.calculations import CALCULATION_VERSION, financial_metrics
-from mfapp.core_models import Company, Coverage, MarketSnapshot, MonitoringRule, Position, RiskPlan, Security
+from mfapp.core_models import Catalyst, Company, Coverage, Event, HistoricalPrice, Job, MarketSnapshot, MonitoringRule, Position, RiskPlan, Security
 from mfapp.decision_engine import build_research_intelligence
 from mfapp.discovery_engine import classify_coverage
 from mfapp.extensions import db
 from mfapp.models import User, UserPreference
 from mfapp.readiness import research_readiness
 from mfapp.security import encrypt_secret, hash_password
-from mfapp.reporting import research_report_data
+from mfapp.reporting import get_report_branding, render_discovery_pdf, research_report_data, set_report_branding
 from mfapp.services import create_snapshot, ensure_workspace, publication_payload
 
 
@@ -130,6 +133,9 @@ def test_020_canonical_routes_and_runtime_assets(tmp_path, monkeypatch):
         "/alerts/email",
         "/alerts/subscription/<int:coverage_id>",
         "/company/<ticker>/alerts/rule/<int:rule_id>",
+        "/company/<ticker>/tape/borrow-fee",
+        "/discovery/report/pdf",
+        "/settings/report-branding",
     }
     assert expected <= routes
 
@@ -334,7 +340,10 @@ def test_020_private_report_and_publication_boundaries(tmp_path, monkeypatch):
             assert "321.5" not in report_text
             assert "27.75" not in report_text
 
-        snapshot = create_snapshot(coverage, uid)
+        snapshot = create_snapshot(coverage, uid, decision_context={
+            "research_conclusion": "LONG WATCH",
+            "lenses": [{"label": "VALUE", "state": "ATTRACTIVE"}],
+        })
         db.session.add(snapshot); db.session.commit()
         published = publication_payload(snapshot, "INSIDER")
         published_text = str(published)
@@ -343,11 +352,14 @@ def test_020_private_report_and_publication_boundaries(tmp_path, monkeypatch):
         assert "'position':" not in published_text
         assert "max_loss_pct" not in published_text
         assert "max_position_pct" not in published_text
+        assert published["decision"]["research_conclusion"] == "LONG WATCH"
 
     client = app.test_client(); login_control(client, uid)
     pdf = client.get("/company/EXM/report/pdf?mode=executive")
+    full_pdf = client.get("/company/EXM/report/pdf?mode=full")
     docx = client.get("/company/EXM/report/docx?mode=full")
     assert pdf.status_code == 200 and pdf.mimetype == "application/pdf" and len(pdf.data) > 500
+    assert full_pdf.status_code == 200 and full_pdf.mimetype == "application/pdf" and len(full_pdf.data) > 500
     assert docx.status_code == 200 and "openxmlformats" in docx.mimetype and len(docx.data) > 1000
 
 
@@ -381,3 +393,306 @@ def test_020_overview_contains_local_depth_without_separate_decide_page():
     assert "Process readiness" in company
     assert '("overview", "Overview")' in routes
     assert "decide" not in {key for key in ("decide",) if f'("{key}",' in routes}
+
+
+def test_020_price_implied_expectations_has_three_transparent_drivers(monkeypatch):
+    import mfapp.expectations_engine as engine
+    monkeypatch.setattr(engine, "current_row", lambda company_id: {
+        "revenue": 1_000_000_000,
+        "diluted_shares": 100_000_000,
+        "metrics": {"revenue_growth_pct": 5.0, "net_margin_pct": 10.0},
+    })
+    model = SimpleNamespace(scenarios=[
+        SimpleNamespace(name="BASE", inputs={"growth": 0.05, "net_margin": 0.10, "pe": 20.0}),
+    ])
+    base_price = 1_000_000_000 * (1.05 ** 5) * .10 * 20 / 100_000_000
+    result = engine.price_implied_expectations(1, model, base_price)
+    assert result["available"] is True
+    assert result["classification"] == "BALANCED"
+    assert {row["key"] for row in result["drivers"]} == {"revenue_cagr", "net_margin_y5", "exit_pe_y5"}
+    for row in result["drivers"]:
+        assert row["market_implied"] is not None
+        assert row["base"] is not None
+        assert row["read"] == "NEAR BASE"
+
+
+def test_020_mature_decision_lenses_restore_local_research_logic(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, _, _, coverage_id = seed_workspace(app)
+    import mfapp.decision_lenses as lenses_mod
+    monkeypatch.setattr(lenses_mod, "price_implied_expectations", lambda *args, **kwargs: {
+        "available": True, "classification": "BALANCED", "drivers": [], "demand_score": 0,
+    })
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        research = coverage.research
+        risk = coverage.risk_plan
+        research.variant_market = "Market expects stagnation."
+        research.variant_us = "We expect an operating recovery."
+        research.variant_evidence = "Margins and cash conversion are improving."
+        research.business = "Durable installed base and repeat service demand."
+        risk.thesis_invalidation = "Operating margin below 5% for two filings."
+        risk.invalidation_locked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.session.add(Catalyst(coverage_id=coverage.id, title="Product reset", direction="POSITIVE", status="OPEN"))
+        db.session.add(MonitoringRule(
+            coverage_id=coverage.id, name="Margin invalidation", metric="operating_margin_pct",
+            operator="<", threshold_value=Decimal("5"), unit="%", severity="FAIL",
+            locked_pre_investment=True, created_by=uid,
+        ))
+        db.session.commit()
+        result = lenses_mod.build_decision_lenses(
+            coverage=coverage,
+            company=coverage.security.company,
+            research=research,
+            risk=risk,
+            model=coverage.valuation_models[0],
+            market=coverage.security.market_snapshots[-1],
+            valuation={"base": 60, "current_price": 40},
+            intelligence={"base_gap_pct": 50, "positives": 4, "negatives": 1, "confidence": "HIGH", "warnings": []},
+            readiness={"ready_to_validate": True, "gates": [{"key": "business", "evidence_ready": True}], "validation": {"state": "VALIDATED"}},
+            management={"score": 75},
+            tape={"metrics": {"regime": "SUPPORTIVE"}},
+        )
+        assert [row["label"] for row in result["rows"]] == [
+            "BUSINESS", "VALUE", "EXPECTATIONS", "VARIANT", "PATH", "MODEL CONFIDENCE", "THESIS CONTROL"
+        ]
+        assert result["business"] == "GOOD"
+        assert result["value"] == "ATTRACTIVE"
+        assert result["expectations"] == "BALANCED"
+        assert result["variant"] == "POSITIVE EDGE"
+        assert result["path"] == "SUPPORTIVE"
+        assert result["model_confidence"] == "STRONG"
+        assert result["thesis_control"] == "CONTROLLED"
+        assert result["research_conclusion"] == "LONG READY"
+
+
+def test_020_automatic_triangulation_uses_exact_sic_and_peer_medians(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, _, _ = seed_workspace(app)
+    import mfapp.triangulation_engine as tri
+    with app.app_context():
+        p1 = Company(legal_name="Peer One", display_name="Peer One", industry="Machinery")
+        p2 = Company(legal_name="Peer Two", display_name="Peer Two", industry="Machinery")
+        db.session.add_all([p1, p2]); db.session.flush()
+        db.session.add_all([
+            Security(company_id=p1.id, ticker="P1", exchange="NYSE", active=True, is_primary=True, validation_source="TEST"),
+            Security(company_id=p2.id, ticker="P2", exchange="NYSE", active=True, is_primary=True, validation_source="TEST"),
+        ])
+        db.session.commit()
+        meta = {
+            company_id: {"sic": "3561", "sic_description": "Machinery"},
+            p1.id: {"sic": "3561", "sic_description": "Machinery"},
+            p2.id: {"sic": "3561", "sic_description": "Machinery"},
+        }
+        metrics = {
+            company_id: {"company_id": company_id, "ticker": "EXM", "revenue_growth_pct": 15, "operating_margin_pct": 18, "fcf_margin_pct": 12,
+                         "inventory_to_revenue_pct": 10, "receivables_to_revenue_pct": 11, "asset_turnover": 1.5, "roic_pct": 20,
+                         "share_change_pct": -2, "pe": 14, "ev_sales": 1.7, "fcf_yield_pct": 8, "market_cap": 10_000},
+            p1.id: {"company_id": p1.id, "ticker": "P1", "revenue_growth_pct": 5, "operating_margin_pct": 10, "fcf_margin_pct": 6,
+                    "inventory_to_revenue_pct": 14, "receivables_to_revenue_pct": 15, "asset_turnover": 1.0, "roic_pct": 10,
+                    "share_change_pct": 2, "pe": 20, "ev_sales": 2.5, "fcf_yield_pct": 4, "market_cap": 9_000},
+            p2.id: {"company_id": p2.id, "ticker": "P2", "revenue_growth_pct": 7, "operating_margin_pct": 12, "fcf_margin_pct": 7,
+                    "inventory_to_revenue_pct": 13, "receivables_to_revenue_pct": 14, "asset_turnover": 1.1, "roic_pct": 12,
+                    "share_change_pct": 1, "pe": 22, "ev_sales": 2.7, "fcf_yield_pct": 5, "market_cap": 11_000},
+        }
+        monkeypatch.setattr(tri, "_sec_meta", lambda cid: meta.get(cid, {}))
+        monkeypatch.setattr(tri, "_metric_row", lambda company, user_id=None: metrics.get(company.id))
+        result = tri.automatic_triangulation(company_id, uid)
+        assert result["available"] is True
+        assert result["method"] == "EXACT SIC"
+        assert len(result["peers"]) == 2
+        assert any(row["label"] == "Revenue growth" and row["state"] == "STRENGTH" for row in result["signals"])
+        assert {"ROIC", "P/E", "EV / Sales"} <= {row["label"] for row in result["comparisons"]}
+        assert any(row["state"] == "RELATIVE VALUE + QUALITY" for row in result["signals"])
+
+
+def test_020_management_promises_parse_and_score_met_miss(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    _, company_id, _, _ = seed_workspace(app)
+    import mfapp.management_promises as mp
+    sentence = "Management expects 2027 revenue growth of 8% to 10% as capacity normalizes."
+    parsed = mp.extract_promises(sentence)
+    assert len(parsed) == 1
+    assert parsed[0]["metric"] == "revenue_growth_pct"
+    assert parsed[0]["target_year"] == 2027
+    assert parsed[0]["low"] == 8
+    assert parsed[0]["high"] == 10
+    with app.app_context():
+        mp.store_promises(company_id, parsed)
+        monkeypatch.setattr(mp, "annual_rows", lambda company_id, limit=20: [
+            {"fiscal_year": 2027, "metrics": {"revenue_growth_pct": 9.0}}
+        ])
+        rows = mp.evaluate_promises(company_id)
+        assert rows[0]["actual"] == 9.0
+        assert rows[0]["status"] == "MET"
+
+
+def test_020_tape_reads_options_borrow_turnover_and_resilience(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    _, company_id, security_id, _ = seed_workspace(app)
+    from mfapp.decision_support import tape_series
+    with app.app_context():
+        start = date.today() - timedelta(days=80)
+        for i in range(70):
+            db.session.add(HistoricalPrice(
+                security_id=security_id,
+                trade_date=start + timedelta(days=i),
+                close_raw=Decimal(str(50 + i * .2)),
+                close_split_adjusted=Decimal(str(50 + i * .2)),
+                volume=Decimal(str(1_000_000 + i * 10_000)),
+                provider="TEST",
+            ))
+        db.session.add(Event(
+            company_id=company_id,
+            event_type="ALPACA_POSITIONING",
+            title="positioning",
+            event_date=datetime.now(timezone.utc).replace(tzinfo=None),
+            payload={
+                "borrow": {"borrow_status": "easy_to_borrow", "shortable": True},
+                "options": {"put_open_interest": 7000, "call_open_interest": 10000, "put_call_oi": .70},
+                "locate": {},
+            },
+        ))
+        db.session.add(Event(
+            company_id=company_id,
+            event_type="BORROW_FEE_OBSERVATION",
+            title="borrow fee",
+            event_date=datetime.now(timezone.utc).replace(tzinfo=None),
+            payload={"annualized_fee_pct": 3.25, "source": "TEST BROKER"},
+        ))
+        db.session.commit()
+        security = db.session.get(Security, security_id)
+        tape = tape_series(security, 6)
+        metrics = tape["metrics"]
+        assert metrics["put_call_oi"] == pytest.approx(.70)
+        assert metrics["borrow_status"] == "easy_to_borrow"
+        assert metrics["borrow_fee_pct"] == pytest.approx(3.25)
+        assert metrics["borrow_fee_source"] == "TEST BROKER"
+        assert metrics["turnover_ratio_20d"] is not None
+        assert metrics["price_resilience"] is not None
+        assert metrics["rank_score"] is not None
+
+
+def test_020_market_wide_discovery_uses_screeners_without_guessing_fair_value(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, _, _, _ = seed_workspace(app)
+    import mfapp.market_discovery as md
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+        def json(self):
+            return self._payload
+
+    def fake_get(url, **kwargs):
+        if "most-actives" in url:
+            return FakeResponse({"most_actives": [{"symbol": "AAA", "volume": 10_000_000, "trade_count": 120_000}]})
+        if "movers" in url:
+            return FakeResponse({"gainers": [{"symbol": "AAA", "percent_change": 12.5}], "losers": [{"symbol": "BBB", "percent_change": -9.0}]})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(md, "_headers", lambda user_id: {"APCA-API-KEY-ID": "x", "APCA-API-SECRET-KEY": "y"})
+    monkeypatch.setattr(md.requests, "get", fake_get)
+    with app.app_context():
+        result = md.market_scan(uid)
+        assert result["configured"] is True
+        tickers = {row["ticker"] for row in result["candidates"]}
+        assert {"AAA", "BBB"} <= tickers
+        aaa = next(row for row in result["candidates"] if row["ticker"] == "AAA")
+        assert "HIGH ACTIVITY" in aaa["lenses"]
+        assert "PRICE DISLOCATION" in aaa["lenses"]
+        assert "DEEP RESEARCH REQUIRED" in aaa["lenses"]
+        bbb = next(row for row in result["candidates"] if row["ticker"] == "BBB")
+        assert "POTENTIAL SHORT" in bbb["lenses"]
+        assert "base_gap_pct" not in aaa or not aaa.get("known_context")
+
+
+def test_020_report_branding_is_persisted_and_rejects_non_https_logo(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, _, _, _ = seed_workspace(app)
+    with app.app_context():
+        value = set_report_branding(
+            uid, title="Market Forensics", prepared_by="Lose Money Rules",
+            footer="Lose Money Rules", logo_url="https://example.com/logo.png",
+        )
+        assert value["prepared_by"] == "Lose Money Rules"
+        assert get_report_branding(uid)["logo_url"] == "https://example.com/logo.png"
+        with pytest.raises(ValueError):
+            set_report_branding(uid, title="MF", prepared_by="", footer="LMR", logo_url="http://127.0.0.1/logo.png")
+
+
+def test_020_complete_parity_surfaces_and_canonical_conclusion_contract():
+    company = Path("mfapp/templates/company_section.html").read_text()
+    base = Path("mfapp/templates/base.html").read_text()
+    dashboard = Path("mfapp/templates/dashboard.html").read_text()
+    portfolio = Path("mfapp/templates/portfolio_security.html").read_text()
+    discovery = Path("mfapp/templates/discovery.html").read_text()
+    settings = Path("mfapp/templates/settings.html").read_text()
+
+    for label in ("BUSINESS", "VALUE", "EXPECTATIONS", "VARIANT", "PATH", "MODEL CONFIDENCE", "THESIS CONTROL"):
+        assert label in Path("mfapp/decision_lenses.py").read_text()
+    assert "PRICE-IMPLIED EXPECTATIONS" in company
+    assert "AUTOMATIC TRIANGULATION" in company
+    assert "PROMISES VS ACTUALS" in company
+    assert "Put / Call OI" in company
+    assert "Price resilience" in company
+    assert "MARKET-WIDE LIGHT SCAN" in discovery
+    assert "REPORT BRANDING" in settings
+    assert "{{ intelligence.action }}" not in base
+    assert "{{ row.intelligence.action }}" not in dashboard
+    assert "{{ intelligence.action }}" not in portfolio
+    assert "decision_lenses.research_conclusion" in base
+    assert "row.decision_lenses.research_conclusion" in dashboard
+    assert "brief.action" not in company
+    assert "Research action" not in company
+    assert "Expected Value" in company
+    assert "EXCEPTIONS FIRST" in company
+    assert "Freshness" in dashboard
+    assert "Next action" in dashboard
+    providers = Path("mfapp/data_providers.py").read_text()
+    assert "return [_alpaca(ticker, user_id), _tiingo(ticker, user_id), _alpha_vantage(ticker, user_id), _public_chart(ticker)]" in providers
+    assert "last-good cache" in providers
+
+
+def test_020_discovery_landscape_pdf_and_full_refresh_contract(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, _, _, _ = seed_workspace(app)
+    scan = {
+        "universe_source": "TEST",
+        "candidates": [
+            {"ticker": "AAA", "scan_score": 82.5, "move_pct": 12.0, "activity_rank": 1, "lenses": ["HIGH ACTIVITY", "PRICE DISLOCATION"]},
+            {"ticker": "BBB", "scan_score": 75.0, "move_pct": -10.0, "activity_rank": 2, "lenses": ["POTENTIAL SHORT"]},
+        ],
+    }
+    pdf = render_discovery_pdf(scan, {"title": "Market Forensics", "footer": "Lose Money Rules", "logo_url": ""})
+    assert len(pdf.getvalue()) > 700
+    jobs = Path("mfapp/jobs.py").read_text()
+    assert '("POSITIONING_REFRESH", 75)' in jobs
+    assert '("MANAGEMENT_SCAN", 80)' in jobs
+    assert "MANAGEMENT_GUIDANCE_SCAN" in jobs
+
+
+def test_020_borrow_fee_route_stores_sourced_context(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, _, _ = seed_workspace(app)
+    client = app.test_client(); login_control(client, uid)
+    response = client.post("/company/EXM/tape/borrow-fee", data={
+        "annualized_fee_pct": "4.75",
+        "source": "Prime broker",
+        "note": "Observed at market open",
+    }, follow_redirects=False)
+    assert response.status_code == 302
+    with app.app_context():
+        event = Event.query.filter_by(company_id=company_id, event_type="BORROW_FEE_OBSERVATION").order_by(Event.id.desc()).first()
+        assert event is not None
+        assert float(event.payload["annualized_fee_pct"]) == pytest.approx(4.75)
+        assert event.payload["source"] == "Prime broker"
+
+
+def test_020_reports_expose_full_pdf_and_discovery_report_actions():
+    company = Path("mfapp/templates/company_section.html").read_text()
+    discovery = Path("mfapp/templates/discovery.html").read_text()
+    assert "Full PDF" in company
+    assert "Full Word" in company
+    assert "Landscape PDF" in discovery

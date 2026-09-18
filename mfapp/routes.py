@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from .access import audit, effective_role, require_control_view
 from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, scenario_forecasts
 from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_series
+from .management_promises import evaluate_promises
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
 from .jobs import enqueue_job
@@ -24,8 +25,11 @@ from .core_models import (
 )
 from .readiness import research_readiness
 from .decision_engine import build_research_intelligence
+from .decision_lenses import build_decision_lenses
+from .expectations_engine import price_implied_expectations
 from .discovery_engine import classify_coverage, search_universe
 from .research_synthesis import build_synthesis
+from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
 from .symbols import validate_ticker
@@ -119,10 +123,18 @@ def _ctx(ticker: str) -> dict:
     valuation = valuation_result(coverage)
     readiness = _research_readiness(coverage)
     intelligence = _intelligence(coverage, company, model, market, valuation, readiness)
+    management_read = management_engine(company.id)
+    tape_read = tape_series(security, 12)
+    decision_lenses = build_decision_lenses(
+        coverage=coverage, company=company, research=research, risk=risk, model=model, market=market,
+        valuation=valuation, intelligence=intelligence, readiness=readiness,
+        management=management_read, tape=tape_read,
+    )
     return {"coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
             "investment": investment, "model": model, "market": market, "position": position,
             "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
-            "intelligence": intelligence, "brief": company_brief(company.id, valuation, intelligence, model)}
+            "intelligence": intelligence, "decision_lenses": decision_lenses,
+            "brief": company_brief(company.id, valuation, intelligence, model)}
 
 
 def _research_version(coverage: Coverage, research: ResearchState, reason: str) -> None:
@@ -159,15 +171,38 @@ def dashboard():
         market = latest_snapshot(security.id); valuation = valuation_result(coverage)
         model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
         readiness = _research_readiness(coverage)
-        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW"}
+        intelligence = _intelligence(coverage, company, model, market, valuation, readiness) if model else {"action": "WAIT", "stance": "DATA REVIEW", "bias": "NEUTRAL", "confidence": "LOW", "positives": 0, "negatives": 0, "warnings": []}
+        research = ResearchState.query.filter_by(coverage_id=coverage.id).first()
+        risk = RiskPlan.query.filter_by(coverage_id=coverage.id).first()
+        lenses = build_decision_lenses(
+            coverage=coverage, company=company, research=research, risk=risk, model=model, market=market,
+            valuation=valuation, intelligence=intelligence, readiness=readiness,
+            management=management_engine(company.id), tape=tape_series(security, 12),
+        ) if all((research, risk, model)) else {"research_conclusion": "DATA REVIEW", "rows": []}
+        pending = [gate.get("label") for gate in readiness.get("gates", []) if not gate.get("approved")]
+        validation_state = str((readiness.get("validation") or {}).get("state") or "NOT RUN")
+        conclusion = str(lenses.get("research_conclusion") or "DATA REVIEW")
+        if pending:
+            next_action = f"Complete / approve {pending[0]}"
+        elif validation_state == "NOT RUN":
+            next_action = "Validate study"
+        elif validation_state in {"LIMITED", "REVIEW"}:
+            next_action = "Review validation"
+        elif conclusion in {"LONG READY", "SHORT READY"}:
+            next_action = "Portfolio review"
+        else:
+            next_action = "Monitor evidence"
+        freshness_hours = None
+        if market and market.as_of:
+            freshness_hours = max(0.0, (utcnow() - market.as_of).total_seconds() / 3600.0)
         rows.append({"coverage": coverage, "security": security, "company": company, "market": market,
                      "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first(),
                      "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
-                     "discovery_labels": classify_coverage(intelligence, readiness)})
+                     "decision_lenses": lenses, "discovery_labels": classify_coverage(intelligence, readiness),
+                     "next_action": next_action, "freshness_hours": freshness_hours})
     queued = Job.query.filter(Job.user_id == g.user.id, Job.status.in_(["QUEUED", "RUNNING"])).count()
     alerts = Alert.query.filter_by(user_id=g.user.id, is_read=False).order_by(Alert.created_at.desc()).limit(8).all()
-    action_counts = {key: sum(1 for row in rows if row["intelligence"].get("action") == key) for key in ("BUY", "SELL", "WAIT")}
-    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts, action_counts=action_counts)
+    return render_template("dashboard.html", rows=rows, queued_jobs=queued, alerts=alerts)
 
 
 @bp.get("/discovery")
@@ -176,6 +211,8 @@ def discovery():
     require_control_view()
     q = str(request.args.get("q") or "").strip().upper()
     external = search_universe(q, g.user.id) if q else {"query": "", "results": [], "outside_coverage": [], "covered_matches": [], "provider": ""}
+    latest_scan_job = Job.query.filter_by(user_id=g.user.id, job_type="DISCOVERY_SCAN", status="DONE").order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    market_scan = dict(((latest_scan_job.result or {}).get("market_scan") or {}) if latest_scan_job else {})
     rows = []
     for coverage in Coverage.query.filter(
         Coverage.user_id == g.user.id,
@@ -193,7 +230,7 @@ def discovery():
             "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
             "discovery_labels": classify_coverage(intelligence, readiness),
         })
-    return render_template("discovery.html", rows=rows, q=q, external=external)
+    return render_template("discovery.html", rows=rows, q=q, external=external, market_scan=market_scan, market_scan_job=latest_scan_job)
 
 
 @bp.post("/coverage")
@@ -282,6 +319,7 @@ def company_section(ticker, section):
             model=ctx["model"], market=ctx["market"], valuation=ctx["valuation"], intelligence=ctx["intelligence"], readiness=ctx["readiness"],
         )
         if section == "business":
+            extra["auto_triangulation"] = automatic_triangulation(company.id, g.user.id)
             extra["triangulation_rows"] = Event.query.filter(
                 Event.company_id == company.id,
                 Event.event_type.like("TRIANGULATION_%"),
@@ -298,6 +336,9 @@ def company_section(ticker, section):
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 5)
         extra["scenario_forecasts"] = scenario_forecasts(company.id, ctx["model"], 5)
+        extra["implied_expectations"] = price_implied_expectations(
+            company.id, ctx["model"], ctx["market"].price if ctx["market"] else ctx["valuation"].get("current_price")
+        )
     elif section == "numbers":
         extra["financials"] = annual_rows(company.id, 15)
         extra["current_financial"] = current_row(company.id)
@@ -318,6 +359,7 @@ def company_section(ticker, section):
         extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
         extra["management_engine"] = management_engine(company.id)
         extra["management_accountability"] = management_accountability(company.id)
+        extra["management_promises"] = evaluate_promises(company.id)
     elif section == "tape":
         months = 6 if str(request.args.get("months") or "12") == "6" else 12
         extra["tape_events"] = Event.query.filter_by(company_id=company.id).order_by(Event.event_date.desc()).limit(30).all()
@@ -327,7 +369,19 @@ def company_section(ticker, section):
     elif section == "monitoring":
         rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all()
         histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}
-        extra.update({"monitor_rules": rules, "monitor_histories": histories, "monitor_plan": monitoring_plan(company.id, ctx["valuation"], ctx["intelligence"], ctx["model"])})
+        exceptions = []
+        for rule in rules:
+            latest_history = (histories.get(rule.id) or [None])[0]
+            if latest_history and str(latest_history.status or "").upper() in {"WATCH", "FAIL"}:
+                exceptions.append({"rule": rule, "history": latest_history})
+        alerts = Alert.query.filter_by(user_id=g.user.id, coverage_id=coverage.id).order_by(Alert.created_at.desc()).limit(20).all()
+        extra.update({
+            "monitor_rules": rules,
+            "monitor_histories": histories,
+            "monitor_exceptions": exceptions,
+            "monitor_alerts": alerts,
+            "monitor_plan": monitoring_plan(company.id, ctx["valuation"], ctx["intelligence"], ctx["model"]),
+        })
     elif section == "journal":
         extra["journal_rows"] = DecisionJournal.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionJournal.created_at.desc()).all()
         extra["snapshots"] = Snapshot.query.filter_by(coverage_id=coverage.id).order_by(Snapshot.created_at.desc()).limit(20).all()

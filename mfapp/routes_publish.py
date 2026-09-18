@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import abort, flash, g, jsonify, redirect, render_template, request, send_file, url_for
+from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, url_for
 
 from .access import audit, effective_role, require_control_view
 from .core_models import Company, Coverage, InvestmentState, Job, Position, Publication, RefreshRun, Security, Snapshot
@@ -10,7 +10,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
-from .reporting import render_docx, render_pdf, research_report_data
+from .reporting import get_report_branding, render_discovery_pdf, render_docx, render_pdf, research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -42,7 +42,16 @@ def _publication_view(publication: Publication, role: str) -> dict:
 @bp.post("/company/<ticker>/snapshot")
 @role_required("CONTROL")
 def snapshot_company(ticker):
-    require_control_view(); ctx = _ctx(ticker); snapshot = create_snapshot(ctx["coverage"], g.user.id, snapshot_type="DECISION")
+    require_control_view(); ctx = _ctx(ticker); snapshot = create_snapshot(
+        ctx["coverage"], g.user.id, snapshot_type="DECISION",
+        decision_context={
+            "research_conclusion": ctx["decision_lenses"].get("research_conclusion"),
+            "lenses": ctx["decision_lenses"].get("rows") or [],
+            "model_confidence": ctx["decision_lenses"].get("model_confidence"),
+            "expectations": ctx["decision_lenses"].get("expectations"),
+            "path": ctx["decision_lenses"].get("path"),
+        },
+    )
     audit("snapshot.create", "snapshot", snapshot.id, {"coverage_id": ctx["coverage"].id}); db.session.commit(); flash(f"Snapshot v{snapshot.version} created. Review it before publishing.", "success")
     return redirect(url_for("web.preview_snapshot", ticker=ticker.upper(), snapshot_id=snapshot.id))
 
@@ -108,13 +117,30 @@ def publications():
     require_control_view(); return render_template("publications.html", publications=Publication.query.order_by(Publication.published_at.desc()).all())
 
 
+@bp.get("/discovery/report/pdf")
+@role_required("CONTROL")
+def discovery_report():
+    require_control_view()
+    latest = Job.query.filter_by(user_id=g.user.id, job_type="DISCOVERY_SCAN", status="DONE").order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    scan = dict(((latest.result or {}).get("market_scan") or {}) if latest else {})
+    if not scan.get("candidates"):
+        flash("Run a market-wide Discovery scan before exporting the landscape report.", "error")
+        return redirect(url_for("web.discovery"))
+    branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
+    stream = render_discovery_pdf(scan, branding)
+    audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
+    db.session.commit()
+    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.0.pdf", max_age=0)
+
+
 @bp.get("/company/<ticker>/report/<fmt>")
 @role_required("CONTROL")
 def research_report(ticker, fmt):
     require_control_view()
     ctx = _ctx(ticker)
     mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
-    data = research_report_data(ctx, mode=mode)
+    branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
+    data = research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
     stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.0"
     if fmt == "docx":
@@ -160,11 +186,11 @@ def queue_refresh(ticker, kind):
     mapping = {
         "market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE",
         "prefill": "RESEARCH_PREFILL", "finra": "FINRA_IMPORT", "validate": "DEEP_VALIDATION",
-        "management": "MANAGEMENT_SCAN",
+        "management": "MANAGEMENT_SCAN", "positioning": "POSITIONING_REFRESH",
     }
     job_type = mapping.get(kind)
     if not job_type: abort(404)
-    priorities = {"market": 10, "sec": 30, "recalculate": 45, "prefill": 50, "finra": 60, "validate": 70, "management": 80}
+    priorities = {"market": 10, "sec": 30, "recalculate": 45, "prefill": 50, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
                       payload={"coverage_id": ctx["coverage"].id}, priority=priorities.get(kind, 50))
     audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
@@ -212,6 +238,7 @@ def settings():
         queue_status=_queue_status(g.user.id),
         number_formats=NUMBER_FORMATS,
         number_format=get_number_format(g.user.id),
+        report_branding=get_report_branding(g.user.id, current_app.config.get("LOGO_URL", "")),
     )
 
 
@@ -240,6 +267,26 @@ def save_display_settings():
     audit("settings.display", "user", g.user.id, {"number_format": mode}); db.session.commit()
     flash(f"Number display set to {mode}.", "success")
     return redirect(request.referrer or url_for("web.settings"))
+
+
+@bp.post("/settings/report-branding")
+@role_required("CONTROL")
+def save_report_branding():
+    require_control_view()
+    try:
+        value = set_report_branding(
+            g.user.id,
+            title=str(request.form.get("title") or "Market Forensics").strip(),
+            prepared_by=str(request.form.get("prepared_by") or "").strip(),
+            footer=str(request.form.get("footer") or "Lose Money Rules").strip(),
+            logo_url=str(request.form.get("logo_url") or "").strip(),
+        )
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("web.settings"))
+    audit("settings.report_branding", "user", g.user.id, {"title": value.get("title"), "logo": bool(value.get("logo_url"))})
+    flash("Report branding saved.", "success")
+    return redirect(url_for("web.settings"))
 
 
 @bp.get("/control")

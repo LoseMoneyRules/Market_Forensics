@@ -319,7 +319,7 @@ def evaluate_coverage(coverage_id: int, user_id: int) -> dict[str, Any]:
 
 def evaluate_user(user_id: int) -> dict[str, Any]:
     rows = []
-    for coverage in Coverage.query.filter_by(user_id=user_id).order_by(Coverage.id).all():
+    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").order_by(Coverage.id).all():
         rows.append(evaluate_coverage(coverage.id, user_id))
     return {"user_id": user_id, "coverages": len(rows), "created_alerts": sum(row.get("created_alerts", 0) for row in rows), "results": rows}
 

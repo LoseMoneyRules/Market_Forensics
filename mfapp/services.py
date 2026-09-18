@@ -317,6 +317,7 @@ def publication_payload(snapshot: Snapshot, visibility: str) -> dict[str, Any]:
         "research": research,
         "research_state": src.get("research_state"),
         "valuation": src.get("valuation") or {},
+        "decision": src.get("decision") or {},
         "risk": {"summary": research.get("risk_summary", "")},
         "market": src.get("market") or {},
         "sources": src.get("sources") or [],
