@@ -10,7 +10,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import enqueue_job, run_jobs
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows
-from .reporting import get_report_branding, render_docx, render_pdf, research_report_data, set_report_branding
+from .reporting import get_report_branding, render_discovery_pdf, render_docx, render_pdf, research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -115,6 +115,22 @@ def publications():
     role = effective_role()
     if role != "CONTROL": return render_template("published_index.html", publications=_published_for_role(role), role=role)
     require_control_view(); return render_template("publications.html", publications=Publication.query.order_by(Publication.published_at.desc()).all())
+
+
+@bp.get("/discovery/report/pdf")
+@role_required("CONTROL")
+def discovery_report():
+    require_control_view()
+    latest = Job.query.filter_by(user_id=g.user.id, job_type="DISCOVERY_SCAN", status="DONE").order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    scan = dict(((latest.result or {}).get("market_scan") or {}) if latest else {})
+    if not scan.get("candidates"):
+        flash("Run a market-wide Discovery scan before exporting the landscape report.", "error")
+        return redirect(url_for("web.discovery"))
+    branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
+    stream = render_discovery_pdf(scan, branding)
+    audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
+    db.session.commit()
+    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.0.pdf", max_age=0)
 
 
 @bp.get("/company/<ticker>/report/<fmt>")
