@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.2.8  
+**Current product line:** 0.2.9  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -1052,24 +1052,136 @@ Negative exceptions remain negative rather than being cosmetically converted int
 
 ## 16. Tape / Flows
 
-Tape is context, not intrinsic value.
+Tape is market-plumbing context, not intrinsic value and not beneficial-owner identification.
+
+0.2.9 restores the accepted Local Tape Engine as **Tape Engine V2**, implemented as a web-native background/materialized capability.
 
 Inputs can include:
 
 - split-adjusted historical price;
-- volume;
-- turnover;
+- OHLC and volume;
+- Alpaca historical trades;
+- adaptive Large / Very Large / Whale trade-size flow;
 - FINRA daily short-sale volume;
 - FINRA consolidated short interest;
-- optional positioning data;
-- optional/manual borrow fee observation;
-- options context when available.
+- FINRA weekly ATS / non-ATS activity;
+- optional borrow / locate evidence;
+- options open-interest context when available.
 
-Important rule:
+Important rules:
 
 **FINRA daily short-sale volume is not short interest.**
 
-### 16.1 Current compact Tape interpretation
+**Large / Very Large / Whale is a trade-size proxy, not the identity of a fund, institution or whale.**
+
+### 16.1 Institutional Flow Engine
+
+Historical trades are downloaded only in a background POSITIONING_REFRESH job.
+
+Raw trade pages are processed in memory and reduced to daily aggregates. Millions of raw prints are not persisted into MariaDB.
+
+Trade direction currently uses a transparent tick-rule proxy:
+
+- trade above prior trade price → aggressive-buy proxy;
+- trade below prior trade price → aggressive-sell proxy;
+- unchanged price inherits the last directional tick where possible;
+- unresolved first/ambiguous prints remain neutral.
+
+This is explicitly labeled TICK_RULE_PROXY.
+
+Trade-size thresholds adapt to the stock/day:
+
+- Large = max(P75 notional, $100k);
+- Very Large = max(P90 notional, $250k);
+- Whale = max(P99 notional, $500k).
+
+Stored daily evidence includes:
+
+- Large Buy / Sell / Neutral;
+- Very Large Buy / Sell / Neutral;
+- Whale Buy / Sell / Neutral;
+- Net Large / Very Large / Whale;
+- share of turnover classified Large / Very Large / Whale;
+- directional coverage;
+- feed;
+- feed scope;
+- source status;
+- flow confidence.
+
+### 16.2 SIP vs IEX
+
+Historical Alpaca flow attempts consolidated SIP first.
+
+When the available request cannot use SIP, the engine may fall back to IEX.
+
+The source is always visible:
+
+- CONSOLIDATED_SIP;
+- IEX_PARTIAL_MARKET.
+
+IEX evidence receives a material Data Confidence penalty.
+
+Partial/page-capped samples are labeled PARTIAL_SAMPLED and also reduce confidence.
+
+The system must never present IEX/partial evidence as if it represented the full US consolidated tape.
+
+### 16.3 Tape scores
+
+Tape deliberately keeps multiple dimensions rather than one opaque score:
+
+- Institutional Flow Score 0–100;
+- Short Pressure Score 0–100;
+- Absorption Score 0–100;
+- Long Demand Score 0–100;
+- Battle Intensity Score 0–100;
+- Price Resilience Score 0–100;
+- Data Confidence Score 0–100;
+- Net Tape Score 0–100.
+
+The central distinction is:
+
+High Short Pressure + high Institutional Flow + high Absorption can mean bearish supply is being absorbed.
+
+High Short Pressure + high Institutional Flow + low Absorption means large buyers may be present while sellers still control price.
+
+A large positive flow number while price keeps making weak closes/new lows is not automatically bullish.
+
+### 16.4 Rank
+
+Net Tape maps to the accepted Local rank:
+
+- A: ≥70;
+- B: ≥58;
+- C: >42 and <58;
+- D: >30 and ≤42;
+- F: ≤30.
+
+Rank organizes evidence. It is not a standalone trade signal.
+
+### 16.5 Forensic regime
+
+Possible regimes:
+
+- ACCUMULATION;
+- ACCUMULATION UNDER PRESSURE;
+- BATTLE - BUYERS ABSORB;
+- CONSTRUCTIVE;
+- NEUTRAL / BATTLE;
+- DISTRIBUTION;
+- DISTRIBUTION / BEARS CONTROL;
+- LOW DATA.
+
+Data Confidence below 55 forces LOW DATA rather than inventing a regime.
+
+For Decision Lenses only, the forensic regime is translated into a compact path state:
+
+- constructive regimes → SUPPORTIVE;
+- distribution regimes → HOSTILE;
+- neutral/low-data regimes → MIXED.
+
+### 16.6 Compact decision context
+
+The existing compact context remains:
 
 Pressure direction:
 
@@ -1081,19 +1193,44 @@ Pressure direction:
 Posture:
 
 - LOW confidence → WAIT FOR DATA;
-- MIXED regime, lateral/low-data pressure, or battle intensity ≥ 70 → WAIT FOR CONFIRMATION;
-- LONG + SUPPORTIVE regime → SUPPORTIVE TAPE;
-- SHORT + HOSTILE regime → HOSTILE TAPE.
+- MIXED path, lateral/low-data pressure, or extreme battle → WAIT FOR CONFIRMATION;
+- LONG + SUPPORTIVE path → SUPPORTIVE TAPE;
+- SHORT + HOSTILE path → HOSTILE TAPE.
 
-Next confirmation remains explicit.
+Tape must answer:
 
-Tape should answer:
+- what regime the market plumbing suggests;
+- who is winning the price response;
+- whether Large/Whale flow confirms or conflicts;
+- what changed since the prior observation;
+- what evidence would change the regime;
+- whether the user should wait for more confirmation.
 
-- wait or not;
-- LONG / SHORT / LATERAL pressure;
-- what confirmation is still needed.
+### 16.7 Tape charts
 
-It must not be presented as a standalone trade signal.
+0.2.9 restores the Local chart contract in Research → Tape / Flows:
+
+1. Price + cumulative institutional flow;
+2. Daily Volume;
+3. Price + FINRA Short Interest;
+4. FINRA Daily Short Volume %;
+5. Institutional Net Large Flow;
+6. Cumulative 5D / 20D Large Flow;
+7. Absorption / Short Pressure / Net Tape history;
+8. Whale Flow;
+9. FINRA ATS share of reported OTC activity.
+
+Where history has not yet accumulated, the chart remains honestly incomplete rather than backfilled with fabricated flow.
+
+### 16.8 FINRA ATS / OTC
+
+FINRA Weekly Summary is delayed context.
+
+The engine aggregates ATS and non-ATS reported shares/trades by week and can calculate ATS share of reported OTC activity.
+
+A venue name or ATS print does not identify the beneficial buyer or seller.
+
+ATS evidence is market-plumbing context only.
 
 ---
 
