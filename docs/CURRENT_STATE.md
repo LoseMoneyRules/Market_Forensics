@@ -30,6 +30,7 @@
 
 0.2.7 is a deep research-integrity release, not a UI-only patch:
 - Report exports are fail-safe at the HTTP request boundary. Rich PDF/Word remains preferred; dependency-free PDF/DOCX emergency artifacts are served if branding/render/audit persistence fails. Audit failure cannot turn a valid download into HTTP 500.
+- Namecheap report dependencies are deployment-cached: `mfapp/_reporting_vendor` persists across ordinary releases, is keyed by the SHA-256 of `requirements-reporting.txt`, and is excluded from normal backup/upload mirrors. Unchanged dependencies are not retransferred; changed dependencies are staged separately and swapped server-side with rollback preservation.
 - Fundamentals always exposes Current basis, Gross Margin and ROIC. Missing filing inputs stay missing and are explained; no ROIC is guessed.
 - Expectations has a current observed basis strip: Revenue growth, Gross Margin, Operating Margin, FCF Margin, Cash Quality (CFO/NI) and ROIC.
 - Settings Refresh Runs is collapsed like Recent Jobs.
@@ -291,8 +292,12 @@ CONTROL reports remain:
 
 The rich PDF/Word stack is now a first-class production dependency:
 - `requirements.txt` includes `requirements-reporting.txt`;
-- the deploy payload vendors the report runtime into `mfapp/_reporting_vendor`, so Namecheap does not depend on a forgotten manual cPanel pip step;
-- `app.py` loads that private report runtime before importing the application;
+- Namecheap keeps the private report runtime at `mfapp/_reporting_vendor`, so the application path remains stable and no manual cPanel pip step is required;
+- the deploy workflow hashes `requirements-reporting.txt` and stores a matching marker with the persistent report runtime;
+- when that hash is unchanged, `_reporting_vendor` is excluded from both production backup and application upload mirrors, so the vendor tree is neither downloaded nor uploaded again;
+- the first cache-aware deploy may bootstrap the marker from an already healthy vendor when the deployed `requirements-reporting.txt` has the same hash, avoiding a needless one-time retransmission;
+- when report dependencies actually change, a new vendor tree is built separately, uploaded to a staging directory, and swapped into the stable path with server-side rename while the previous tree is retained for rollback;
+- `app.py` continues loading that private report runtime before importing the application;
 - the production-minimal smoke must report `reports = rich`;
 - candidate production `/health` must also report `reports = rich`;
 - a deployment without the rich report backend is a failed candidate and must not be declared LIVE.
@@ -429,6 +434,7 @@ Permanent UI rules:
 16. private research, reports, snapshots and publications use the same forensic valuation contract while retaining intrinsic scenarios in audit metadata.
 17. normal GET navigation performs no new external macro/provider fetches.
 18. VERSION == State-Version == 0.2.7.
+19. ordinary Namecheap deploys must not transfer `mfapp/_reporting_vendor` when `requirements-reporting.txt` is unchanged; backup, candidate upload and rollback mirrors must exclude the persistent vendor tree.
 
 The release is blocked by a broken capability even if its page returns HTTP 200.
 
