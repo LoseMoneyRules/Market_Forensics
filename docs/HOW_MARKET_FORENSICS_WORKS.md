@@ -188,7 +188,38 @@ UI rules also include:
 - light and dark modes must both remain usable;
 - desktop problems are not solved only with horizontal scrolling;
 - empty decorative panels should not be rendered;
-- footer remains Lose Money Rules.
+- footer remains Lose Money Rules;
+- Settings is the only normal user-facing application-version surface;
+- one canonical company header;
+- one canonical mobile navigation;
+- Research → Financial Flows remains inside Research, not a separate primary product;
+- Validate remains immediately after Sources / Audit.
+
+### 3.14 No patch-on-patch implementation
+
+Do not solve product regressions with stacked duplicate implementations.
+
+Avoid:
+
+- release-number CSS/JS layers loaded together;
+- old/new duplicate controls;
+- hidden DOM rewrite layers that replace canonical server-rendered research;
+- silent refresh-dependent fixes;
+- apparent controls with no working backend.
+
+There should be one canonical implementation for a capability.
+
+### 3.15 Local parity is preserved deliberately
+
+Local V3.1.12 is not a runtime dependency, but accepted capabilities cannot silently disappear.
+
+Every meaningful Local capability must remain classifiable as:
+
+- PRESERVED;
+- IMPROVED;
+- SUPERSEDED by an explicitly stronger web-native workflow.
+
+A page returning HTTP 200 is not proof of parity. The underlying state transition/calculation must work.
 
 ---
 
@@ -312,6 +343,8 @@ Private Position, private money-risk and private Decision Journal data do not cr
 ## 6.1 Discover
 
 Discovery is an investigation funnel, not a BUY/SELL engine.
+
+Any ticker entering Coverage or Portfolio must be validated before persistence. Unknown/unresolvable symbols are rejected with a clear “Ticker not found / symbol not recognized” style error rather than creating placeholder records.
 
 It has two stages.
 
@@ -455,6 +488,8 @@ Evidence changes do not automatically reduce the approved count.
 ### 7.5 READY TO VALIDATE
 
 All 13 gates approved → ready_to_validate = true.
+
+Approve → Reopen → Approve must work without HTTP 405, without a heavy RECALCULATE requirement and without mandatory full-page reload. A 405 on Process Readiness is a release blocker.
 
 Before validation, Research Conclusion becomes READY TO VALIDATE.
 
@@ -1309,6 +1344,8 @@ Production health must prove:
 
 Normal deploy must not retransmit the persistent reporting vendor when its requirements hash has not changed.
 
+Code merged to main and production deployment are always separate states. Never infer one from the other.
+
 CURRENT_STATE must be updated after material main/deploy transitions.
 
 ---
@@ -1514,7 +1551,7 @@ Before accepting a material future change, verify:
 - no purple;
 - minimal bold;
 - typography remains readable;
-- version is visible only where intended;
+- Settings remains the only normal version surface;
 - deploy remains separate from merge;
 - tests prove state transitions/calculations, not merely HTTP 200.
 
