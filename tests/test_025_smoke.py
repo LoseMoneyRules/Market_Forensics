@@ -81,4 +81,4 @@ def test_025_handoff_is_ready_for_next_chat():
     assert "FORENSIC_FAIR_VALUE_V1" in state
     assert "Settings is the ONLY user-facing version surface" in state
     assert "A 405 is a release blocker." in state
-    assert "Production remains on deployed 0.2.4 until 0.2.6 passes every gate." in state
+    assert "Production remains on deployed 0.2.5 until 0.2.6 passes every gate." in state
