@@ -260,3 +260,19 @@ class DecisionJournal(db.Model):
     evidence_against = db.Column(db.Text, nullable=False, default="")
     bias_notes = db.Column(db.Text, nullable=False, default="")
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
+
+
+class DecisionOutcome(db.Model):
+    """Append-only outcome/post-mortem records; the original decision snapshot is never rewritten."""
+    __tablename__ = "mf_decision_outcome"
+    id = db.Column(db.Integer, primary_key=True)
+    journal_id = db.Column(db.Integer, db.ForeignKey("mf_decision_journal.id"), nullable=False, index=True)
+    coverage_id = db.Column(db.Integer, db.ForeignKey("mf_coverage.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, index=True)
+    outcome = db.Column(db.Text, nullable=False, default="")
+    post_mortem = db.Column(db.Text, nullable=False, default="")
+    lessons = db.Column(db.Text, nullable=False, default="")
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow, index=True)
+    journal = db.relationship("DecisionJournal", backref=db.backref("outcomes", lazy="select"))
+
+
