@@ -95,6 +95,7 @@ Hosting choice: Discovery scans the broad tradable market through lightweight pr
 
 ## Data resilience / hosting
 - [x] Quote cascade is web-native: Alpaca → Tiingo → Alpha Vantage → public cross-check, with disagreement protection and last-good preservation.
+- [x] Current-price freshness target is 5 minutes: the browser checks every 5 minutes and queues MARKET_REFRESH when the stored quote is older than 5 minutes. Production cron/background execution must run at least every 5 minutes (recommended every minute with `python manage.py run-jobs --limit 5`).
 - [x] Global Refresh All includes market, SEC, recalculation, FINRA, options/borrow positioning and management-guidance evidence where configured.
 - [x] Refresh Stale runs the same evidence layers on bounded freshness windows rather than re-fetching everything.
 - [x] Heavy analytics run only in background jobs/cPanel cron; normal page navigation never executes SEC/FINRA/Tape/triangulation/portfolio-correlation workloads.
