@@ -11,7 +11,7 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.2.8**  
+**State-Version: 0.2.9**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
@@ -22,10 +22,28 @@
 **Latest verified main CI:** run `35388122115` / #858 = completed / success on `dc0468737905779face4b36bfa598f2ad3ae5159`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
 **0.2.8 production deploy:** deploy #42 includes PR #29 + PR #30 through main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; PR #31 + PR #32 are merged/tested on main but not yet deployed  
 **Release phase:** 0.2.8 through PR #30 is LIVE; PR #31 + PR #32 are complete and validated on main and need one new Namecheap deploy  
-**Branch:** `main`
+**Branch:** `release/0.2.9-tape-v2-clean` (release candidate; production remains 0.2.8 until explicit deploy)
 
 Deploy #42 is the authoritative production baseline. PR #31 does not change VERSION or architecture. After the next deploy, existing old/partial peer-overlay cache payloads must render safely without requiring a recalculation; future recalculations also write the complete peer-overlay schema.
 ---
+
+## 0.2.9 release scope — Tape / Positioning parity recovery
+
+0.2.9 restores the accepted Local Tape Engine as a web-native background/materialized capability:
+- Alpaca historical trades feed adaptive Large / Very Large / Whale notional buckets.
+- Trade direction is an explicit `TICK_RULE_PROXY`; the UI never claims buyer identity.
+- Historical SIP is attempted first; IEX fallback is labeled `IEX_PARTIAL_MARKET` and receives a Data Confidence penalty.
+- Raw prints are processed in memory; only bounded daily aggregates are persisted through positioning events.
+- Tape restores Institutional Flow, Short Pressure, Absorption, Long Demand, Battle Intensity, Price Resilience, Data Confidence and Net Tape 0–100.
+- Rank A/B/C/D/F is restored with Local thresholds: A >=70, B >=58, C >42, D >30, F <=30.
+- Forensic regimes are restored: ACCUMULATION, ACCUMULATION UNDER PRESSURE, BATTLE - BUYERS ABSORB, CONSTRUCTIVE, NEUTRAL / BATTLE, DISTRIBUTION, DISTRIBUTION / BEARS CONTROL and LOW DATA.
+- Decision Lenses still consume only SUPPORTIVE / HOSTILE / MIXED path translation so Tape remains contextual and cannot bypass Research/Validate.
+- FINRA Weekly Summary adds delayed ATS / non-ATS ticker evidence.
+- Tape restores charts for Price + cumulative institutional flow, Volume, Price + Short Interest, Daily Short %, Net Large Flow, cumulative 5D/20D Large Flow, Absorption/Short Pressure/Net Tape, Whale Flow and ATS share.
+- Tape restores WHAT CHANGED and WHAT WOULD CHANGE THE REGIME.
+- Large/Whale flow is explicitly a size proxy, never named institutional ownership.
+- `docs/LOCAL_WEB_PARITY_0_2_9.md` records the parity recovery.
+- Application VERSION is `0.2.9`; production remains 0.2.8 until an explicit Namecheap deploy after merge/CI.
 
 ## 0.2.8 release scope
 
@@ -443,6 +461,18 @@ The migration:
   publication history or audit history.
 
 `db.create_all()` creates additive tables before the migration runs.
+
+---
+
+## 8.1 Permanent clean-release rule
+
+Permanent clean-release rule:
+- Settings is the only user-facing application-version surface; normal templates do not hardcode release numbers.
+- Heavy jobs remain explicit and background-only, including PRICE_HISTORY_REFRESH, POSITIONING_REFRESH, FINRA_IMPORT, SEC_INGEST, HISTORICAL_TEST and RECALCULATE.
+- Job targets remain auditable as ticker, company or GLOBAL.
+- Process Readiness state changes must support Approve → Reopen → Approve without a heavy recalculation or HTTP 405.
+- desktop layout problems are not solved merely by horizontal scrolling.
+- A release is not complete because a page returns 200; the underlying calculation/state transition must be exercised by tests.
 
 ---
 
