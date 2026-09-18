@@ -14,6 +14,20 @@ VIEW_ROLES = {"FRIEND", "INSIDER", "CONTROL"}
 _AUTO_PREFIX = re.compile(r"^\[AUTO\s+[^\]]+\]\s*", re.I)
 
 
+def _release_version() -> str:
+    """Read the application release identity from the repository VERSION file.
+
+    VERSION is the canonical release label used by CI and deployment health. Keep
+    calculation-engine versions separate from this product release identity.
+    """
+    version_file = Path(__file__).resolve().parents[1] / "VERSION"
+    try:
+        value = version_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        value = ""
+    return value or "0.2.8"
+
+
 def create_app(test_config: dict | None = None) -> Flask:
     load_dotenv()
     app = Flask(__name__, instance_relative_config=True)
@@ -39,7 +53,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get("MF_SESSION_DAYS", "7"))),
         SITE_NAME=os.environ.get("MF_SITE_NAME", "Market Forensics"),
         LOGO_URL=os.environ.get("MF_LOGO_URL", "").strip(),
-        VERSION="0.2.7",
+        VERSION=_release_version(),
         APP_ENV=env,
         AUTO_MIGRATE=os.environ.get("MF_AUTO_MIGRATE", "1") == "1",
     )
