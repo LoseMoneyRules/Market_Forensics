@@ -147,10 +147,10 @@ def seed_fast_cache(app, coverage_id, company_id, *, conclusion="LONG WATCH"):
 
 def test_020_health_identity_and_calculation_version(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
-    assert app.config["VERSION"] == "0.2.0"
+    assert app.config["VERSION"] == "0.2.1"
     response = app.test_client().get("/health")
     assert response.status_code == 200
-    assert response.get_json()["version"] == "0.2.0"
+    assert response.get_json()["version"] == "0.2.1"
     assert response.get_json()["architecture"] == "web-native"
     assert CALCULATION_VERSION == "0.2.0"
     metrics = financial_metrics({"revenue": 110, "fcf": 12}, {"revenue": 100, "fcf": 10})
