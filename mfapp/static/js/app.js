@@ -322,9 +322,10 @@
     const prior = button?.textContent || '';
     if (button) { button.disabled = true; button.textContent = 'Saving…'; }
     const formData = new FormData(form);
-    if (event.submitter?.name) formData.set(event.submitter.name, event.submitter.value);
+    const endpoint = form.getAttribute('action');
+    if (!endpoint) return;
     try {
-      const response = await fetch(form.action, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {Accept: 'application/json', 'X-CSRFToken': csrf},
