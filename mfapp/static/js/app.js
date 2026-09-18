@@ -192,11 +192,13 @@
   window.addEventListener('resize',()=>{window.clearTimeout(resizeTimer);resizeTimer=window.setTimeout(renderCharts,180)});
   window.addEventListener('mf-theme-change',()=>window.setTimeout(renderCharts,30));
 
-  // CONTROL background-job observer. Heavy work is never auto-executed in a page request.
+  // CONTROL background-job observer + detached executor fallback.
+  // Page requests stay fast: /jobs/pump only starts a separate CLI process and returns.
   const workerChip = document.getElementById('mf-worker-chip');
   if (realRole !== 'CONTROL' || effectiveRole !== 'CONTROL' || !csrf) return;
   const autoRefresh = document.querySelector('meta[name="mf-auto-refresh"]')?.content === '1';
-  let busy=false, stopped=false, timer=null, baselineFinished=null, dirty=false, refreshOffered=false;
+  const pumpLockKey='mf-job-pump-kick-at';
+  let busy=false, pumpBusy=false, stopped=false, timer=null, baselineFinished=null, dirty=false, refreshOffered=false;
 
   document.addEventListener('input',(event)=>{
     const target=event.target;
@@ -210,7 +212,7 @@
     if(refreshOffered){workerChip.textContent='Data updated · refresh';workerChip.classList.add('job-updated');return}
     workerChip.classList.remove('job-updated');
     if(running)workerChip.textContent='Jobs · running · '+queued+' queued';
-    else if(queued)workerChip.textContent='Jobs · '+queued+' queued';
+    else if(queued)workerChip.textContent='Jobs · starting · '+queued+' queued';
     else if(failed)workerChip.textContent='Jobs · idle · '+failed+' failed';
     else workerChip.textContent='Jobs · idle';
   }
@@ -220,6 +222,33 @@
     if(r.status===401||r.status===403){stopped=true;return null}
     if(!r.ok)throw new Error('status '+r.status);
     return r.json();
+  }
+  async function kickExecutor(state){
+    if(pumpBusy||Number(state?.due||0)<=0||Number(state?.running||0)>0)return false;
+    const now=Date.now();
+    let previous=0;
+    try{previous=Number(window.localStorage.getItem(pumpLockKey)||0)}catch(_){}
+    if(now-previous<12000)return false;
+    try{window.localStorage.setItem(pumpLockKey,String(now))}catch(_){}
+    pumpBusy=true;
+    try{
+      const r=await fetch('/jobs/pump',{
+        method:'POST',credentials:'same-origin',
+        headers:{Accept:'application/json','X-CSRFToken':csrf},
+        cache:'no-store'
+      });
+      if(r.status===401||r.status===403){stopped=true;return false}
+      if(!r.ok){
+        if(workerChip){workerChip.textContent='Jobs · executor unavailable';workerChip.title='Background executor could not start.'}
+        return false;
+      }
+      const payload=await r.json();
+      if(payload?.spawned&&workerChip)workerChip.textContent='Jobs · starting background worker';
+      return Boolean(payload?.spawned);
+    }catch(_){
+      if(workerChip)workerChip.textContent='Jobs · executor reconnecting';
+      return false;
+    }finally{pumpBusy=false}
   }
   function maybeRefresh(state){
     const finished=state?.last_finished_id??null;
@@ -246,8 +275,9 @@
       const state=await status();if(!state)return;
       if(maybeRefresh(state))return;
       renderJobs(state);
+      const kicked=await kickExecutor(state);
       const active=Number(state.running||0)+Number(state.queued||0);
-      schedule(active?2500:8000);
+      schedule(kicked?1200:(active?2500:8000));
     }catch(_){
       if(workerChip)workerChip.textContent='Jobs · reconnecting';
       schedule(12000);

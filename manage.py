@@ -55,15 +55,42 @@ def _run_monitoring_for_controls() -> None:
     print({"monitoring": evaluate_all()})
 
 
-def run_jobs(limit: int) -> None:
+def _acquire_job_executor_lock():
+    """Single executor across cron and browser fallback processes."""
+    lock_dir = Path("instance")
+    lock_dir.mkdir(exist_ok=True)
+    handle = open(lock_dir / "job-executor.lock", "a+", encoding="utf-8")
+    try:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:
+        return handle
+    except BlockingIOError:
+        handle.close()
+        return None
+    return handle
+
+
+def run_jobs(limit: int, user_id: int | None = None) -> None:
     from mfapp.jobs import run_jobs as execute
-    app = create_app({"AUTO_MIGRATE": True})
-    with app.app_context():
-        for result in execute(limit=limit):
-            print(result)
-        # Monitoring is evaluated even when the queue is empty so cPanel cron remains
-        # the unattended trigger engine for CONTROL plus opted-in published-research members.
-        _run_monitoring_for_controls()
+    lock = _acquire_job_executor_lock()
+    if lock is None:
+        print({"executor": "busy", "message": "Another Market Forensics job executor owns the lock."})
+        return
+    try:
+        app = create_app({"AUTO_MIGRATE": True})
+        with app.app_context():
+            for result in execute(limit=limit, user_id=user_id):
+                print(result)
+            # Monitoring remains part of unattended cron runs. Browser fallback
+            # processes are user-scoped and must stay short.
+            if user_id is None:
+                _run_monitoring_for_controls()
+    finally:
+        try:
+            lock.close()
+        except Exception:
+            pass
 
 
 def run_monitoring() -> None:
@@ -78,13 +105,13 @@ def main() -> None:
     sub.add_parser("generate-secrets")
     p = sub.add_parser("bootstrap-admin"); p.add_argument("--email", required=True); p.add_argument("--name", default="Control")
     sub.add_parser("migrate")
-    jobs = sub.add_parser("run-jobs"); jobs.add_argument("--limit", type=int, default=5)
+    jobs = sub.add_parser("run-jobs"); jobs.add_argument("--limit", type=int, default=5); jobs.add_argument("--user-id", type=int)
     sub.add_parser("monitor")
     args = parser.parse_args()
     if args.cmd == "generate-secrets": generate_secrets()
     elif args.cmd == "bootstrap-admin": bootstrap_admin(args.email, args.name)
     elif args.cmd == "migrate": migrate()
-    elif args.cmd == "run-jobs": run_jobs(args.limit)
+    elif args.cmd == "run-jobs": run_jobs(args.limit, args.user_id)
     elif args.cmd == "monitor": run_monitoring()
 
 

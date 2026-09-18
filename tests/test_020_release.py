@@ -798,13 +798,20 @@ def test_020_dashboard_query_count_is_bounded_with_cache(tmp_path, monkeypatch):
         sa_event.remove(engine, "before_cursor_execute", before_cursor)
 
 
-def test_020_browser_observes_jobs_without_auto_pumping_heavy_work():
+def test_020_browser_observes_jobs_and_kicks_detached_executor_without_blocking_page_work():
     js = Path("mfapp/static/js/app.js").read_text()
-    assert "Heavy work is never auto-executed in a page request." in js
+    routes = Path("mfapp/routes_publish.py").read_text()
+    manage = Path("manage.py").read_text()
+    assert "Page requests stay fast" in js
     assert "last_finished_id" in js
     assert "window.location.reload()" in js
-    assert "await pump()" not in js
-    assert "fetch('/jobs/pump'" not in js
+    assert "fetch('/jobs/pump'" in js
+    assert "subprocess.Popen" in routes
+    assert "start_new_session=True" in routes
+    assert '"run-jobs"' in routes and '"--user-id"' in routes
+    assert "run_jobs(limit=1" not in routes
+    assert "job-executor.lock" in manage
+    assert "LOCK_EX | fcntl.LOCK_NB" in manage
 
 
 def test_020_reporting_dependencies_are_optional_at_startup():
@@ -890,3 +897,40 @@ def test_020_current_price_refresh_contract_is_five_minutes():
     assert '"MARKET_REFRESH"' in workspace
     assert "5 * 60 * 1000" in js
     assert "/price/refresh" in js
+
+
+def test_020_job_pump_spawns_detached_executor_without_running_inline(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, security_id, coverage_id = seed_workspace(app)
+    with app.app_context():
+        from mfapp.jobs import enqueue_job
+        job = enqueue_job(
+            "RECALCULATE",
+            user_id=uid,
+            company_id=company_id,
+            security_id=security_id,
+            payload={"coverage_id": coverage_id},
+            priority=10,
+        )
+        job_id = job.id
+
+    import mfapp.routes_publish as publish_routes
+    spawned = {}
+    def fake_spawn(user_id):
+        spawned["user_id"] = user_id
+        return 43210
+    monkeypatch.setattr(publish_routes, "_spawn_job_runner", fake_spawn)
+
+    client = app.test_client()
+    login_control(client, uid)
+    response = client.post("/jobs/pump", headers={"Accept": "application/json"})
+    assert response.status_code == 202
+    payload = response.get_json()
+    assert payload["spawned"] is True
+    assert payload["pid"] == 43210
+    assert spawned["user_id"] == uid
+
+    with app.app_context():
+        queued = db.session.get(Job, job_id)
+        assert queued.status == "QUEUED"
+        assert queued.started_at is None
