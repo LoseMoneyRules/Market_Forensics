@@ -798,13 +798,20 @@ def test_020_dashboard_query_count_is_bounded_with_cache(tmp_path, monkeypatch):
         sa_event.remove(engine, "before_cursor_execute", before_cursor)
 
 
-def test_020_browser_observes_jobs_without_auto_pumping_heavy_work():
+def test_020_browser_observes_jobs_and_kicks_detached_executor_without_blocking_page_work():
     js = Path("mfapp/static/js/app.js").read_text()
-    assert "Heavy work is never auto-executed in a page request." in js
+    routes = Path("mfapp/routes_publish.py").read_text()
+    manage = Path("manage.py").read_text()
+    assert "Page requests stay fast" in js
     assert "last_finished_id" in js
     assert "window.location.reload()" in js
-    assert "await pump()" not in js
-    assert "fetch('/jobs/pump'" not in js
+    assert "fetch('/jobs/pump'" in js
+    assert "subprocess.Popen" in routes
+    assert "start_new_session=True" in routes
+    assert '"run-jobs"' in routes and '"--user-id"' in routes
+    assert "run_jobs(limit=1" not in routes
+    assert "job-executor.lock" in manage
+    assert "LOCK_EX | fcntl.LOCK_NB" in manage
 
 
 def test_020_reporting_dependencies_are_optional_at_startup():
