@@ -15,7 +15,6 @@
 **Main code release:** 0.2.7 merged at `ef02e56596da90d3768601994219fca9284a49df` via PR #24  
 **0.2.7 PR CI:** run `35369138874` / run #797 = completed / success  
 **0.2.7 post-merge main CI:** pending  
-**Production:** 0.2.6 on Namecheap  
 **0.2.6 Namecheap deploy:** run `35363441025` / deploy #35 = completed / success; candidate health + post-cleanup health passed; no rollback  
 **Release phase:** 0.2.7 is in `main`; production deploy pending  
 **Branch:** `main`
