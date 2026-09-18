@@ -192,41 +192,68 @@
   window.addEventListener('resize',()=>{window.clearTimeout(resizeTimer);resizeTimer=window.setTimeout(renderCharts,180)});
   window.addEventListener('mf-theme-change',()=>window.setTimeout(renderCharts,30));
 
-  // CONTROL browser worker.
+  // CONTROL background-job observer. Heavy work is never auto-executed in a page request.
   const workerChip = document.getElementById('mf-worker-chip');
   if (realRole !== 'CONTROL' || effectiveRole !== 'CONTROL' || !csrf) return;
-  let busy=false, stopped=false, timer=null;
-  function renderWorker(state){
+  const autoRefresh = document.querySelector('meta[name="mf-auto-refresh"]')?.content === '1';
+  let busy=false, stopped=false, timer=null, baselineFinished=null, dirty=false, refreshOffered=false;
+
+  document.addEventListener('input',(event)=>{
+    const target=event.target;
+    if(target && (target.matches('input:not([type="hidden"]):not([type="search"]), textarea, select'))) dirty=true;
+  },{capture:true});
+  document.addEventListener('submit',()=>{dirty=false},{capture:true});
+
+  function renderJobs(state){
     if(!workerChip)return;
     const queued=Number(state?.queued||0),running=Number(state?.running||0),failed=Number(state?.failed||0);
-    if(running)workerChip.textContent='Worker · running · '+queued+' queued';
-    else if(queued)workerChip.textContent='Worker · '+queued+' queued';
-    else if(failed)workerChip.textContent='Worker · idle · '+failed+' failed';
-    else workerChip.textContent='Worker · idle';
+    if(refreshOffered){workerChip.textContent='Data updated · refresh';workerChip.classList.add('job-updated');return}
+    workerChip.classList.remove('job-updated');
+    if(running)workerChip.textContent='Jobs · running · '+queued+' queued';
+    else if(queued)workerChip.textContent='Jobs · '+queued+' queued';
+    else if(failed)workerChip.textContent='Jobs · idle · '+failed+' failed';
+    else workerChip.textContent='Jobs · idle';
   }
   function schedule(ms){window.clearTimeout(timer);if(!stopped)timer=window.setTimeout(tick,ms)}
   async function status(){
-    const r=await fetch('/jobs/status',{credentials:'same-origin',headers:{Accept:'application/json'}});
+    const r=await fetch('/jobs/status',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'});
     if(r.status===401||r.status===403){stopped=true;return null}
     if(!r.ok)throw new Error('status '+r.status);
     return r.json();
   }
-  async function pump(){
-    const r=await fetch('/jobs/pump',{method:'POST',credentials:'same-origin',headers:{Accept:'application/json','X-CSRFToken':csrf}});
-    if(r.status===401||r.status===403){stopped=true;return null}
-    if(!r.ok)throw new Error('pump '+r.status);
-    return r.json();
+  function maybeRefresh(state){
+    const finished=state?.last_finished_id??null;
+    if(baselineFinished===null){baselineFinished=finished;return false}
+    if(finished===null||finished===baselineFinished)return false;
+    baselineFinished=finished;
+    if(!autoRefresh)return false;
+    if(!dirty){
+      window.location.reload();
+      return true;
+    }
+    refreshOffered=true;
+    if(workerChip){
+      workerChip.title='Background data finished. Click to refresh when you are ready.';
+      workerChip.style.cursor='pointer';
+      workerChip.onclick=()=>window.location.reload();
+    }
+    return false;
   }
   async function tick(){
     if(busy||stopped)return;
     busy=true;
     try{
-      let state=await status();if(!state)return;renderWorker(state);
-      if(Number(state.due||0)>0){state=await pump();if(!state)return;renderWorker(state);schedule(Number(state.due||0)>0?700:5000)}
-      else schedule(Number(state.running||0)>0?5000:8000);
-    }catch(_){if(workerChip)workerChip.textContent='Worker · retrying';schedule(12000)}
-    finally{busy=false}
+      const state=await status();if(!state)return;
+      if(maybeRefresh(state))return;
+      renderJobs(state);
+      const active=Number(state.running||0)+Number(state.queued||0);
+      schedule(active?2500:8000);
+    }catch(_){
+      if(workerChip)workerChip.textContent='Jobs · reconnecting';
+      schedule(12000);
+    }finally{busy=false}
   }
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy&&!stopped)schedule(250)});
-  schedule(300);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy&&!stopped)schedule(150)});
+  schedule(250);
+
 })();
