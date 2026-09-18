@@ -22,6 +22,7 @@ from .core_models import (
 )
 from .current_financials import current_row
 from .extensions import db
+from .macro_context import macro_context
 from .services import valuation_result
 
 
@@ -145,13 +146,24 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
     micro_for = [{"label": x.get("label"), "detail": x.get("detail"), "section": x.get("section")} for x in positives[:5]]
     micro_against = [{"label": x.get("label"), "detail": x.get("detail"), "section": x.get("section")} for x in negatives[:5]]
 
-    macro_notes = []
-    if getattr(company, "sector", "") or getattr(company, "industry", ""):
-        macro_notes.append({"label": "Industry context", "detail": " · ".join(x for x in (company.sector, company.industry) if x), "source": "company classification"})
+    macro_snapshot = macro_context(company.id)
+    def _macro_item(row: dict[str, Any]) -> dict[str, Any]:
+        value = row.get("value")
+        unit = str(row.get("unit") or "")
+        value_text = f"{value:.2f}{unit if unit == '%' else (' ' + unit if unit else '')}" if isinstance(value, (int, float)) else "—"
+        return {
+            "label": row.get("label") or row.get("key"),
+            "detail": f"{row.get('trend')} · {value_text} · sensitivity benefits when {row.get('sensitivity')}.",
+            "source": f"FRED {row.get('series_id')} · {row.get('as_of')}",
+        }
+    macro_for = [_macro_item(row) for row in macro_snapshot.get("for", [])][:5]
+    macro_against = [_macro_item(row) for row in macro_snapshot.get("against", [])][:5]
+    macro_watch = [_macro_item(row) for row in macro_snapshot.get("watch", [])][:4]
+    macro_notes = macro_for + macro_against + macro_watch
     if getattr(research, "variant_market", "").strip():
         macro_notes.append({"label": "Market / industry view", "detail": research.variant_market.strip(), "source": "CONTROL research note"})
     if not macro_notes:
-        macro_notes.append({"label": "Macro / industry evidence", "detail": "No explicit sourced macro/industry evidence is stored yet.", "source": "missing evidence"})
+        macro_notes.append({"label": "Macro / industry evidence", "detail": macro_snapshot.get("reason") or "No explicit sourced macro/industry evidence is stored yet.", "source": "missing evidence"})
 
     catalysts = Catalyst.query.filter_by(coverage_id=coverage.id, status="OPEN").order_by(Catalyst.expected_date.asc(), Catalyst.id.asc()).limit(5).all()
     bear_items = BearCaseItem.query.filter_by(coverage_id=coverage.id, status="OPEN").order_by(BearCaseItem.invalidates.desc(), BearCaseItem.id.asc()).limit(5).all()
@@ -259,7 +271,12 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
         "why": why[:4],
         "micro_for": micro_for,
         "micro_against": micro_against,
-        "macro": macro_notes[:4],
+        "macro": macro_notes[:8],
+        "macro_for": macro_for,
+        "macro_against": macro_against,
+        "macro_watch": macro_watch,
+        "macro_source": macro_snapshot.get("source"),
+        "macro_as_of": macro_snapshot.get("as_of"),
         "catalysts": [{"title": row.title, "direction": row.direction, "date": _iso(row.expected_date), "evidence": row.evidence} for row in catalysts],
         "bear_case": [{"title": row.title, "severity": row.severity, "invalidates": row.invalidates, "evidence": row.evidence} for row in bear_items],
         "invalidation": getattr(risk, "thesis_invalidation", "") if risk else "",
