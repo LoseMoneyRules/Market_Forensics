@@ -23,11 +23,6 @@
   </div>
 
   {% if rows %}
-  <p class="command-table-note">Process = approved Research gates. Validate = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).</p>
-  <div class="command-actions command-refresh-actions">
-    <form method="post" action="{{ url_for('web.queue_global_job', kind='stale') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Refresh stale</button></form>
-    <form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Refresh all</button></form>
-  </div>
   <div class="table-card coverage-card"><table class="data-table coverage-table">
     <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th class="coverage-number-col">Price</th><th class="coverage-number-col">Base</th><th class="coverage-number-col">Base gap</th><th>Process</th><th title="Latest point-in-time walk-forward validation status">Validate</th><th class="coverage-fresh-col">Freshness</th><th class="coverage-wrap-col">Next action</th><th class="coverage-wrap-col">Lens</th><th class="coverage-manage-col">Manage</th></tr></thead>
     <tbody>
@@ -40,7 +35,7 @@
         <td class="coverage-number-col">{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
         <td class="coverage-number-col">{% if row.valuation.base is not none %}&#36;{{ '%.2f'|format(row.valuation.base) }}{% else %}—{% endif %}</td>
         <td class="coverage-number-col">{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td>
-        <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
+        <td>{% if row.readiness.ready_to_validate %}<a class="micro-link process-ready-only" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% else %}<div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% endif %}</td>
         <td><span class="status-chip" title="Latest point-in-time walk-forward validation status">{{ row.readiness.validation.state }}</span></td>
         <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}{{ '%.0f'|format(row.freshness_hours*60) }}m{% else %}{{ '%.1f'|format(row.freshness_hours) }}h{% endif %}</td>
         <td class="coverage-wrap-col">{{ row.next_action }}</td>
@@ -56,6 +51,10 @@
     </tbody>
   </table></div>
   <p class="command-table-note">Process = approved Research gates. Validate = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).</p>
+  <div class="command-actions command-refresh-actions command-refresh-actions-bottom">
+    <form method="post" action="{{ url_for('web.queue_global_job', kind='stale') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Refresh stale</button></form>
+    <form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Refresh all</button></form>
+  </div>
   {% else %}<div class="empty-state"><h2>No coverage yet</h2><p>Add a validated ticker or use Discovery to create the first research file.</p></div>{% endif %}
 
   {% if alert_items %}<div class="panel command-exceptions"><div class="panel-head"><h2>Exceptions</h2></div>{% for item in alert_items %}{% set alert=item.alert %}<div class="list-row"><div class="exception-copy">{% if item.ticker %}<a class="exception-ticker" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">{{ item.ticker }}</a>{% endif %}<strong>{{ alert.title }}</strong><p>{{ alert.body }}</p></div><span class="status-chip">{{ alert.severity }}</span></div>{% endfor %}</div>{% endif %}
