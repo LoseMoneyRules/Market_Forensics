@@ -304,6 +304,9 @@ def _bulk(user_id: int) -> dict[str, Any]:
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
             if getattr(job, "_mf_reused", False): reused += 1
             else: queued += 1
+    portfolio_job = enqueue_job("PORTFOLIO_RECALCULATE", user_id=user_id, payload={}, priority=99)
+    if getattr(portfolio_job, "_mf_reused", False): reused += 1
+    else: queued += 1
     return {"jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
 
 
@@ -343,6 +346,10 @@ def _stale(user_id: int) -> dict[str, Any]:
                 reused += 1
             else:
                 queued += 1
+    if queued:
+        portfolio_job = enqueue_job("PORTFOLIO_RECALCULATE", user_id=user_id, payload={}, priority=99)
+        if getattr(portfolio_job, "_mf_reused", False): reused += 1
+        else: queued += 1
     return {"coverage_scanned": scanned, "jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
 
 
@@ -436,6 +443,9 @@ def _execute(job: Job) -> dict[str, Any]:
         return payload
     if kind == "DISCOVERY_SCAN": return _discovery(job.user_id)
     if kind == "CACHE_PRIME": return _prime_research_cache(job.user_id)
+    if kind == "PORTFOLIO_RECALCULATE":
+        from .portfolio_engine import refresh_portfolio_analytics
+        return refresh_portfolio_analytics(job.user_id)
     if kind == "BULK_REFRESH": return _bulk(job.user_id)
     if kind == "STALE_REFRESH": return _stale(job.user_id)
     raise RuntimeError(f"Unknown job type: {kind}")
