@@ -244,30 +244,46 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
     }
 
 def _discovery(user_id: int) -> dict[str, Any]:
-    """Market-wide lightweight scan plus deep-context ranking for existing Coverage."""
-    from .services import readiness, valuation_result
+    """Market-wide scan plus cache-only ranking for current Coverage."""
+    from .research_cache import latest_cache_map
+
     scan = market_scan(user_id)
+    coverages = Coverage.query.filter(
+        Coverage.user_id == user_id,
+        Coverage.status != "ARCHIVED",
+    ).all()
+    caches = latest_cache_map([row.id for row in coverages])
+    security_ids = [row.security_id for row in coverages]
+    securities = {
+        row.id: row
+        for row in Security.query.filter(Security.id.in_(security_ids)).all()
+    } if security_ids else {}
+
     ranked = []
-    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
-        security = db.session.get(Security, coverage.security_id)
+    for coverage in coverages:
+        security = securities.get(coverage.security_id)
         if not security:
             continue
-        ready = readiness(coverage)
-        val = valuation_result(coverage)
-        price, base = val.get("current_price"), val.get("base")
-        gap = ((float(base) / float(price) - 1) * 100) if base is not None and price not in (None, 0) else None
-        score = ready["done"] * 5 + (min(abs(gap), 50) if gap is not None else 0)
+        cache = dict(caches.get(coverage.id) or {})
+        readiness = dict(cache.get("readiness") or {})
+        intelligence = dict(cache.get("intelligence") or {})
+        done = int(readiness.get("done") or 0)
+        total = int(readiness.get("total") or 13)
+        gap = intelligence.get("base_gap_pct")
+        score = done * 5 + (min(abs(float(gap)), 50) if gap is not None else 0)
         ranked.append({
             "ticker": security.ticker,
-            "readiness": f"{ready['done']}/{ready['total']}",
+            "readiness": f"{done}/{total}",
             "base_gap_pct": gap,
             "score": round(score, 2),
+            "cache_ready": bool(cache),
         })
     ranked.sort(key=lambda row: row["score"], reverse=True)
     return {
         "coverage_scanned": len(ranked),
         "ranked": ranked[:25],
         "market_scan": scan,
+        "ranking_mode": "CACHE_ONLY",
     }
 
 def _prime_research_cache(user_id: int) -> dict[str, Any]:
