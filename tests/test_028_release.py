@@ -11,9 +11,13 @@ from mfapp.core_models import Company, Coverage, FinancialPeriod, NormalizedFina
 from mfapp.extensions import db
 from mfapp.financial_flow_engine import build_income_statement_flow
 from mfapp.decision_support import tape_context_metrics
+from mfapp.current_financials import numbers_completeness
 from mfapp.models import User
 from mfapp.routes import SECTIONS
-from mfapp.secdata import _AV_BALANCE_FIELDS, _AV_CASH_FIELDS, _AV_INCOME_FIELDS, _finish_normalized
+from mfapp.secdata import (
+    _AV_BALANCE_FIELDS, _AV_CASH_FIELDS, _AV_INCOME_FIELDS, _compose_debt,
+    _finish_normalized, _semantic_tag_groups,
+)
 from mfapp.security import encrypt_secret, hash_password
 from mfapp.services import ensure_workspace
 
@@ -197,6 +201,120 @@ def test_028_tape_context_turns_scores_into_wait_long_short_or_lateral():
     })
     assert short["pressure_direction"] == "SHORT"
     assert short["posture"] == "HOSTILE TAPE"
+
+
+def test_028_second_polish_layout_contract():
+    dashboard = Path("mfapp/templates/dashboard.html").read_text()
+    fundamentals = Path("mfapp/templates/company_section.html").read_text()
+    validate = Path("mfapp/templates/validate.html").read_text()
+    css = Path("mfapp/static/css/app.css").read_text()
+
+    assert dashboard.count("command-table-note") == 1
+    assert dashboard.index("coverage-table") < dashboard.index("command-table-note") < dashboard.index("command-refresh-actions-bottom")
+    assert "process-ready-only" in dashboard
+    assert "{% if row.readiness.ready_to_validate %}" in dashboard
+    assert validate.index('_research_tabs.html') < validate.index('validation-run-bar')
+    assert "fundamentals-current-strip" in fundamentals
+    assert fundamentals.index("Analyst notes") < fundamentals.index("DATA COMPLETENESS")
+    assert "ANALYSIS READY" in fundamentals and "missing_derived_metrics" in fundamentals
+    assert ".tape-context-card{border-top:" not in css
+    assert ".tape-context-card{padding:10px 12px!important" in css
+    assert Path("VERSION").read_text().strip() == "0.2.8"
+
+
+def test_028_debt_components_recover_nike_style_total_debt():
+    direct = {"tag": "LongTermDebt", "val": "7030"}
+    current = {"tag": "LongTermDebtCurrent", "val": "999"}
+    noncurrent = {"tag": "LongTermDebtNoncurrent", "val": "7030"}
+    short_term = {"tag": "ShortTermBorrowings", "val": "0"}
+
+    value, records, method = _compose_debt(direct, current, noncurrent, short_term)
+    assert value == Decimal("8029")
+    assert method == "SUM_CURRENT_NONCURRENT_DEBT"
+    assert {row["tag"] for row in records} == {
+        "LongTermDebtCurrent", "LongTermDebtNoncurrent", "ShortTermBorrowings",
+    }
+
+    combined = {"tag": "DebtLongtermAndShorttermCombinedAmount", "val": "8500"}
+    value, records, method = _compose_debt(combined, current, noncurrent, short_term)
+    assert value == Decimal("8500")
+    assert method == "DIRECT_COMBINED_DEBT"
+    assert records == [combined]
+
+    value, records, method = _compose_debt(direct, None, None, None)
+    assert value is None
+    assert records == []
+    assert method == ""
+
+
+def test_028_exact_filing_label_fallback_can_find_extension_taxonomy():
+    companyfacts = {
+        "facts": {
+            "nke": {
+                "InventoriesCustom": {"label": "Inventories", "units": {}},
+                "CostOfSalesCustom": {"label": "Cost of sales", "units": {}},
+                "SegmentInventories": {"label": "Inventories by geographic area", "units": {}},
+            },
+            "us-gaap": {
+                "InventoryNet": {"label": "Inventory, Net", "units": {}},
+            },
+        }
+    }
+    inventory = _semantic_tag_groups(companyfacts, "inventory")
+    cogs = _semantic_tag_groups(companyfacts, "cogs")
+    assert "InventoriesCustom" in inventory["nke"]
+    assert "SegmentInventories" not in inventory["nke"]
+    assert "CostOfSalesCustom" in cogs["nke"]
+
+
+def test_028_data_completeness_flags_historical_field_that_disappears(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "completeness")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Gap Co", display_name="Gap Co")
+        db.session.add(company); db.session.flush()
+
+        fy = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2025,
+            end_date=date(2025, 5, 31), currency="USD",
+        )
+        db.session.add(fy); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=fy.id,
+            revenue=Decimal("1000"), cogs=Decimal("600"), gross_profit=Decimal("400"),
+            operating_income=Decimal("150"), pretax_income=Decimal("140"), income_tax=Decimal("30"),
+            net_income=Decimal("110"), cfo=Decimal("160"), capex=Decimal("40"), fcf=Decimal("120"),
+            inventory=Decimal("100"), receivables=Decimal("90"), payables=Decimal("70"),
+            cash=Decimal("80"), debt=Decimal("200"), equity=Decimal("500"),
+        ))
+
+        quarter_specs = [
+            ("Q1", date(2026, 8, 31)), ("Q2", date(2026, 11, 30)),
+            ("Q3", date(2027, 2, 28)), ("Q4", date(2027, 5, 31)),
+        ]
+        for idx, (period_type, end_date) in enumerate(quarter_specs, start=1):
+            p = FinancialPeriod(
+                company_id=company.id, period_type=period_type, fiscal_year=2027,
+                end_date=end_date, currency="USD",
+            )
+            db.session.add(p); db.session.flush()
+            db.session.add(NormalizedFinancial(
+                financial_period_id=p.id,
+                revenue=Decimal("260"), cogs=Decimal("150"), gross_profit=Decimal("110"),
+                operating_income=Decimal("40"), pretax_income=Decimal("38"), income_tax=Decimal("8"),
+                net_income=Decimal("30"), cfo=Decimal("42"), capex=Decimal("10"), fcf=Decimal("32"),
+                inventory=None if period_type == "Q4" else Decimal(str(100 + idx)),
+                receivables=Decimal("95"), payables=Decimal("72"),
+                cash=Decimal("85"), debt=Decimal("195"), equity=Decimal("510"),
+            ))
+        db.session.commit()
+
+        completeness = numbers_completeness(company.id)
+        assert completeness["ttm_ready"] is True
+        assert "inventory" in completeness["missing_continuity_fields"]
+        assert "DIO" in completeness["missing_derived_metrics"]
+        assert "Inventory / Revenue" in completeness["missing_derived_metrics"]
+        assert completeness["analysis_ready"] is False
 
 
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():

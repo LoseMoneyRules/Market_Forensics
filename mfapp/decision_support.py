@@ -199,35 +199,35 @@ def tape_context_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     pressure_delta = long_demand - bear_pressure if long_demand is not None and bear_pressure is not None else None
     if pressure_delta is None:
         pressure_direction = "LOW DATA"; pressure_tone = "watch"
-        pressure_detail = "Long and short pressure cannot be separated with the stored evidence."
+        pressure_detail = "Direction unresolved."
     elif pressure_delta >= 12:
         pressure_direction = "LONG"; pressure_tone = "positive"
-        pressure_detail = f"Long-demand score leads bear pressure by {pressure_delta:.0f} pts."
+        pressure_detail = f"Long demand leads by {pressure_delta:.0f} pts."
     elif pressure_delta <= -12:
         pressure_direction = "SHORT"; pressure_tone = "negative"
-        pressure_detail = f"Bear pressure leads long-demand score by {abs(pressure_delta):.0f} pts."
+        pressure_detail = f"Bear pressure leads by {abs(pressure_delta):.0f} pts."
     else:
         pressure_direction = "LATERAL"; pressure_tone = "watch"
-        pressure_detail = f"Long vs bear pressure spread is only {pressure_delta:+.0f} pts."
+        pressure_detail = f"Pressure spread {pressure_delta:+.0f} pts."
 
     if confidence == "LOW":
         posture = "WAIT FOR DATA"; posture_tone = "watch"; confirmation_state = "REFRESH"
-        next_confirmation = "Need more price history plus FINRA / positioning evidence before trusting the tape."
+        next_confirmation = "Refresh price + FINRA / positioning."
     elif regime == "MIXED" or pressure_direction in {"LATERAL", "LOW DATA"} or (battle is not None and battle >= 70):
         posture = "WAIT FOR CONFIRMATION"; posture_tone = "watch"; confirmation_state = "NO CLEAN EDGE"
-        next_confirmation = "Wait for long-demand and bear-pressure scores to separate by at least 12 pts with price resilience confirming the same direction."
+        next_confirmation = "Need ≥12-pt pressure spread + confirming resilience."
     elif pressure_direction == "LONG" and regime == "SUPPORTIVE":
         posture = "SUPPORTIVE TAPE"; posture_tone = "positive"; confirmation_state = "LONG PRESSURE"
-        next_confirmation = "Stronger confirmation if long demand remains > bear pressure by ≥12 pts and price resilience stays at/above 55."
+        next_confirmation = "Long spread ≥12 pts · resilience ≥55."
     elif pressure_direction == "SHORT" and regime == "HOSTILE":
         posture = "HOSTILE TAPE"; posture_tone = "negative"; confirmation_state = "SHORT PRESSURE"
-        next_confirmation = "Stronger confirmation if bear pressure remains > long demand by ≥12 pts and price resilience falls below 45."
+        next_confirmation = "Short spread ≥12 pts · resilience <45."
     else:
         posture = "WAIT FOR CONFIRMATION"; posture_tone = "watch"; confirmation_state = "CONFLICTED"
-        next_confirmation = "Directional scores and regime disagree; wait for the conflict to resolve instead of forcing a tape call."
+        next_confirmation = "Wait for regime + pressure to align."
 
     if resilience is None and confidence != "LOW":
-        next_confirmation += " Price-resilience evidence is still incomplete."
+        next_confirmation += " Resilience missing."
 
     return {
         "posture": posture, "posture_tone": posture_tone,

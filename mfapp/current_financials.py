@@ -161,8 +161,46 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
     quarters = quarterly_rows(company_id, 12)
     annual = annual_rows(company_id, 5)
     current = current_row(company_id)
+    metrics = dict((current or {}).get("metrics") or {})
+
+    # Statement anchors should be present for a full operating-company study.
     core = ("revenue", "gross_profit", "operating_income", "net_income", "cfo", "capex", "fcf")
     missing_current = [field for field in core if not current or n(current.get(field)) is None]
+
+    # Balance-sheet items are applicability-aware: if a recent filed annual period
+    # reported the field, its disappearance from the current basis is an ingestion
+    # gap worth surfacing. A business that never reports inventory is not penalized.
+    continuity_fields = ("cash", "debt", "receivables", "inventory", "payables", "equity")
+    historically_present = {
+        field for field in continuity_fields
+        if any(n(row.get(field)) is not None for row in annual[:3])
+    }
+    missing_continuity = [
+        field for field in continuity_fields
+        if field in historically_present and (not current or n(current.get(field)) is None)
+    ]
+
+    derived_labels = {
+        "gross_margin_pct": "gross margin",
+        "dso": "DSO",
+        "dio": "DIO",
+        "dpo": "DPO",
+        "cash_conversion_days": "CCC",
+        "inventory_to_revenue_pct": "Inventory / Revenue",
+        "receivables_to_revenue_pct": "Receivables / Revenue",
+        "cfo_to_net_income": "CFO / Net Income",
+        "roic_pct": "ROIC",
+        "net_debt_to_fcf": "Net debt / FCF",
+    }
+    historical_metric_presence = {
+        key for key in derived_labels
+        if any(n((row.get("metrics") or {}).get(key)) is not None for row in annual[:3])
+    }
+    missing_derived = [
+        derived_labels[key] for key in derived_labels
+        if key in historical_metric_presence and n(metrics.get(key)) is None
+    ]
+
     latest_quarters = quarters[:4]
     quarter_gaps = []
     if len(latest_quarters) < 4:
@@ -172,14 +210,21 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
         seq = [_quarter_sequence_value(row) for row in ordered]
         if any(value is None for value in seq) or any(seq[idx] - seq[idx - 1] != 1 for idx in range(1, len(seq))):
             quarter_gaps.append("Latest four stored quarters are not a consecutive fiscal sequence; TTM is withheld.")
+
+    ttm_ready = bool(current and current.get("period_type") == "TTM")
+    unresolved_count = len(missing_current) + len(missing_continuity) + len(missing_derived)
     return {
         "annual_count": len(annual),
         "quarter_count": len(quarters),
         "current_basis": current.get("period_type") if current else None,
         "current_label": current.get("period_label") if current else None,
         "missing_current_fields": missing_current,
+        "missing_continuity_fields": missing_continuity,
+        "missing_derived_metrics": missing_derived,
+        "unresolved_count": unresolved_count,
         "quarter_gaps": quarter_gaps,
-        "ttm_ready": bool(current and current.get("period_type") == "TTM"),
+        "ttm_ready": ttm_ready,
+        "analysis_ready": bool(ttm_ready and unresolved_count == 0),
     }
 
 

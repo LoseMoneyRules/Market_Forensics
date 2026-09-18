@@ -5,11 +5,11 @@
 {% block content %}
 <section class="page company-page">
   {% include "_company_header.html" %}
+  {% set section='validate' %}{% include "_research_tabs.html" %}
   <div class="action-bar validation-run-bar">
     <div><p class="eyebrow">VALIDATE</p><h2>Point-in-time walk-forward</h2><p>Rebuild the valuation at each old filing date using only information available then, freeze the cases, and only afterward compare them with future prices.</p></div>
     <form class="compact-run" method="post" action="{{ url_for('web.queue_validate_company', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>Lookback<select name="lookback_years" {% if not readiness.ready_to_validate %}disabled{% endif %}><option value="5">5 years</option><option value="10">10 years</option><option value="15" selected>15 years</option><option value="20">20 years</option><option value="30">30 years</option><option value="40">40 years</option></select></label><button class="button primary" type="submit" {% if not readiness.ready_to_validate %}disabled title="Complete and approve Research gates first"{% endif %}>Run walk-forward</button></form>
   </div>
-  {% set section='validate' %}{% include "_research_tabs.html" %}
   {% if not readiness.ready_to_validate %}<div class="notice amber"><strong>RESEARCH NOT READY.</strong> Validate is available for reviewing prior runs, but a new walk-forward is locked until every current Research gate is approved. Return to Overview → Process Readiness.</div>{% endif %}
   <div class="notice teal"><strong>No-lookahead protocol.</strong> Each replay sees only SEC facts filed by that cutoff and market data that existed before the model snapshot. Future prices enter validation only after Bear / Base / Bull are frozen. Split basis is reconciled before comparison.</div>
 

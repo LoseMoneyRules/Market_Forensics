@@ -161,7 +161,7 @@
 
   {% elif section == 'fundamentals' %}
     <div class="action-bar"><div><h2>Fundamentals · FY + current TTM</h2><p>SEC filing data, current TTM when four compatible quarters exist, and internal Base-case forecasts. Display is {{ number_format }}.</p></div><div class="button-row"><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='sec') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Refresh SEC + TTM</button></form><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='recalculate') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Recalculate</button></form></div></div>
-    <div class="current-strip">
+    <div class="current-strip fundamentals-current-strip">
       <div class="current-kpi"><span>Current basis</span><strong>{{ current_financial.period_label if current_financial else 'REFRESH' }}</strong><small>{{ current_financial.period_end if current_financial else 'Refresh fundamentals' }}</small></div>
       <div class="current-kpi"><span>Revenue</span><strong>{{ num(current_financial.revenue) if current_financial else '—' }}</strong><small>{{ pct(current_financial.metrics.revenue_growth_pct) if current_financial else '—' }} growth</small></div>
       <div class="current-kpi"><span>Gross margin</span><strong>{{ pct(current_financial.metrics.gross_margin_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.gross_margin_pct is none %}Gross profit input missing{% endif %}</small></div>
@@ -170,17 +170,6 @@
       <div class="current-kpi"><span>CFO / Net income</span><strong>{% if current_financial and current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div>
       <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.roic_pct is none %}Needs operating income, tax, debt, equity & cash{% else %}NOPAT / invested capital{% endif %}</small></div>
       <div class="current-kpi"><span>Net debt / FCF</span><strong>{% if leverage_display and leverage_display.value is not none %}{{ '%.1f'|format(leverage_display.value) }}x{% else %}—{% endif %}</strong><small>{% if leverage_display and leverage_display.value is not none %}{{ leverage_display.basis }}{% else %}{{ leverage_display.reason if leverage_display else 'Debt/cash or positive FCF unavailable' }}{% endif %}</small></div>
-    </div>
-    <div class="panel numbers-data-quality">
-      <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>What the Fundamentals page is actually built from</h2></div><span class="status-chip" data-status-value="{{ 'PASS' if numbers_completeness.ttm_ready else 'REVIEW' }}">{{ 'TTM READY' if numbers_completeness.ttm_ready else 'FY / PARTIAL' }}</span></div>
-      <div class="numbers-quality-grid">
-        <div><span>Annual periods</span><strong>{{ numbers_completeness.annual_count }}</strong></div>
-        <div><span>Stored quarters</span><strong>{{ numbers_completeness.quarter_count }}</strong></div>
-        <div><span>Current basis</span><strong>{{ numbers_completeness.current_label or '—' }}</strong></div>
-        <div><span>Missing core fields</span><strong>{{ numbers_completeness.missing_current_fields|length }}</strong></div>
-      </div>
-      {% if numbers_completeness.quarter_gaps %}<div class="notice amber">{% for message in numbers_completeness.quarter_gaps %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
-      {% if numbers_completeness.missing_current_fields %}<p class="muted">Missing current fields: {{ numbers_completeness.missing_current_fields|join(', ') }}. Missing filing facts remain missing; they are not guessed.</p>{% endif %}
     </div>
     <div class="chart-grid">
       <div class="panel chart-card"><div class="panel-head"><div><h2>Revenue & free cash flow</h2><p class="muted">Revenue is shown as columns; free cash flow is the line. Current TTM is included only when four consecutive stored quarters reconcile.</p></div></div><canvas data-mf-chart="numbers-scale" data-series='{{ numbers_scale_series|tojson|forceescape }}'></canvas></div>
@@ -206,6 +195,20 @@
     </div>
     {% if quality_issues %}<div class="panel"><h2>Data quality</h2>{% for q in quality_issues %}<div class="list-row"><div><strong>{{ q.code }}</strong><p>{{ q.message }}</p></div><span class="status-chip">{{ q.severity }}</span></div>{% endfor %}</div>{% endif %}
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='fundamentals') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Analyst notes</h2><button class="button primary">Save</button></div><textarea name="text" rows="7">{{ research.numbers|clean_auto }}</textarea></form>
+    <div class="panel numbers-data-quality">
+      <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>Can the current research basis support the analysis?</h2></div><span class="status-chip" data-status-value="{{ 'PASS' if numbers_completeness.analysis_ready else 'REVIEW' }}">{{ 'ANALYSIS READY' if numbers_completeness.analysis_ready else 'ANALYSIS REVIEW' }}</span></div>
+      <div class="numbers-quality-grid">
+        <div><span>Annual periods</span><strong>{{ numbers_completeness.annual_count }}</strong></div>
+        <div><span>Stored quarters</span><strong>{{ numbers_completeness.quarter_count }}</strong></div>
+        <div><span>Current basis</span><strong>{{ numbers_completeness.current_label or '—' }}</strong></div>
+        <div><span>Unresolved inputs / metrics</span><strong>{{ numbers_completeness.unresolved_count }}</strong></div>
+      </div>
+      {% if numbers_completeness.quarter_gaps %}<div class="notice amber">{% for message in numbers_completeness.quarter_gaps %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
+      {% if numbers_completeness.missing_current_fields %}<p class="muted"><strong>Statement gaps:</strong> {{ numbers_completeness.missing_current_fields|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.missing_continuity_fields %}<p class="muted"><strong>Current balance-sheet gaps despite recent historical availability:</strong> {{ numbers_completeness.missing_continuity_fields|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.missing_derived_metrics %}<p class="muted"><strong>Derived analysis still unavailable:</strong> {{ numbers_completeness.missing_derived_metrics|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.unresolved_count %}<p class="muted">Refresh SEC + TTM first. Market Forensics now checks canonical US-GAAP concepts, exact consolidated filing-label fallbacks, debt components, then configured secondary fundamentals. Anything still unresolved remains visible rather than guessed.</p>{% else %}<p class="muted">No historically expected analytical input is unresolved on the current basis.</p>{% endif %}
+    </div>
 
   {% elif section == 'expectations' %}
     <div class="panel">
@@ -297,9 +300,9 @@
         <div><span>Battle intensity</span><strong>{{ '%.0f'|format(tm.battle_intensity) if tm.battle_intensity is not none else '—' }}</strong><small>Volume / turnover / positioning conflict</small></div>
         <div><span>Net tape</span><strong>{{ '%+.1f'|format(tm.net_tape) if tm.net_tape is not none else '—' }}</strong><small>Context only — never intrinsic value</small></div>
         <div><span>Tape rank</span><strong>{{ '%.0f'|format(tm.rank_score) if tm.rank_score is not none else '—' }}</strong><small>0–100 internal context rank</small></div>
-        <div class="tape-context-card {{ tm.posture_tone or 'watch' }}"><span>Tape posture</span><strong>{{ tm.posture or 'WAIT' }}</strong><small>Context only — confirms or contradicts evidence; never changes intrinsic value by itself.</small></div>
-        <div class="tape-context-card {{ tm.pressure_tone or 'watch' }}"><span>Directional pressure</span><strong>{{ tm.pressure_direction or 'LATERAL' }}</strong><small>{{ tm.pressure_detail or 'Long and short evidence are not separated enough.' }}</small></div>
-        <div class="tape-context-card info"><span>Next confirmation</span><strong>{{ tm.confirmation_state or 'NEEDS EVIDENCE' }}</strong><small>{{ tm.next_confirmation or 'Refresh market, FINRA and positioning evidence.' }}</small></div>
+        <div class="tape-context-card {{ tm.posture_tone or 'watch' }}"><span>Tape posture</span><strong>{{ tm.posture or 'WAIT' }}</strong><small>Tape context, not valuation.</small></div>
+        <div class="tape-context-card {{ tm.pressure_tone or 'watch' }}"><span>Directional pressure</span><strong>{{ tm.pressure_direction or 'LATERAL' }}</strong><small>{{ tm.pressure_detail or 'No clean directional spread.' }}</small></div>
+        <div class="tape-context-card info"><span>Next confirmation</span><strong>{{ tm.confirmation_state or 'NEEDS EVIDENCE' }}</strong><small>{{ tm.next_confirmation or 'Refresh tape evidence.' }}</small></div>
       </div>
     </div>
     <div class="kpi-grid">
