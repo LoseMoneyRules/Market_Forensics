@@ -117,3 +117,31 @@ def test_029_tape_surface_restores_local_chart_contract():
     assert "Large / Whale is a trade-size proxy" in template
     assert "Tape Engine V2" in operating
     assert Path("VERSION").read_text().strip() == "0.2.9"
+
+
+def test_029_tape_v2_preserves_028_tape_surface():
+    template = Path("mfapp/templates/company_section.html").read_text()
+
+    for label in (
+        "MACHINE READ",
+        "Tape posture",
+        "Directional pressure",
+        "Next confirmation",
+        "Borrow status",
+        "Borrow fee",
+        "Put / Call OI",
+        "Turnover impulse",
+        "Short interest",
+        "SI change",
+        "Days to cover",
+        "Daily short vol · 20d",
+        "Settlement",
+        "Flow interpretation",
+        "Add sourced borrow-fee observation",
+    ):
+        assert label in template
+
+    assert 'data-mf-chart="tape-price-short"' in template
+    assert 'data-mf-chart="tape-short"' in template
+    assert "Historical market series not stored yet" in template
+    assert "<th>Settlement</th><th>Short interest</th><th>Days to cover</th>" in template
