@@ -1,14 +1,23 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from math import sqrt
 from typing import Any
 
-from .core_models import Company, Coverage, HistoricalPrice, InvestmentState, Position, RiskPlan, Security
-from .data_providers import latest_snapshot
+from .core_models import (
+    Company, Coverage, HistoricalPrice, InvestmentState, MarketSnapshot, Position,
+    RiskPlan, Security,
+)
 from .extensions import db
-from .readiness import research_readiness
-from .services import valuation_result
+from .models import UserPreference
+from .research_cache import latest_cache_map
+
+
+PORTFOLIO_CACHE_KEY = "portfolio_analytics"
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _f(value) -> float:
@@ -54,18 +63,59 @@ def _corr(a: dict[date, float], b: dict[date, float]) -> tuple[float | None, int
     return cov / sqrt(vx * vy), len(common)
 
 
-def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _latest_market_map(security_ids: list[int]) -> dict[int, MarketSnapshot]:
+    if not security_ids:
+        return {}
+    rows = MarketSnapshot.query.filter(MarketSnapshot.security_id.in_(security_ids)).order_by(
+        MarketSnapshot.security_id.asc(), MarketSnapshot.as_of.desc(), MarketSnapshot.id.desc()
+    ).all()
+    out: dict[int, MarketSnapshot] = {}
+    for row in rows:
+        out.setdefault(row.security_id, row)
+    return out
+
+
+def _stored_portfolio_analytics(user_id: int) -> dict[str, Any]:
+    row = UserPreference.query.filter_by(user_id=user_id, key=PORTFOLIO_CACHE_KEY).first()
+    return dict((row.value or {}) if row else {})
+
+
+def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     positions = Position.query.filter_by(user_id=user_id).order_by(Position.updated_at.desc()).all()
+    if not positions:
+        return [], {
+            "market_value": 0.0, "cost": 0.0, "pnl": 0.0, "positions": 0,
+            "top_weight_pct": 0.0, "concentration_hhi": 0.0,
+            "validated_positions": 0, "validated_pct": 0.0, "risk_breaches": [],
+        }
+
+    security_ids = [row.security_id for row in positions]
+    securities = {row.id: row for row in Security.query.filter(Security.id.in_(security_ids)).all()}
+    company_ids = [row.company_id for row in securities.values()]
+    companies = {row.id: row for row in Company.query.filter(Company.id.in_(company_ids)).all()} if company_ids else {}
+    coverages = Coverage.query.filter(Coverage.user_id == user_id, Coverage.security_id.in_(security_ids)).all()
+    coverage_by_security = {row.security_id: row for row in coverages}
+    coverage_ids = [row.id for row in coverages]
+    investment_by_coverage = {
+        row.coverage_id: row for row in InvestmentState.query.filter(InvestmentState.coverage_id.in_(coverage_ids)).all()
+    } if coverage_ids else {}
+    risk_by_coverage = {
+        row.coverage_id: row for row in RiskPlan.query.filter(RiskPlan.coverage_id.in_(coverage_ids)).all()
+    } if coverage_ids else {}
+    research_caches = latest_cache_map(coverage_ids)
+    markets = _latest_market_map(security_ids)
+
     raw: list[dict[str, Any]] = []
     total_market = 0.0
     total_cost = 0.0
     for position in positions:
-        security = db.session.get(Security, position.security_id)
+        security = securities.get(position.security_id)
         if not security:
             continue
-        company = db.session.get(Company, security.company_id)
-        coverage = Coverage.query.filter_by(user_id=user_id, security_id=security.id).first()
-        market = latest_snapshot(security.id)
+        company = companies.get(security.company_id)
+        coverage = coverage_by_security.get(security.id)
+        cache = dict(research_caches.get(coverage.id) or {}) if coverage else {}
+        market = markets.get(security.id)
         shares = _f(position.shares)
         avg_cost = _f(position.avg_cost)
         price = _f(market.price) if market else 0.0
@@ -74,7 +124,7 @@ def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if market_value is not None:
             total_market += market_value
         total_cost += cost
-        readiness = research_readiness(coverage) if coverage else {"validation": {"state": "NOT RUN"}}
+        readiness = dict(cache.get("readiness") or {"validation": {"state": "NOT RUN"}})
         raw.append({
             "position": position,
             "security": security,
@@ -84,10 +134,11 @@ def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             "market_value": market_value,
             "cost": cost,
             "pnl": (market_value - cost) if market_value is not None else None,
-            "investment": InvestmentState.query.filter_by(coverage_id=coverage.id).first() if coverage else None,
-            "risk": RiskPlan.query.filter_by(coverage_id=coverage.id).first() if coverage else None,
-            "valuation": valuation_result(coverage) if coverage else {},
+            "investment": investment_by_coverage.get(coverage.id) if coverage else None,
+            "risk": risk_by_coverage.get(coverage.id) if coverage else None,
+            "valuation": dict(cache.get("valuation") or {}),
             "readiness": readiness,
+            "decision_lenses": dict(cache.get("decision_lenses") or {}),
         })
 
     for row in raw:
@@ -100,29 +151,11 @@ def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     raw.sort(key=lambda x: abs(x["market_value"] or 0), reverse=True)
     weights = [float(row["weight_pct"]) for row in raw if row["weight_pct"] is not None]
     validated = sum(1 for row in raw if (row.get("readiness") or {}).get("validation", {}).get("state") == "VALIDATED")
-    breaches = [
-        {
-            "ticker": row["security"].ticker,
-            "weight_pct": row["weight_pct"],
-            "max_position_pct": row["position_limit_pct"],
-        }
-        for row in raw if row.get("risk_breach")
-    ]
-
-    correlation_rows: list[dict[str, Any]] = []
-    top = [row for row in raw if row.get("market_value") is not None][:8]
-    series = {row["security"].id: _return_series(row["security"].id) for row in top}
-    for i, left in enumerate(top):
-        for right in top[i + 1:]:
-            corr, samples = _corr(series[left["security"].id], series[right["security"].id])
-            if corr is not None:
-                correlation_rows.append({
-                    "left": left["security"].ticker,
-                    "right": right["security"].ticker,
-                    "correlation": corr,
-                    "samples": samples,
-                })
-    correlation_rows.sort(key=lambda row: abs(row["correlation"]), reverse=True)
+    breaches = [{
+        "ticker": row["security"].ticker,
+        "weight_pct": row["weight_pct"],
+        "max_position_pct": row["position_limit_pct"],
+    } for row in raw if row.get("risk_breach")]
 
     return raw, {
         "market_value": total_market,
@@ -134,8 +167,52 @@ def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         "validated_positions": validated,
         "validated_pct": (validated / len(raw) * 100.0) if raw else 0.0,
         "risk_breaches": breaches,
-        "correlations": correlation_rows[:20],
     }
 
 
-__all__ = ["portfolio_rows"]
+def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fast request-path portfolio view.
+
+    Correlations are read from the last background analytics cache; historical
+    price series are never loaded while a page is opening.
+    """
+    rows, totals = _assemble_rows(user_id)
+    analytics = _stored_portfolio_analytics(user_id)
+    totals["correlations"] = list(analytics.get("correlations") or [])[:20]
+    totals["analytics_generated_at"] = analytics.get("generated_at")
+    totals["analytics_ready"] = bool(analytics)
+    return rows, totals
+
+
+def refresh_portfolio_analytics(user_id: int) -> dict[str, Any]:
+    rows, _ = _assemble_rows(user_id)
+    top = [row for row in rows if row.get("market_value") is not None][:8]
+    series = {row["security"].id: _return_series(row["security"].id) for row in top}
+    correlation_rows: list[dict[str, Any]] = []
+    for i, left in enumerate(top):
+        for right in top[i + 1:]:
+            corr, samples = _corr(series[left["security"].id], series[right["security"].id])
+            if corr is not None:
+                correlation_rows.append({
+                    "left": left["security"].ticker,
+                    "right": right["security"].ticker,
+                    "correlation": corr,
+                    "samples": samples,
+                })
+    correlation_rows.sort(key=lambda row: abs(row["correlation"]), reverse=True)
+    value = {
+        "generated_at": utcnow().isoformat(),
+        "correlations": correlation_rows[:20],
+        "top_security_ids": [row["security"].id for row in top],
+    }
+    pref = UserPreference.query.filter_by(user_id=user_id, key=PORTFOLIO_CACHE_KEY).first()
+    if pref is None:
+        pref = UserPreference(user_id=user_id, key=PORTFOLIO_CACHE_KEY, value=value)
+        db.session.add(pref)
+    else:
+        pref.value = value
+    db.session.commit()
+    return value
+
+
+__all__ = ["portfolio_rows", "refresh_portfolio_analytics", "PORTFOLIO_CACHE_KEY"]
