@@ -36,6 +36,11 @@ Final 0.2.8 micro-polish merged through PR #30:
 - Coverage rows are sorted alphabetically by ticker before rendering.
 - VERSION remains `0.2.8`; no architecture, data, provider, report or deployment behavior changes.
 
+Current same-version typography/readiness polish:
+- Process Readiness gate links use regular weight; bold is intentionally minimized throughout the product.
+- Approve/Reopen re-evaluates Decision Lenses from already-materialized evidence and updates Research conclusion immediately; it does not enqueue a heavy RECALCULATE or call external providers.
+- Closing the final Research gate therefore moves an unvalidated file from RESEARCH INCOMPLETE to READY TO VALIDATE immediately when the cached evidence is otherwise unchanged.
+
 Second same-version polish merged through PR #29:
 - Coverage moves Refresh stale / Refresh all below the table and its single Process/Validate note; a fully approved process displays only READY rather than 13/13 plus READY.
 - Validate keeps the walk-forward action bar immediately below the Research tabs.
@@ -171,6 +176,7 @@ Process · Validate · Freshness · Next action · Lens · Manage.
 
 Typography contract:
 - ticker and column titles may be bold;
+- bold is exceptional, not the default: links, gate names, normal labels and body values remain regular weight;
 - body values are not bold;
 - Price / Base / Gap stay on one line;
 - numeric cells use tabular numbers;
@@ -446,6 +452,7 @@ Workflow health assertions read VERSION dynamically; do not hardcode a 0.2.x rel
 Permanent UI rules:
 - never purple;
 - institutional blue;
+- use as little bold as possible: reserve bold/strong weight for true hierarchy, compact headings, ticker symbols, critical statuses or primary decision outputs; normal body values, navigation links, gate names, explanatory text and routine labels should use regular weight unless there is a specific readability reason;
 - readable typography is a release gate: normal UI 13–14 px, forms 14 px, micro-metadata no smaller than 12 px, chart labels 12–14 px;
 - real dark mode;
 - real light mode;

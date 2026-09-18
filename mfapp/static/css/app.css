@@ -457,4 +457,4 @@ html[data-theme="dark"] .mobile-backdrop{background:rgba(2,8,14,.68)}
 @media(max-width:440px){.fundamentals-current-strip{grid-template-columns:1fr}}
 
 /* 0.2.8 readiness navigation */
-.gate-link{color:var(--navy);font-weight:750;text-decoration:none}.gate-link:hover{text-decoration:underline}
+.gate-link{color:var(--navy);font-weight:400;text-decoration:none}.gate-link:hover{text-decoration:underline}
