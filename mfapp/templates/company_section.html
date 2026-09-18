@@ -196,15 +196,18 @@
     {% if quality_issues %}<div class="panel"><h2>Data quality</h2>{% for q in quality_issues %}<div class="list-row"><div><strong>{{ q.code }}</strong><p>{{ q.message }}</p></div><span class="status-chip">{{ q.severity }}</span></div>{% endfor %}</div>{% endif %}
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='fundamentals') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Analyst notes</h2><button class="button primary">Save</button></div><textarea name="text" rows="7">{{ research.numbers|clean_auto }}</textarea></form>
     <div class="panel numbers-data-quality">
-      <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>What the Fundamentals page is actually built from</h2></div><span class="status-chip" data-status-value="{{ 'PASS' if numbers_completeness.ttm_ready else 'REVIEW' }}">{{ 'TTM READY' if numbers_completeness.ttm_ready else 'FY / PARTIAL' }}</span></div>
+      <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>Can the current research basis support the analysis?</h2></div><span class="status-chip" data-status-value="{{ 'PASS' if numbers_completeness.analysis_ready else 'REVIEW' }}">{{ 'ANALYSIS READY' if numbers_completeness.analysis_ready else 'ANALYSIS REVIEW' }}</span></div>
       <div class="numbers-quality-grid">
         <div><span>Annual periods</span><strong>{{ numbers_completeness.annual_count }}</strong></div>
         <div><span>Stored quarters</span><strong>{{ numbers_completeness.quarter_count }}</strong></div>
         <div><span>Current basis</span><strong>{{ numbers_completeness.current_label or '—' }}</strong></div>
-        <div><span>Missing core fields</span><strong>{{ numbers_completeness.missing_current_fields|length }}</strong></div>
+        <div><span>Unresolved inputs / metrics</span><strong>{{ numbers_completeness.unresolved_count }}</strong></div>
       </div>
       {% if numbers_completeness.quarter_gaps %}<div class="notice amber">{% for message in numbers_completeness.quarter_gaps %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
-      {% if numbers_completeness.missing_current_fields %}<p class="muted">Missing current fields: {{ numbers_completeness.missing_current_fields|join(', ') }}. Missing filing facts remain missing; they are not guessed.</p>{% endif %}
+      {% if numbers_completeness.missing_current_fields %}<p class="muted"><strong>Statement gaps:</strong> {{ numbers_completeness.missing_current_fields|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.missing_continuity_fields %}<p class="muted"><strong>Current balance-sheet gaps despite recent historical availability:</strong> {{ numbers_completeness.missing_continuity_fields|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.missing_derived_metrics %}<p class="muted"><strong>Derived analysis still unavailable:</strong> {{ numbers_completeness.missing_derived_metrics|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.unresolved_count %}<p class="muted">Refresh SEC + TTM first. Market Forensics now checks canonical US-GAAP concepts, exact consolidated filing-label fallbacks, debt components, then configured secondary fundamentals. Anything still unresolved remains visible rather than guessed.</p>{% else %}<p class="muted">No historically expected analytical input is unresolved on the current basis.</p>{% endif %}
     </div>
 
   {% elif section == 'expectations' %}
