@@ -102,6 +102,54 @@ def _merge_missing(target: dict, fallback: dict) -> None:
         target.setdefault(key, value)
 
 
+def _mark_semantic_records(rows: dict, namespace: str) -> dict:
+    marked = {}
+    for key, value in rows.items():
+        if isinstance(value, dict) and "record" in value:
+            info = dict(value)
+            record = dict(info.get("record") or {})
+            record["_mf_semantic_fallback"] = True
+            record["_mf_namespace"] = namespace
+            info["record"] = record
+            if info.get("derived_from"):
+                info["derived_from"] = [
+                    dict(raw, _mf_semantic_fallback=True, _mf_namespace=namespace)
+                    for raw in info.get("derived_from") or []
+                ]
+            marked[key] = info
+        else:
+            record = dict(value or {})
+            record["_mf_semantic_fallback"] = True
+            record["_mf_namespace"] = namespace
+            marked[key] = record
+    return marked
+
+
+def _compose_debt(direct: dict | None, current: dict | None, noncurrent: dict | None, short_term: dict | None) -> tuple[Decimal | None, list[dict], str]:
+    """Prefer a true combined debt fact; otherwise add separately reported components."""
+    direct = dict(direct or {})
+    direct_value = _as_decimal(direct.get("val"))
+    direct_tag = str(direct.get("tag") or "")
+    if direct_value is not None and direct_tag in DEBT_COMBINED_TAGS:
+        return direct_value, [direct], "DIRECT_COMBINED_DEBT"
+
+    parts: list[dict] = []
+    seen_tags: set[str] = set()
+    for raw in (current, short_term, noncurrent):
+        rec = dict(raw or {})
+        value = _as_decimal(rec.get("val"))
+        tag = str(rec.get("tag") or "")
+        if value is None or not tag or tag in seen_tags:
+            continue
+        seen_tags.add(tag)
+        parts.append(rec)
+    if len(parts) >= 2:
+        return sum((_as_decimal(rec.get("val")) or Decimal("0")) for rec in parts), parts, "SUM_CURRENT_NONCURRENT_DEBT"
+    if direct_value is not None:
+        return direct_value, [direct], "DIRECT_DEBT_FALLBACK"
+    return None, [], ""
+
+
 class SECRefreshError(RuntimeError):
     pass
 
@@ -648,6 +696,23 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     fiscal_year_end = meta.get("fiscal_year_end") or ""
     duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
     instant = {key: _annual_instant(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
+
+    # Companyfacts can expose a perfectly valid consolidated statement concept
+    # under the filer's own taxonomy. Use exact statement-label matches only when
+    # the canonical US-GAAP mapping did not resolve that fiscal period.
+    for field in DURATION_TAGS:
+        for namespace, tags in _semantic_tag_groups(companyfacts, field).items():
+            fallback_rows = _annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace)
+            _merge_missing(duration[field], _mark_semantic_records(fallback_rows, namespace))
+    for field in INSTANT_TAGS:
+        for namespace, tags in _semantic_tag_groups(companyfacts, field).items():
+            fallback_rows = _annual_instant(companyfacts, tags, namespace=namespace, fiscal_year_end=fiscal_year_end)
+            _merge_missing(instant[field], _mark_semantic_records(fallback_rows, namespace))
+
+    debt_current_annual = _annual_instant(companyfacts, DEBT_CURRENT_TAGS, fiscal_year_end=fiscal_year_end)
+    debt_noncurrent_annual = _annual_instant(companyfacts, DEBT_NONCURRENT_TAGS, fiscal_year_end=fiscal_year_end)
+    debt_short_annual = _annual_instant(companyfacts, DEBT_SHORT_TERM_TAGS, fiscal_year_end=fiscal_year_end)
+
     dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_shares:
         instant["shares_outstanding"] = dei_shares
@@ -667,13 +732,31 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             _record_raw(period, source, rec)
             setattr(normalized, field, _as_decimal((rec or {}).get("val")))
             if rec:
-                source_map[field] = {"tag": rec.get("tag"), "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": "DIRECT_FY"}
+                source_map[field] = {"tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap", "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY"}
         for field, records in instant.items():
             rec = records.get(fy)
             _record_raw(period, source, rec)
             setattr(normalized, field, _as_decimal((rec or {}).get("val")))
             if rec:
-                source_map[field] = {"tag": rec.get("tag"), "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": "DIRECT_FY"}
+                source_map[field] = {
+                    "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
+                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
+                    "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY",
+                }
+
+        debt_value, debt_records, debt_method = _compose_debt(
+            instant.get("debt", {}).get(fy), debt_current_annual.get(fy), debt_noncurrent_annual.get(fy), debt_short_annual.get(fy)
+        )
+        if debt_value is not None:
+            normalized.debt = debt_value
+            for raw in debt_records:
+                _record_raw(period, source, raw)
+            source_map["debt"] = {
+                "tag": " + ".join(str(raw.get("tag") or "") for raw in debt_records),
+                "namespace": "us-gaap", "source_id": source.id, "method": debt_method,
+                "accession": next((raw.get("accn") for raw in debt_records if raw.get("accn")), None),
+                "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
+            }
         _finish_normalized(normalized, source_map, period_type="FY")
         for field, ref in source_map.items():
             db.session.add(Provenance(source_id=source.id, object_type="normalized_financial", object_id=str(period.id), field_name=field, raw_or_normalized="NORMALIZED", financial_period_id=period.id, provider="SEC", freshness_at=utcnow(), calculation_version=CALCULATION_VERSION, notes=f"{ref.get('tag','')} / {ref.get('accession','')} / {ref.get('method','')}"))
@@ -686,7 +769,24 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     quarter_duration: dict[str, dict[tuple[int, str], dict[str, Any]]] = {}
     for field, tags in DURATION_TAGS.items():
         quarter_duration[field] = _quarter_duration_values(companyfacts, tags, duration[field], shares_metric=(field == "diluted_shares"), fiscal_year_end=fiscal_year_end)
+        for namespace, semantic_tags in _semantic_tag_groups(companyfacts, field).items():
+            semantic_annual = _annual_duration(companyfacts, semantic_tags, fiscal_year_end, namespace=namespace)
+            semantic_quarters = _quarter_duration_values(
+                companyfacts, semantic_tags, semantic_annual,
+                shares_metric=(field == "diluted_shares"), fiscal_year_end=fiscal_year_end, namespace=namespace,
+            )
+            _merge_missing(quarter_duration[field], _mark_semantic_records(semantic_quarters, namespace))
+
     quarter_instant = {field: _quarter_instants(companyfacts, tags, fiscal_year_end=fiscal_year_end) for field, tags in INSTANT_TAGS.items()}
+    for field in INSTANT_TAGS:
+        for namespace, semantic_tags in _semantic_tag_groups(companyfacts, field).items():
+            semantic_quarters = _quarter_instants(companyfacts, semantic_tags, namespace=namespace, fiscal_year_end=fiscal_year_end)
+            _merge_missing(quarter_instant[field], _mark_semantic_records(semantic_quarters, namespace))
+
+    debt_current_quarter = _quarter_instants(companyfacts, DEBT_CURRENT_TAGS, fiscal_year_end=fiscal_year_end)
+    debt_noncurrent_quarter = _quarter_instants(companyfacts, DEBT_NONCURRENT_TAGS, fiscal_year_end=fiscal_year_end)
+    debt_short_quarter = _quarter_instants(companyfacts, DEBT_SHORT_TERM_TAGS, fiscal_year_end=fiscal_year_end)
+
     dei_quarter_shares = _quarter_instants(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_quarter_shares:
         quarter_instant["shares_outstanding"] = dei_quarter_shares
@@ -714,14 +814,35 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             if info:
                 source_map[field] = {
                     "tag": (record or {}).get("tag"), "accession": (record or {}).get("accn"),
-                    "filed": (record or {}).get("filed"), "source_id": source.id, "method": info.get("method"),
+                    "filed": (record or {}).get("filed"), "source_id": source.id,
+                    "namespace": (record or {}).get("_mf_namespace") or (record or {}).get("namespace") or "us-gaap",
+                    "method": "SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method"),
                 }
         for field, records in quarter_instant.items():
             rec = records.get((fy, fp))
             _record_raw(period, source, rec)
             setattr(normalized, field, _as_decimal((rec or {}).get("val")))
             if rec:
-                source_map[field] = {"tag": rec.get("tag"), "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": "DIRECT_INSTANT"}
+                source_map[field] = {
+                    "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
+                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
+                    "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT",
+                }
+
+        debt_value, debt_records, debt_method = _compose_debt(
+            quarter_instant.get("debt", {}).get((fy, fp)),
+            debt_current_quarter.get((fy, fp)), debt_noncurrent_quarter.get((fy, fp)), debt_short_quarter.get((fy, fp)),
+        )
+        if debt_value is not None:
+            normalized.debt = debt_value
+            for raw in debt_records:
+                _record_raw(period, source, raw)
+            source_map["debt"] = {
+                "tag": " + ".join(str(raw.get("tag") or "") for raw in debt_records),
+                "namespace": "us-gaap", "source_id": source.id, "method": debt_method,
+                "accession": next((raw.get("accn") for raw in debt_records if raw.get("accn")), None),
+                "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
+            }
         _finish_normalized(normalized, source_map, period_type=fp)
         quarter_saved += 1
 
