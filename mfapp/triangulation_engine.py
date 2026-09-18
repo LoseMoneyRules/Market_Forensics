@@ -86,7 +86,10 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
         "inventory_to_revenue_pct": (inventory / revenue * 100.0) if inventory is not None and revenue not in (None, 0) else None,
         "receivables_to_revenue_pct": (receivables / revenue * 100.0) if receivables is not None and revenue not in (None, 0) else None,
         "asset_turnover": _n(metrics.get("asset_turnover")),
+        "roic_pct": roic,
         "share_change_pct": share_change,
+        "pe": pe,
+        "ev_sales": ev_sales,
         "fcf_yield_pct": fcf_yield,
         "base_gap_pct": (
             ((_n(valuation.get("base")) / price - 1.0) * 100.0)

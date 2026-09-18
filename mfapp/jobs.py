@@ -122,7 +122,21 @@ def recalculate_company(company_id: int, coverage_id: int | None = None) -> dict
                     base_probability=scenarios["BASE"].probability, bull_probability=scenarios["BULL"].probability,
                     current_price=market.price if market else None).as_dict()
                 model.assumptions = dict(model.assumptions or {}) | {"latest_result": valuation}; model.calculation_version = CALCULATION_VERSION
-    db.session.commit(); return {"periods": calculated, "metrics": metrics_out[-5:], "valuation": valuation}
+    db.session.commit()
+    cache = None
+    if coverage_id:
+        from .research_cache import refresh_research_cache
+        cache = refresh_research_cache(coverage_id)
+    return {
+        "periods": calculated,
+        "metrics": metrics_out[-5:],
+        "valuation": valuation,
+        "research_cache": {
+            "event_id": cache.get("_event_id"),
+            "generated_at": cache.get("_generated_at"),
+            "conclusion": (cache.get("decision_lenses") or {}).get("research_conclusion"),
+        } if cache else None,
+    }
 
 
 def _issue(company_id: int, period_id: int, code: str, message: str) -> None:
@@ -256,12 +270,33 @@ def _discovery(user_id: int) -> dict[str, Any]:
         "market_scan": scan,
     }
 
+def _prime_research_cache(user_id: int) -> dict[str, Any]:
+    queued = reused = 0
+    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
+        security = db.session.get(Security, coverage.security_id)
+        if not security:
+            continue
+        job = enqueue_job(
+            "RECALCULATE",
+            user_id=user_id,
+            company_id=security.company_id,
+            security_id=security.id,
+            payload={"coverage_id": coverage.id},
+            priority=95,
+        )
+        if getattr(job, "_mf_reused", False):
+            reused += 1
+        else:
+            queued += 1
+    return {"jobs_queued": queued, "jobs_reused": reused}
+
+
 def _bulk(user_id: int) -> dict[str, Any]:
     sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
-        specs = [("MARKET_REFRESH", 20), ("RECALCULATE", 60), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75)]
+        specs = [("MARKET_REFRESH", 20), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75), ("RECALCULATE", 95)]
         if sec_ready:
             specs.insert(1, ("SEC_INGEST", 40))
             specs.append(("MANAGEMENT_SCAN", 80))
@@ -269,6 +304,9 @@ def _bulk(user_id: int) -> dict[str, Any]:
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=priority)
             if getattr(job, "_mf_reused", False): reused += 1
             else: queued += 1
+    portfolio_job = enqueue_job("PORTFOLIO_RECALCULATE", user_id=user_id, payload={}, priority=99)
+    if getattr(portfolio_job, "_mf_reused", False): reused += 1
+    else: queued += 1
     return {"jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
 
 
@@ -308,6 +346,10 @@ def _stale(user_id: int) -> dict[str, Any]:
                 reused += 1
             else:
                 queued += 1
+    if queued:
+        portfolio_job = enqueue_job("PORTFOLIO_RECALCULATE", user_id=user_id, payload={}, priority=99)
+        if getattr(portfolio_job, "_mf_reused", False): reused += 1
+        else: queued += 1
     return {"coverage_scanned": scanned, "jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
 
 
@@ -328,13 +370,28 @@ def _store_finra_bundle(security: Security, bundle: dict[str, Any]) -> dict[str,
     db.session.commit(); return result
 
 
+def _queue_recalculate_after_evidence(job: Job, security: Security | None, coverage_id: int | None) -> int | None:
+    if not coverage_id or security is None:
+        return None
+    queued = enqueue_job(
+        "RECALCULATE",
+        user_id=job.user_id,
+        company_id=security.company_id,
+        security_id=security.id,
+        payload={"coverage_id": coverage_id},
+        priority=95,
+    )
+    return queued.id
+
+
 def _execute(job: Job) -> dict[str, Any]:
     kind = job.job_type.upper(); security = db.session.get(Security, job.security_id) if job.security_id else None; coverage_id = int((job.payload or {}).get("coverage_id") or 0) or None
     if kind == "MARKET_REFRESH":
         if not security: raise RuntimeError("Security not found")
         result = refresh_security_quote(security, job.user_id)
         if not result.ok: raise RuntimeError(result.message or "Market refresh failed")
-        return {"provider": result.provider, "price": result.price, "quality": result.quality, "as_of": result.as_of.isoformat() if result.as_of else None, "evidence": result.payload or {}}
+        recalc_job_id = _queue_recalculate_after_evidence(job, security, coverage_id)
+        return {"provider": result.provider, "price": result.price, "quality": result.quality, "as_of": result.as_of.isoformat() if result.as_of else None, "evidence": result.payload or {}, "recalculate_job_id": recalc_job_id}
     if kind == "SEC_INGEST":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
@@ -353,10 +410,15 @@ def _execute(job: Job) -> dict[str, Any]:
         if not coverage_id: raise RuntimeError("coverage_id is required")
         result = run_historical_test(coverage_id, job.user_id, int((job.payload or {}).get("lookback_years") or 10))
         result["current_valuation_refresh"] = prefill_coverage(coverage_id, job.user_id)
+        from .research_cache import refresh_research_cache
+        cache = refresh_research_cache(coverage_id)
+        result["research_cache"] = {"event_id": cache.get("_event_id"), "generated_at": cache.get("_generated_at")}
         return result
     if kind == "FINRA_IMPORT":
         if not security: raise RuntimeError("Security not found")
-        return _store_finra_bundle(security, refresh_finra_bundle(security.ticker, job.user_id, int((job.payload or {}).get("lookback_days") or 35)))
+        payload = _store_finra_bundle(security, refresh_finra_bundle(security.ticker, job.user_id, int((job.payload or {}).get("lookback_days") or 35)))
+        payload["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
+        return payload
     if kind == "POSITIONING_REFRESH":
         if not security: raise RuntimeError("Security not found")
         bundle = refresh_positioning_bundle(security.ticker, job.user_id)
@@ -368,6 +430,7 @@ def _execute(job: Job) -> dict[str, Any]:
             payload=bundle,
         ))
         db.session.commit()
+        bundle["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         return bundle
     if kind == "DEEP_VALIDATION":
         if not job.company_id: raise RuntimeError("company_id is required")
@@ -375,8 +438,14 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "MANAGEMENT_SCAN":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
-        return _management_scan(company, security, job.user_id, int((job.payload or {}).get("limit") or 24))
+        payload = _management_scan(company, security, job.user_id, int((job.payload or {}).get("limit") or 24))
+        payload["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
+        return payload
     if kind == "DISCOVERY_SCAN": return _discovery(job.user_id)
+    if kind == "CACHE_PRIME": return _prime_research_cache(job.user_id)
+    if kind == "PORTFOLIO_RECALCULATE":
+        from .portfolio_engine import refresh_portfolio_analytics
+        return refresh_portfolio_analytics(job.user_id)
     if kind == "BULK_REFRESH": return _bulk(job.user_id)
     if kind == "STALE_REFRESH": return _stale(job.user_id)
     raise RuntimeError(f"Unknown job type: {kind}")

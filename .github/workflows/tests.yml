@@ -2,7 +2,7 @@ name: Market Forensics release tests
 
 on:
   push:
-    branches: [main, dev, 'release/**']
+    branches: [main, dev, 'release/**', 'fix/**']
   pull_request:
     branches: [main, dev]
 
@@ -20,6 +20,16 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Python syntax check
         run: python -m compileall -q app.py manage.py mfapp tests
+      - name: Workflow YAML validation
+        run: |
+          python - <<'PY'
+          import yaml
+          for path in (".github/workflows/tests.yml", ".github/workflows/deploy-namecheap.yml"):
+              with open(path, "r", encoding="utf-8") as handle:
+                  data = yaml.safe_load(handle)
+              assert isinstance(data, dict) and ("jobs" in data), path
+              print(path, "ok")
+          PY
       - name: JavaScript syntax check
         run: |
           node --check mfapp/static/js/app.js
@@ -33,3 +43,39 @@ jobs:
         run: |
           if [ -z "${MF_ENCRYPTION_KEY:-}" ]; then export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"; fi
           pytest -q
+
+      - name: Production-minimal startup and report fallback smoke
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/mf-prod-min
+          /tmp/mf-prod-min/bin/pip install -q -r requirements.txt
+          MF_SECRET_KEY=test-secret-key \
+          MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+          /tmp/mf-prod-min/bin/python - <<'PY'
+          import os, tempfile
+          from mfapp import create_app
+          from mfapp.reporting import render_pdf, render_docx, report_backend_status
+
+          db = tempfile.NamedTemporaryFile(suffix=".db", delete=False).name
+          app = create_app({
+              "TESTING": True,
+              "AUTO_MIGRATE": True,
+              "SQLALCHEMY_DATABASE_URI": "sqlite:///" + db,
+              "SECRET_KEY": "prod-min-smoke",
+          })
+          response = app.test_client().get("/health")
+          assert response.status_code == 200, response.data
+          assert response.get_json()["version"] == "0.2.0"
+          assert report_backend_status()["backend"] == "stdlib-fallback"
+          data = {
+              "branding": {"title":"Market Forensics","footer":"Lose Money Rules"},
+              "ticker":"TEST","company":"Production Minimal Smoke","action":"DATA REVIEW",
+              "stance":"UNVERIFIED","confidence":"UNVALIDATED","market_price":10,"bear":8,"base":12,"bull":15,
+              "base_gap_pct":20,"validation_state":"NOT RUN","decision_lenses":[],"thesis":"Smoke",
+              "counter_evidence":"","variant_market":"","variant_us":"","supporting":[],"opposing":[],
+              "implied_expectations":{},"mode":"executive","sources":[],
+          }
+          assert render_pdf(data).getvalue().startswith(b"%PDF-")
+          assert render_docx(data).getvalue().startswith(b"PK")
+          print("production-minimal smoke ok")
+          PY
