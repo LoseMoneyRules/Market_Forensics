@@ -76,7 +76,7 @@ def _mutate_research_gate(ticker: str, gate_key: str, action: str):
         audit("research_gate.approve", "coverage", ctx["coverage"].id, {"gate": gate_key, "evidence_hash": gate["evidence_hash"]})
     db.session.flush()
     fresh_readiness = research_readiness(ctx["coverage"])
-    patch_research_cache_readiness(ctx["coverage"].id, fresh_readiness)
+    updated_lenses = patch_research_cache_readiness(ctx["coverage"].id, fresh_readiness)
     db.session.commit()
 
     if "application/json" in str(request.headers.get("Accept") or ""):
@@ -89,6 +89,7 @@ def _mutate_research_gate(ticker: str, gate_key: str, action: str):
                 "total": fresh_readiness["total"],
                 "ready_to_validate": fresh_readiness["ready_to_validate"],
             },
+            "research_conclusion": (updated_lenses or {}).get("research_conclusion"),
             "html": html,
         })
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
