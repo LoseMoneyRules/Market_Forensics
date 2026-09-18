@@ -6,17 +6,17 @@
 > It MUST be updated in the same pull request whenever VERSION, architecture, deployment state,
 > release gates, job execution, or a material product workflow changes.
 
-**State-Version: 0.2.1**  
+**State-Version: 0.2.2**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
-**Runtime principle:** FAST UI → heavy jobs in background → cached results → automatic UI refresh when jobs finish  
-**Last release family:** 0.2.1 candidate
+**Runtime principle:** FAST UI → heavy jobs in background → cached results → non-disruptive live updates / user-controlled full refresh  
+**Last release family:** 0.2.2 candidate
 
 ---
 
 ## 1. Current release objective
 
-0.2.0 remains the clean web-native architectural baseline. 0.2.1 is a refinement release only: UI/UX, visual polish, job controls, dark/mobile hardening, Financial Flows presentation and small operational fixes. It does not reopen the Research, valuation, expectations, Portfolio, MariaDB, security or caching architecture.
+0.2.0 remains the clean web-native architectural baseline. 0.2.2 is a regression-closure and research-surface refinement release. It fixes the MARKET_REFRESH/reload loop, restores two-sided transparent Discovery, simplifies the Research Command Center, repairs dark-mode analytical values and Valuation chart fallback behavior, normalizes Financial Flows typography, and restores the intended Tape / Flows historical positioning view. It does not reopen the MariaDB, security/auth, Research/Portfolio separation, valuation engine, expectations engine or background-job architecture.
 
 Product flow:
 
@@ -48,11 +48,11 @@ Do NOT reset or delete:
 GitHub `main` is NOT automatically production.
 Production changes only after the manual Namecheap deployment workflow succeeds.
 
-Production remains on the previously deployed 0.2.0 release until the manual 0.2.1 Namecheap workflow succeeds. A 0.2.1 release is live only after external health returns:
+The repository does not infer the currently deployed Namecheap version. 0.2.2 is not LIVE until the manual Namecheap workflow succeeds and external health returns:
 
 - HTTP 200
 - `status = ok`
-- `version = 0.2.1`
+- `version = 0.2.2`
 - `architecture = web-native`
 
 A failed candidate health check must roll back automatically.
@@ -109,7 +109,7 @@ Minimum acceptable cadence for the five-minute quote freshness objective:
 
 **every 5 minutes**
 
-0.2.0 includes a CONTROL browser fallback, retained unchanged in principle by 0.2.1:
+0.2.0 includes a CONTROL browser fallback, retained unchanged in principle by 0.2.2:
 
 - the browser observes queue status;
 - if jobs are due and no executor is RUNNING, it calls `/jobs/pump`;
@@ -119,7 +119,7 @@ Minimum acceptable cadence for the five-minute quote freshness objective:
 
 Queued jobs must therefore progress even if cron is missing/late while CONTROL is open, without sacrificing page responsiveness.
 
-0.2.1 hardens job operations without changing that architecture:
+0.2.2 hardens job operations without changing that architecture:
 
 - Recent Jobs exposes clear QUEUED / RUNNING / DONE / FAILED / CANCELLED states;
 - CONTROL may cancel QUEUED or RUNNING jobs;
@@ -139,12 +139,14 @@ Current market price freshness target:
 
 Behavior:
 
-1. browser checks quote freshness every 5 minutes;
+1. company pages read the stored live quote before asking for a refresh;
 2. backend treats a quote older than 5 minutes as stale;
-3. stale quote queues `MARKET_REFRESH`;
+3. a stale quote may queue `MARKET_REFRESH`, but an already-active job is reused and a recently completed terminal refresh is subject to cooldown (5 minutes after DONE/CANCELLED; 60 seconds after FAILED);
 4. market refresh runs in background;
 5. Research recalculation/cache refresh follows as needed;
-6. page updates automatically when the job completes.
+6. job completion is **non-disruptive**: the page MUST NOT hard-reload automatically or flash repeatedly; live quote fields may update silently and CONTROL may choose a full refresh from the job chip.
+
+The five-minute freshness target remains unchanged. A stale/last-good provider timestamp is not permission to create repeated refresh jobs on every navigation.
 
 Provider cascade:
 
@@ -163,10 +165,12 @@ It performs:
 1. Alpaca Most Active screener
 2. Alpaca Market Movers screener
 3. batch enrichment from already stored Research caches
-4. ranking / lenses
+4. transparent LONG / SHORT research-side classification and ranking
 5. promotion to deep Research when selected
 
-It does NOT run per-symbol SEC, valuation or fundamentals for the whole market.
+For names with an existing Research cache, stored Base-gap evidence controls target-room classification: material positive Base gap can enter LONG radar, material negative Base gap can enter SHORT radar, and names within ±7.5% of stored Base are demoted to **NO EDGE · AT / NEAR BASE**. For names without stored Research valuation, a large move may create only a LONG LEAD or SHORT LEAD; Discovery must say **TARGET UNKNOWN** and explain why the candidate was found.
+
+Discovery always exposes the reason (market mover, activity rank, stored Base gap, or required deep-research check). It does NOT run per-symbol SEC, valuation or fundamentals for the whole market and never invents a target for an unknown name.
 
 Expected runtime:
 
@@ -186,6 +190,15 @@ Canonical Research sequence:
 **Overview → Business → Numbers → Expectations → Valuation → Bear Case → Catalysts → Financial Flows → Management → Tape / Flows → Monitoring → Decision Journal → Sources / Audit**
 
 Overview is the single-company cockpit.
+
+0.2.2 Research-surface rules:
+- Research Command Center shows Price, **Base** and Base gap; Bear/Bull are not repeated in the coverage table.
+- Command Center KPI blocks stay on one desktop row; Exceptions identify the ticker and use normal readable type.
+- Research Conclusion remains dominant but its desktop block is compact rather than occupying the majority of the strip.
+- Valuation historical chart must never render as an unexplained blank: when historical price cache is absent it still shows the current reference against available Bear/Base/Bull levels and states that history is pending.
+- Tape / Flows restores two explicit historical views: **Price + FINRA Short Interest** on the same 6M/12M chart, plus a separate **FINRA Daily Short Volume %** chart. Tape context never substitutes for intrinsic value.
+- Financial Flows keeps the 0.2.1 accounting/layout logic; hidden-tab SVG text is re-rendered and scale-normalized so Cash Flow typography matches Income Statement.
+- Dark mode analytical values (including evidence thresholds and MODEL INPUT BASIS) must use theme tokens with readable contrast.
 
 Canonical analytical lenses:
 
@@ -247,7 +260,7 @@ CONTROL reports:
 - Full Word
 - Discovery landscape PDF
 
-In 0.2.1 the three company Research exports appear only at the bottom of Overview under EXPORT RESEARCH. Process Readiness owns the Publish entry point; publishing remains gated by current Research readiness and continues to use the existing PRIVATE / FRIEND / INSIDER separation.
+In 0.2.2 the three company Research exports appear only at the bottom of Overview under EXPORT RESEARCH. Process Readiness owns the Publish entry point; publishing remains gated by current Research readiness and continues to use the existing PRIVATE / FRIEND / INSIDER separation.
 
 Optional reporting packages must NEVER prevent application startup.
 If rich report dependencies are missing, startup remains healthy and standard-library fallbacks are used.
@@ -294,7 +307,7 @@ Before merge:
 1. Python syntax
 2. JavaScript syntax
 3. workflow YAML validation
-4. complete 0.2.0 release/parity suite plus 0.2.1 contracts
+4. complete 0.2.0 release/parity suite plus 0.2.1 and 0.2.2 regression contracts
 5. production-minimal startup smoke
 6. fast cached-navigation contract
 7. real RECALCULATE → Research cache test
@@ -303,38 +316,42 @@ Before merge:
 10. five-minute current-price refresh contract
 11. job cancel/kill and stale RUNNING recovery contracts
 12. Publish/readiness, export-location, semantic-color, dark-theme and Financial Flows contracts
+13. MARKET_REFRESH cooldown / no forced reload contract
+14. two-sided Discovery / target-room transparency contract
+15. Command Center Base-only / ticker Exceptions contract
+16. Valuation fallback chart, Tape combined positioning and Cash Flow typography contracts
 
 After merge:
 
-13. main CI green
+17. main CI green
 
 Production:
 
-14. manual Namecheap deploy
-15. candidate /health HTTP 200
-16. version 0.2.1
-17. architecture web-native
-18. rollback automatically if candidate fails
+18. manual Namecheap deploy
+19. candidate /health HTTP 200
+20. version 0.2.2
+21. architecture web-native
+22. rollback automatically if candidate fails
 
-Only after step 17 succeeds is 0.2.1 considered LIVE. Until then, production remains the prior healthy release.
+Only after step 21 succeeds is 0.2.2 considered LIVE. Until then, the deployed version must be treated as the last externally verified healthy release.
 
 ---
 
 ## 12. Current development note
 
-0.2.1 is currently a release candidate, not production.
+0.2.2 is currently a release candidate, not production.
 
 Its scope is deliberately limited to:
 
-- restore Publish access under Process Readiness;
-- move company Research exports to Overview bottom only and keep them functional;
-- make Research Conclusion compact and hierarchical;
-- add CONTROL-only job cancellation and stale RUNNING recovery;
-- simplify Manage to Remove-only where applicable;
-- rebuild Financial Flows presentation without changing sound accounting logic;
-- centralize semantic status colors;
-- audit and harden dark mode;
-- preserve the stabilized mobile navigation and fast-navigation contracts.
+- stop repeated MARKET_REFRESH enqueueing and full-page job-completion flashing;
+- make Discovery genuinely two-sided and explain candidate/target-room logic;
+- simplify Research Command Center to Base-only scenario visibility and ticker-aware readable Exceptions;
+- reduce Research Conclusion width without reducing type size;
+- fix dark-mode analytical-value contrast;
+- normalize Cash Flow typography without changing Financial Flows accounting logic;
+- guarantee a useful Valuation chart even before historical prices are cached;
+- restore Tape / Flows price-versus-Short-Interest history plus separate Daily Short Volume;
+- preserve the stabilized mobile navigation, security, MariaDB, publication and fast-navigation contracts.
 
 Before telling the user to deploy, verify PR CI green, merge to main, verify post-merge main CI green, and only then run the manual Namecheap deployment workflow.
 
@@ -362,6 +379,6 @@ If VERSION changes and **State-Version** does not match, CI must fail.
 
 Detailed release-specific audit remains in:
 
-`docs/RELEASE_0_2_0.md` remains the 0.2.0 baseline audit. 0.2.1 release evidence belongs in its release PR/tests and any dedicated 0.2.1 audit added before FINAL.
+`docs/RELEASE_0_2_0.md` remains the 0.2.0 baseline audit. 0.2.2 release evidence belongs in its release PR/tests and any dedicated 0.2.2 audit added before FINAL.
 
 This file is the concise handoff; release audit documents provide the deeper evidence.
