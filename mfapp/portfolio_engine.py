@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import and_
 
 from .core_models import (
-    Company, Coverage, HistoricalPrice, InvestmentState, MarketSnapshot, Position,
-    RiskPlan, Security,
+    Company, Coverage, HistoricalPrice, InvestmentState, MarketSnapshot,
+    PortfolioRiskPlan, Position, PositionProfile, Security,
 )
 from .extensions import db
 from .models import UserPreference
@@ -22,11 +22,13 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _f(value) -> float:
+def _f(value, default: float = 0.0) -> float:
     try:
-        return float(value or 0)
+        if value is None:
+            return default
+        return float(value)
     except (TypeError, ValueError):
-        return 0.0
+        return default
 
 
 def _return_series(security_id: int, days: int = 320) -> dict[date, float]:
@@ -56,7 +58,8 @@ def _corr(a: dict[date, float], b: dict[date, float]) -> tuple[float | None, int
         return None, len(common)
     xs = [a[d] for d in common]
     ys = [b[d] for d in common]
-    mx = sum(xs) / len(xs); my = sum(ys) / len(ys)
+    mx = sum(xs) / len(xs)
+    my = sum(ys) / len(ys)
     vx = sum((x - mx) ** 2 for x in xs)
     vy = sum((y - my) ** 2 for y in ys)
     if vx <= 0 or vy <= 0:
@@ -90,13 +93,75 @@ def _stored_portfolio_analytics(user_id: int) -> dict[str, Any]:
     return dict((row.value or {}) if row else {})
 
 
+def position_sizing(current_price, risk: PortfolioRiskPlan | None) -> dict[str, float | None]:
+    """Local V3.1.12 downside math, expressed in percentage points for the web UI."""
+    if risk is None:
+        return {
+            "loss_to_reference_pct": None,
+            "adjusted_loss_pct": None,
+            "suggested_position_pct": None,
+        }
+    price = _f(current_price)
+    reference = _f(risk.sizing_reference_price)
+    budget_pct = _f(risk.risk_budget_pct, 0.75)
+    haircut_pct = max(0.0, _f(risk.event_liquidity_haircut_pct, 5.0))
+    cap_pct = max(0.0, _f(risk.max_position_pct, 10.0))
+    if price <= 0 or reference <= 0:
+        return {
+            "loss_to_reference_pct": None,
+            "adjusted_loss_pct": None,
+            "suggested_position_pct": None,
+        }
+    loss_pct = abs(price - reference) / price * 100.0
+    adjusted_pct = loss_pct + haircut_pct
+    suggested_pct = min(cap_pct, (budget_pct / adjusted_pct) * 100.0) if adjusted_pct > 0 else 0.0
+    return {
+        "loss_to_reference_pct": loss_pct,
+        "adjusted_loss_pct": adjusted_pct,
+        "suggested_position_pct": max(0.0, suggested_pct),
+    }
+
+
+def ensure_portfolio_profile(user_id: int, security_id: int) -> PositionProfile:
+    row = PositionProfile.query.filter_by(user_id=user_id, security_id=security_id).first()
+    if row is None:
+        row = PositionProfile(user_id=user_id, security_id=security_id, side="LONG", tags="")
+        db.session.add(row)
+    return row
+
+
+def ensure_portfolio_risk(user_id: int, security_id: int) -> PortfolioRiskPlan:
+    row = PortfolioRiskPlan.query.filter_by(user_id=user_id, security_id=security_id).first()
+    if row is None:
+        row = PortfolioRiskPlan(
+            user_id=user_id,
+            security_id=security_id,
+            risk_budget_pct=0.75,
+            event_liquidity_haircut_pct=5.0,
+            max_position_pct=10.0,
+            updated_by=user_id,
+        )
+        db.session.add(row)
+    return row
+
+
 def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     positions = Position.query.filter_by(user_id=user_id).order_by(Position.updated_at.desc()).all()
     if not positions:
         return [], {
-            "market_value": 0.0, "cost": 0.0, "pnl": 0.0, "positions": 0,
-            "top_weight_pct": 0.0, "concentration_hhi": 0.0,
-            "validated_positions": 0, "validated_pct": 0.0, "risk_breaches": [],
+            "market_value": 0.0,
+            "cost": 0.0,
+            "pnl": 0.0,
+            "positions": 0,
+            "long_value": 0.0,
+            "short_value": 0.0,
+            "net_exposure": 0.0,
+            "top_weight_pct": 0.0,
+            "concentration_hhi": 0.0,
+            "validated_positions": 0,
+            "validated_pct": 0.0,
+            "risk_breaches": [],
+            "factor_exposure": [],
         }
 
     security_ids = [row.security_id for row in positions]
@@ -107,17 +172,33 @@ def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     coverage_by_security = {row.security_id: row for row in coverages}
     coverage_ids = [row.id for row in coverages]
     investment_by_coverage = {
-        row.coverage_id: row for row in InvestmentState.query.filter(InvestmentState.coverage_id.in_(coverage_ids)).all()
+        row.coverage_id: row
+        for row in InvestmentState.query.filter(InvestmentState.coverage_id.in_(coverage_ids)).all()
     } if coverage_ids else {}
-    risk_by_coverage = {
-        row.coverage_id: row for row in RiskPlan.query.filter(RiskPlan.coverage_id.in_(coverage_ids)).all()
-    } if coverage_ids else {}
+    profiles = {
+        row.security_id: row
+        for row in PositionProfile.query.filter(
+            PositionProfile.user_id == user_id,
+            PositionProfile.security_id.in_(security_ids),
+        ).all()
+    }
+    money_risks = {
+        row.security_id: row
+        for row in PortfolioRiskPlan.query.filter(
+            PortfolioRiskPlan.user_id == user_id,
+            PortfolioRiskPlan.security_id.in_(security_ids),
+        ).all()
+    }
     research_caches = latest_cache_map(coverage_ids)
     markets = _latest_market_map(security_ids)
 
     raw: list[dict[str, Any]] = []
     total_market = 0.0
     total_cost = 0.0
+    long_value = 0.0
+    short_value = 0.0
+    factor_values: dict[str, float] = {}
+
     for position in positions:
         security = securities.get(position.security_id)
         if not security:
@@ -126,26 +207,48 @@ def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         coverage = coverage_by_security.get(security.id)
         cache = dict(research_caches.get(coverage.id) or {}) if coverage else {}
         market = markets.get(security.id)
-        shares = _f(position.shares)
+        profile = profiles.get(security.id)
+        investment = investment_by_coverage.get(coverage.id) if coverage else None
+        inferred_side = "SHORT" if investment and "SHORT" in str(investment.state or "").upper() else "LONG"
+        side = str(profile.side if profile else inferred_side).upper()
+        if side not in {"LONG", "SHORT"}:
+            side = "LONG"
+        tags = str(profile.tags if profile else "")
+        shares = abs(_f(position.shares))
         avg_cost = _f(position.avg_cost)
         price = _f(market.price) if market else 0.0
-        market_value = shares * price if market else None
-        cost = shares * avg_cost
+        market_value = abs(shares * price) if market else None
+        cost = abs(shares * avg_cost)
+        sign = -1.0 if side == "SHORT" else 1.0
+        pnl = ((price - avg_cost) * shares * sign) if market else None
         if market_value is not None:
             total_market += market_value
+            if side == "SHORT":
+                short_value += market_value
+            else:
+                long_value += market_value
+            for tag in [item.strip() for item in tags.split(",") if item.strip()]:
+                factor_values[tag] = factor_values.get(tag, 0.0) + market_value
         total_cost += cost
         readiness = dict(cache.get("readiness") or {"validation": {"state": "NOT RUN"}})
+        risk = money_risks.get(security.id)
+        sizing = position_sizing(price if market else None, risk)
         raw.append({
             "position": position,
+            "profile": profile,
+            "side": side,
+            "tags": tags,
             "security": security,
             "company": company,
             "coverage": coverage,
             "market": market,
             "market_value": market_value,
             "cost": cost,
-            "pnl": (market_value - cost) if market_value is not None else None,
-            "investment": investment_by_coverage.get(coverage.id) if coverage else None,
-            "risk": risk_by_coverage.get(coverage.id) if coverage else None,
+            "pnl": pnl,
+            "pnl_pct": (((price / avg_cost) - 1.0) * sign * 100.0) if market and avg_cost > 0 else None,
+            "investment": investment,
+            "risk": risk,
+            "sizing": sizing,
             "valuation": dict(cache.get("valuation") or {}),
             "readiness": readiness,
             "decision_lenses": dict(cache.get("decision_lenses") or {}),
@@ -166,26 +269,32 @@ def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         "weight_pct": row["weight_pct"],
         "max_position_pct": row["position_limit_pct"],
     } for row in raw if row.get("risk_breach")]
+    factor_total = sum(factor_values.values()) or 0.0
+    factor_exposure = [{
+        "tag": tag,
+        "market_value": value,
+        "gross_pct": (value / factor_total * 100.0) if factor_total else None,
+    } for tag, value in sorted(factor_values.items(), key=lambda item: -item[1])]
 
     return raw, {
         "market_value": total_market,
         "cost": total_cost,
-        "pnl": total_market - total_cost,
+        "pnl": sum(_f(row["pnl"]) for row in raw if row["pnl"] is not None),
         "positions": len(raw),
+        "long_value": long_value,
+        "short_value": short_value,
+        "net_exposure": long_value - short_value,
         "top_weight_pct": max(weights) if weights else 0.0,
         "concentration_hhi": sum((w / 100.0) ** 2 for w in weights),
         "validated_positions": validated,
         "validated_pct": (validated / len(raw) * 100.0) if raw else 0.0,
         "risk_breaches": breaches,
+        "factor_exposure": factor_exposure,
     }
 
 
 def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Fast request-path portfolio view.
-
-    Correlations are read from the last background analytics cache; historical
-    price series are never loaded while a page is opening.
-    """
+    """Fast request-path Portfolio view. Heavy correlations remain background materialized."""
     rows, totals = _assemble_rows(user_id)
     analytics = _stored_portfolio_analytics(user_id)
     totals["correlations"] = list(analytics.get("correlations") or [])[:20]
@@ -225,4 +334,11 @@ def refresh_portfolio_analytics(user_id: int) -> dict[str, Any]:
     return value
 
 
-__all__ = ["portfolio_rows", "refresh_portfolio_analytics", "PORTFOLIO_CACHE_KEY"]
+__all__ = [
+    "PORTFOLIO_CACHE_KEY",
+    "ensure_portfolio_profile",
+    "ensure_portfolio_risk",
+    "portfolio_rows",
+    "position_sizing",
+    "refresh_portfolio_analytics",
+]
