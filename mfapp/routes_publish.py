@@ -211,7 +211,7 @@ def discovery_report():
     stream = render_discovery_pdf(scan, branding)
     audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
     db.session.commit()
-    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.2.pdf", max_age=0)
+    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery_0.2.3.pdf", max_age=0)
 
 
 @bp.get("/company/<ticker>/report/<fmt>")
@@ -223,7 +223,7 @@ def research_report(ticker, fmt):
     branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
     data = research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
-    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.2"
+    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}_0.2.3"
     if fmt == "docx":
         stream = render_docx(data)
         mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
