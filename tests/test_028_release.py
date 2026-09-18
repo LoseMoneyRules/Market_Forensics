@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
-from mfapp.core_models import Company, Coverage, FinancialPeriod, NormalizedFinancial, Security
+from mfapp.core_models import Company, Coverage, Event, FinancialPeriod, NormalizedFinancial, Security
 from mfapp.extensions import db
 from mfapp.financial_flow_engine import build_income_statement_flow
 from mfapp.decision_support import tape_context_metrics
@@ -20,6 +20,8 @@ from mfapp.secdata import (
 )
 from mfapp.security import encrypt_secret, hash_password
 from mfapp.services import ensure_workspace
+from mfapp.research_cache import cache_event_type
+from mfapp.triangulation_engine import apply_peer_valuation_overlay
 
 
 def make_app(tmp_path, monkeypatch, name="028"):
@@ -327,6 +329,76 @@ def test_028_readiness_links_and_coverage_alpha_sort_contract():
     assert 'rows.sort(key=lambda row: str(row["security"].ticker or "").upper())' in routes
     assert ".gate-link{color:var(--navy);font-weight:750" in css
     assert Path("VERSION").read_text().strip() == "0.2.8"
+
+
+def test_028_business_renders_with_partial_peer_overlay_cache(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "business_partial_peer")
+    uid = seed_control_workspace(app, ticker="ORCL")
+    with app.app_context():
+        coverage = Coverage.query.join(Security, Coverage.security_id == Security.id).filter(Security.ticker == "ORCL").first()
+        security = db.session.get(Security, coverage.security_id)
+        company = db.session.get(Company, security.company_id)
+        db.session.add(Event(
+            company_id=company.id,
+            event_type=cache_event_type(coverage.id),
+            title="ORCL research cache",
+            event_date=datetime.now(timezone.utc).replace(tzinfo=None),
+            payload={
+                "valuation": {
+                    "current_price": 170.0,
+                    "bear": 130.0,
+                    "base": 190.0,
+                    "bull": 230.0,
+                    "expected_value": 185.0,
+                    # Reproduce the pre-fix non-applied shape that omitted intrinsic_base.
+                    "peer_overlay": {
+                        "applied": False,
+                        "reason": "Insufficient peer valuation evidence.",
+                        "eligible": False,
+                        "estimate": None,
+                        "peer_count": 3,
+                        "method_count": 1,
+                    },
+                },
+                "triangulation": {
+                    "available": True,
+                    "reason": "",
+                    "method": "SIC DIVISION",
+                    "sic": "7372",
+                    "sic_description": "Prepackaged Software",
+                    "peers": [{"ticker": "PEER", "name": "Peer Co", "match": "SIC DIVISION"}],
+                    "comparisons": [],
+                    "signals": [],
+                    "peer_value_crosscheck": {
+                        "eligible": False,
+                        "estimate": None,
+                        "peer_count": 3,
+                        "method_count": 1,
+                    },
+                },
+            },
+        ))
+        db.session.commit()
+
+    client = app.test_client()
+    login(client, uid)
+    response = client.get("/company/ORCL/business")
+    assert response.status_code == 200, response.data[:1000]
+    assert b"Peer fair-value cross-check" in response.data
+    assert b"Intrinsic Base" in response.data
+
+
+def test_028_non_applied_peer_overlay_keeps_stable_schema():
+    result = apply_peer_valuation_overlay(
+        {"base": 190.0, "bear": 130.0, "bull": 230.0, "expected_value": 185.0, "current_price": 170.0},
+        {"peer_value_crosscheck": {"eligible": False, "estimate": None, "peer_count": 3, "method_count": 1}},
+    )
+    overlay = result["peer_overlay"]
+    assert overlay["applied"] is False
+    assert overlay["weight"] == 0.0
+    assert overlay["intrinsic_base"] == 190.0
+    assert overlay["forensic_base"] == 190.0
+    assert overlay["peer_estimate"] is None
 
 
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():

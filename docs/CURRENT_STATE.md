@@ -25,6 +25,12 @@ Deploy #40 is the authoritative production baseline. PR #29 keeps VERSION and ar
 
 ## 0.2.8 release scope
 
+Business partial-peer hotfix candidate:
+- `/company/<ticker>/business` must render when automatic triangulation has peers but the relative-value overlay is not yet eligible.
+- `peer_overlay` now keeps a stable schema even when not applied; Business also reads old/partial cached overlay fields defensively.
+- Regression reproduces an ORCL-style cached payload with peers present, only one valuation method, and no legacy `intrinsic_base` key.
+- VERSION remains `0.2.8`.
+
 Final 0.2.8 micro-polish merged through PR #30:
 - Process Readiness gate names link directly to their corresponding Research page.
 - Coverage rows are sorted alphabetically by ticker before rendering.
