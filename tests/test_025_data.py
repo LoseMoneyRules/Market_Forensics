@@ -51,7 +51,7 @@ def test_025_ttm_requires_four_consecutive_fiscal_quarters():
     assert _aggregate_quarters(list(reversed(missing)), "TTM") is None
 
 
-def test_025_numbers_are_quarter_auditable_and_mixed_chart():
+def test_025_fundamentals_are_quarter_auditable_and_mixed_chart():
     template = Path("mfapp/templates/company_section.html").read_text()
     routes = Path("mfapp/routes.py").read_text()
     js = Path("mfapp/static/js/app.js").read_text()
@@ -71,7 +71,7 @@ def test_025_numbers_are_quarter_auditable_and_mixed_chart():
 def test_025_release_handoff_has_numbers_correctness_rules():
     version = Path("VERSION").read_text().strip()
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert version == "0.2.5"
-    assert "**State-Version: 0.2.5**" in state
+    assert version == "0.2.6"
+    assert "**State-Version: 0.2.6**" in state
     assert "four distinct fiscally consecutive quarters" in state
     assert "Companyfacts repeats comparative periods" in state
