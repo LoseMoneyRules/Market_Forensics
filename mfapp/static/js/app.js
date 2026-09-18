@@ -175,7 +175,8 @@
   }
   function optionalNumber(value) {
     if (value === null || value === undefined || value === '') return null;
-    const out=Number(value); return Number.isFinite(out) ? out : null;
+    const out=Number(value);
+    return Number.isFinite(out) ? out : null;
   }
   function valuationChart(canvas) {
     const history=parseData(canvas,'history').filter((row)=>optionalNumber(row.price)!==null);
@@ -199,17 +200,39 @@
     if(!prices.length && !shorts.length)return;
     const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
     const w=Math.max(360,rect.width),h=Math.max(220,rect.height||300),pad={l:58,r:72,t:26,b:36};
-    canvas.width=w*dpr;canvas.height=h*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+    canvas.width=w*dpr; canvas.height=h*dpr;
+    const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
     const allDates=[...prices,...shorts].map(r=>new Date(String(r.date)+'T00:00:00').getTime()).filter(Number.isFinite);
-    if(!allDates.length)return;let d0=Math.min(...allDates),d1=Math.max(...allDates);if(d0===d1)d1=d0+86400000;
+    if(!allDates.length)return;
+    let d0=Math.min(...allDates),d1=Math.max(...allDates); if(d0===d1)d1=d0+86400000;
     const pVals=prices.map(r=>optionalNumber(r.price)).filter(v=>v!==null),sVals=shorts.map(r=>optionalNumber(r.short)).filter(v=>v!==null);
     let pMin=pVals.length?Math.min(...pVals):0,pMax=pVals.length?Math.max(...pVals):1,sMin=sVals.length?Math.min(...sVals):0,sMax=sVals.length?Math.max(...sVals):1;
-    if(pMin===pMax){pMin-=Math.max(1,pMin*.05);pMax+=Math.max(1,pMax*.05)}if(sMin===sMax){sMin=Math.max(0,sMin*.95);sMax=Math.max(1,sMax*1.05)}
-    const pSpan=Math.max(.01,pMax-pMin),sSpan=Math.max(1,sMax-sMin);pMin-=pSpan*.08;pMax+=pSpan*.08;sMin=Math.max(0,sMin-sSpan*.08);sMax+=sSpan*.08;
+    if(pMin===pMax){pMin-=Math.max(1,pMin*.05);pMax+=Math.max(1,pMax*.05)}
+    if(sMin===sMax){sMin=Math.max(0,sMin*.95);sMax=Math.max(1,sMax*1.05)}
+    const pSpan=Math.max(.01,pMax-pMin),sSpan=Math.max(1,sMax-sMin);
+    pMin-=pSpan*.08;pMax+=pSpan*.08;sMin=Math.max(0,sMin-sSpan*.08);sMax+=sSpan*.08;
     const x=d=>pad.l+(w-pad.l-pad.r)*((new Date(String(d)+'T00:00:00').getTime()-d0)/(d1-d0));
-    const yp=v=>pad.t+(h-pad.t-pad.b)*(1-(v-pMin)/(pMax-pMin)),ys=v=>pad.t+(h-pad.t-pad.b)*(1-(v-sMin)/(sMax-sMin));
+    const yp=v=>pad.t+(h-pad.t-pad.b)*(1-(v-pMin)/(pMax-pMin));
+    const ys=v=>pad.t+(h-pad.t-pad.b)*(1-(v-sMin)/(sMax-sMin));
     ctx.font='11px system-ui';ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.lineWidth=1;
-    for(let i=0;i<4;i++){const yy=pad.t+(h-pad.t-pad.b)*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();ctx.fillText('
+    for(let i=0;i<4;i++){
+      const yy=pad.t+(h-pad.t-pad.b)*i/3;
+      ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
+      ctx.fillText('$'+(pMax-(pMax-pMin)*i/3).toFixed(1),5,yy+4);
+      const sv=sMax-(sMax-sMin)*i/3;ctx.textAlign='right';ctx.fillText(compact(sv),w-5,yy+4);ctx.textAlign='left';
+    }
+    ctx.strokeStyle=css('--mf-chart-price','#3a6f99');ctx.lineWidth=2.5;ctx.beginPath();
+    prices.forEach((r,i)=>{const xx=x(r.date),yy=yp(Number(r.price));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke();
+    if(shorts.length){
+      ctx.strokeStyle=css('--mf-chart-bear','#a04444');ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.beginPath();
+      shorts.forEach((r,i)=>{const xx=x(r.date),yy=ys(Number(r.short));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke();ctx.setLineDash([]);
+      shorts.forEach(r=>{ctx.beginPath();ctx.arc(x(r.date),ys(Number(r.short)),2.8,0,Math.PI*2);ctx.fillStyle=css('--mf-chart-bear','#a04444');ctx.fill()});
+    }
+    const marks=[d0,d0+(d1-d0)/2,d1];ctx.fillStyle=css('--mf-chart-text','#4f6272');
+    marks.forEach((d,i)=>{const label=new Date(d).toLocaleDateString([],{month:'short',year:'2-digit'});const xx=pad.l+(w-pad.l-pad.r)*i/2;ctx.fillText(label,Math.max(pad.l,Math.min(w-pad.r-30,xx-16)),h-10)});
+    ctx.fillStyle=css('--mf-chart-price','#3a6f99');ctx.fillText('Price',pad.l,pad.t-10);
+    ctx.textAlign='right';ctx.fillStyle=css('--mf-chart-bear','#a04444');ctx.fillText('Short interest',w-pad.r,pad.t-10);ctx.textAlign='left';
+  }
   const primary=css('--primary','#3a6f99'), secondary='#7b96ad', accent='#5f8a86';
   function renderCharts(){
     document.querySelectorAll('canvas[data-mf-chart="numbers-scale"]').forEach((node)=>lineChart(node,parseData(node),[{key:'revenue',label:'Revenue',color:primary},{key:'fcf',label:'FCF',color:accent},{key:'forecast_revenue',label:'Revenue forecast',color:primary,dash:true}],false));
@@ -321,147 +344,6 @@
       workerChip.title=dirty
         ? 'Background data finished. Unsaved edits are protected; click when ready to refresh.'
         : 'Background data finished. Click when you want to refresh the full research surface.';
-      workerChip.style.cursor='pointer';
-      workerChip.onclick=()=>window.location.reload();
-    }
-    return false;
-  }
-  async function tick(){
-    if(busy||stopped)return;
-    busy=true;
-    try{
-      const state=await status();if(!state)return;
-      if(maybeRefresh(state))return;
-      renderJobs(state);
-      const kicked=await kickExecutor(state);
-      const active=Number(state.running||0)+Number(state.queued||0);
-      schedule(kicked?1200:(active?2500:8000));
-    }catch(_){
-      if(workerChip)workerChip.textContent='Jobs · reconnecting';
-      schedule(12000);
-    }finally{busy=false}
-  }
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy&&!stopped)schedule(150)});
-  schedule(250);
-
-})();+(pMax-(pMax-pMin)*i/3).toFixed(1),5,yy+4);const sv=sMax-(sMax-sMin)*i/3;ctx.textAlign='right';ctx.fillText(compact(sv),w-5,yy+4);ctx.textAlign='left'}
-    ctx.strokeStyle=css('--mf-chart-price','#3a6f99');ctx.lineWidth=2.5;ctx.beginPath();prices.forEach((r,i)=>{const xx=x(r.date),yy=yp(Number(r.price));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke();
-    if(shorts.length){ctx.strokeStyle=css('--mf-chart-bear','#a04444');ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.beginPath();shorts.forEach((r,i)=>{const xx=x(r.date),yy=ys(Number(r.short));i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)});ctx.stroke();ctx.setLineDash([]);shorts.forEach(r=>{ctx.beginPath();ctx.arc(x(r.date),ys(Number(r.short)),2.8,0,Math.PI*2);ctx.fillStyle=css('--mf-chart-bear','#a04444');ctx.fill()})}
-    const marks=[d0,d0+(d1-d0)/2,d1];ctx.fillStyle=css('--mf-chart-text','#4f6272');marks.forEach((d,i)=>{const label=new Date(d).toLocaleDateString([],{month:'short',year:'2-digit'});const xx=pad.l+(w-pad.l-pad.r)*i/2;ctx.fillText(label,Math.max(pad.l,Math.min(w-pad.r-30,xx-16)),h-10)});
-    ctx.fillStyle=css('--mf-chart-price','#3a6f99');ctx.fillText('Price',pad.l,pad.t-10);ctx.textAlign='right';ctx.fillStyle=css('--mf-chart-bear','#a04444');ctx.fillText('Short interest',w-pad.r,pad.t-10);ctx.textAlign='left';
-  }
-  const primary=css('--primary','#3a6f99'), secondary='#7b96ad', accent='#5f8a86';
-  function renderCharts(){
-    document.querySelectorAll('canvas[data-mf-chart="numbers-scale"]').forEach((node)=>lineChart(node,parseData(node),[{key:'revenue',label:'Revenue',color:primary},{key:'fcf',label:'FCF',color:accent},{key:'forecast_revenue',label:'Revenue forecast',color:primary,dash:true}],false));
-    document.querySelectorAll('canvas[data-mf-chart="numbers-margin"]').forEach((node)=>lineChart(node,parseData(node),[{key:'op_margin',label:'Operating margin',color:primary},{key:'fcf_margin',label:'FCF margin',color:accent},{key:'forecast_op_margin',label:'Op margin forecast',color:primary,dash:true}],true));
-    document.querySelectorAll('canvas[data-mf-chart="working-capital"]').forEach((node)=>lineChart(node,parseData(node),[{key:'inventory',label:'Inventory',color:primary},{key:'receivables',label:'Receivables',color:secondary}],false));
-    document.querySelectorAll('canvas[data-mf-chart="tape-price"]').forEach((node)=>lineChart(node,parseData(node),[{key:'price',label:'Price',color:primary}],false));
-    document.querySelectorAll('canvas[data-mf-chart="tape-short"]').forEach((node)=>lineChart(node,parseData(node),[{key:'short_pct',label:'Daily short volume %',color:secondary}],true));
-    document.querySelectorAll('canvas[data-mf-chart="valuation"]').forEach(valuationChart);
-  }
-  renderCharts();
-  let resizeTimer=null;
-  window.addEventListener('resize',()=>{window.clearTimeout(resizeTimer);resizeTimer=window.setTimeout(renderCharts,180)});
-  window.addEventListener('mf-theme-change',()=>window.setTimeout(renderCharts,30));
-
-  // Central semantic status contract. Components expose meaning; CSS owns color.
-  const semanticGroups = {
-    positive: ['POSITIVE','GOOD','ATTRACTIVE','FAVORABLE','SUPPORTIVE','MET','PASS','STRENGTH','BULLISH','LONG','READY','APPROVED','DONE','VALIDATED','PUBLIC','OK'],
-    negative: ['NEGATIVE','BAD','EXPENSIVE','DEMANDING','HOSTILE','MISS','FAIL','WEAKNESS','BEARISH','SHORT','FAILED','ERROR','DETERIORATING'],
-    caution: ['MIXED','NEUTRAL','FAIR','BALANCED','UNCLEAR','PENDING','WATCH','IN LINE','UNRATED','UNDER REVIEW','LIMITED','REVIEW','MISSING EVIDENCE','PENDING APPROVAL','QUEUED'],
-    info: ['RUNNING','INFO','SYSTEM','VALIDATION','CHECKING','LOCKED'],
-    cancelled: ['CANCELLED','SUPERSEDED']
-  };
-  function semanticStatus(value) {
-    const valueText=String(value||'').trim().toUpperCase().replaceAll('_',' ');
-    if(!valueText)return'neutral';
-    for(const [group,tokens] of Object.entries(semanticGroups)){
-      if(tokens.some(token=>valueText===token||valueText.startsWith(token+' ')||valueText.endsWith(' '+token)))return group;
-    }
-    return 'neutral';
-  }
-  function applySemanticStatuses(scope=document) {
-    scope.querySelectorAll?.('.status-chip,.gate-status,[data-status-value]').forEach((el)=>{
-      const value=el.dataset.statusValue||el.textContent||'';
-      el.dataset.semantic=semanticStatus(value);
-    });
-    scope.querySelectorAll?.('.lens-card').forEach((el)=>{
-      el.dataset.semantic=semanticStatus(el.querySelector('strong')?.textContent||'');
-    });
-  }
-  applySemanticStatuses();
-
-  // CONTROL background-job observer + detached executor fallback.
-  // Page requests stay fast: /jobs/pump only starts a separate CLI process and returns.
-  const workerChip = document.getElementById('mf-worker-chip');
-  if (realRole !== 'CONTROL' || effectiveRole !== 'CONTROL' || !csrf) return;
-  const autoRefresh = document.querySelector('meta[name="mf-auto-refresh"]')?.content === '1';
-  const pumpLockKey='mf-job-pump-kick-at';
-  let busy=false, pumpBusy=false, stopped=false, timer=null, baselineFinished=null, dirty=false, refreshOffered=false;
-
-  document.addEventListener('input',(event)=>{
-    const target=event.target;
-    if(target && (target.matches('input:not([type="hidden"]):not([type="search"]), textarea, select'))) dirty=true;
-  },{capture:true});
-  document.addEventListener('submit',()=>{dirty=false},{capture:true});
-
-  function renderJobs(state){
-    if(!workerChip)return;
-    const queued=Number(state?.queued||0),running=Number(state?.running||0),failed=Number(state?.failed||0);
-    if(refreshOffered){workerChip.textContent='Data updated · refresh';workerChip.classList.add('job-updated');return}
-    workerChip.classList.remove('job-updated');
-    if(running)workerChip.textContent='Jobs · running · '+queued+' queued';
-    else if(queued)workerChip.textContent='Jobs · starting · '+queued+' queued';
-    else if(failed)workerChip.textContent='Jobs · idle · '+failed+' failed';
-    else workerChip.textContent='Jobs · idle';
-  }
-  function schedule(ms){window.clearTimeout(timer);if(!stopped)timer=window.setTimeout(tick,ms)}
-  async function status(){
-    const r=await fetch('/jobs/status',{credentials:'same-origin',headers:{Accept:'application/json'},cache:'no-store'});
-    if(r.status===401||r.status===403){stopped=true;return null}
-    if(!r.ok)throw new Error('status '+r.status);
-    return r.json();
-  }
-  async function kickExecutor(state){
-    if(pumpBusy||Number(state?.due||0)<=0||Number(state?.running||0)>0)return false;
-    const now=Date.now();
-    let previous=0;
-    try{previous=Number(window.localStorage.getItem(pumpLockKey)||0)}catch(_){}
-    if(now-previous<12000)return false;
-    try{window.localStorage.setItem(pumpLockKey,String(now))}catch(_){}
-    pumpBusy=true;
-    try{
-      const r=await fetch('/jobs/pump',{
-        method:'POST',credentials:'same-origin',
-        headers:{Accept:'application/json','X-CSRFToken':csrf},
-        cache:'no-store'
-      });
-      if(r.status===401||r.status===403){stopped=true;return false}
-      if(!r.ok){
-        if(workerChip){workerChip.textContent='Jobs · executor unavailable';workerChip.title='Background executor could not start.'}
-        return false;
-      }
-      const payload=await r.json();
-      if(payload?.spawned&&workerChip)workerChip.textContent='Jobs · starting background worker';
-      return Boolean(payload?.spawned);
-    }catch(_){
-      if(workerChip)workerChip.textContent='Jobs · executor reconnecting';
-      return false;
-    }finally{pumpBusy=false}
-  }
-  function maybeRefresh(state){
-    const finished=state?.last_finished_id??null;
-    if(baselineFinished===null){baselineFinished=finished;return false}
-    if(finished===null||finished===baselineFinished)return false;
-    baselineFinished=finished;
-    if(!autoRefresh)return false;
-    if(!dirty){
-      window.location.reload();
-      return true;
-    }
-    refreshOffered=true;
-    if(workerChip){
-      workerChip.title='Background data finished. Click to refresh when you are ready.';
       workerChip.style.cursor='pointer';
       workerChip.onclick=()=>window.location.reload();
     }
