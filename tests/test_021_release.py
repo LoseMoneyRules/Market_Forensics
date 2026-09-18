@@ -174,7 +174,9 @@ def test_021_report_exports_work_and_are_control_only(tmp_path, monkeypatch):
     assert executive.status_code==200 and executive.data.startswith(b"%PDF-")
     assert full.status_code==200 and full.data.startswith(b"%PDF-")
     assert word.status_code==200 and word.data.startswith(b"PK")
-    assert Path("VERSION").read_text().strip() in executive.headers.get("Content-Disposition","")
+    disposition=executive.headers.get("Content-Disposition","")
+    assert "EXM_Market_Forensics_executive.pdf" in disposition
+    assert Path("VERSION").read_text().strip() not in disposition
 
 
 def test_021_semantic_dark_flow_and_mobile_contracts_are_centralized():
