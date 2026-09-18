@@ -816,3 +816,51 @@ def test_020_reporting_dependencies_are_optional_at_startup():
     assert "python-docx" not in requirements
     assert "reportlab" not in requirements
     assert "python-docx" in optional and "reportlab" in optional
+
+
+def test_020_recalculate_job_builds_research_cache_end_to_end(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, security_id, coverage_id = seed_workspace(app)
+    with app.app_context():
+        from mfapp.jobs import enqueue_job, run_jobs
+        from mfapp.research_cache import latest_research_cache
+        job = enqueue_job(
+            "RECALCULATE",
+            user_id=uid,
+            company_id=company_id,
+            security_id=security_id,
+            payload={"coverage_id": coverage_id},
+            priority=10,
+        )
+        result = run_jobs(limit=1, user_id=uid)
+        assert result and result[0]["job_id"] == job.id
+        assert result[0]["status"] == "DONE", result
+        cache = latest_research_cache(coverage_id, company_id)
+        assert cache is not None
+        assert "valuation" in cache
+        assert "readiness" in cache
+        assert "decision_lenses" in cache
+        assert "synthesis" in cache
+        assert "tape" in cache
+        assert "triangulation" in cache
+
+
+def test_020_portfolio_get_does_not_compute_historical_correlations(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch)
+    uid, company_id, security_id, coverage_id = seed_workspace(app)
+    seed_fast_cache(app, coverage_id, company_id)
+    with app.app_context():
+        db.session.add(Position(
+            user_id=uid, security_id=security_id, shares=Decimal("10"),
+            avg_cost=Decimal("35"), currency="USD", notes=""
+        ))
+        db.session.commit()
+
+    import mfapp.portfolio_engine as pe
+    monkeypatch.setattr(pe, "_return_series", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("historical correlation work executed during Portfolio GET")
+    ))
+    client = app.test_client()
+    login_control(client, uid)
+    response = client.get("/portfolio")
+    assert response.status_code == 200
