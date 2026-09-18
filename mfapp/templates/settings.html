@@ -1,6 +1,11 @@
 {% extends "base.html" %}{% block title %}Settings / Data · Market Forensics{% endblock %}{% block content %}
 <section class="page">
-  <div class="page-head split"><div><p class="eyebrow">SETTINGS</p><h1>Settings / Data</h1><p>Credentials stay encrypted server-side, provider capabilities are explicit, and CONTROL can see exactly what is available.</p></div><div class="settings-version"><span>Market Forensics</span><strong>v{{ mf_version }}</strong></div></div>
+  <div class="page-head"><div><p class="eyebrow">SETTINGS</p><h1>Settings / Data</h1><p>Credentials stay encrypted server-side, provider capabilities are explicit, and CONTROL can see exactly what is available.</p></div></div>
+
+  <div class="panel application-version-panel">
+    <div><p class="eyebrow">APPLICATION</p><h2>Market Forensics</h2><p class="muted">This is the only user-facing release identifier in the application.</p></div>
+    <strong class="application-version-value">{{ mf_version }}</strong>
+  </div>
 
   <div class="panel">
     <div class="panel-head"><div><p class="eyebrow">DATA COVERAGE</p><h2>Provider capabilities</h2></div><span class="status-chip ready">AUDITABLE</span></div>
@@ -57,7 +62,21 @@
     </div>
   </div>
 
-  <div class="panel recent-jobs"><div class="panel-head"><div><p class="eyebrow">BACKGROUND WORK</p><h2>Recent jobs</h2><p class="muted">Target shows the ticker for security-specific work, the company for company-scoped work, or GLOBAL for general scans/portfolio work.</p></div><div class="job-state-legend"><span class="status-chip">QUEUED</span><span class="status-chip">RUNNING</span><span class="status-chip">DONE</span><span class="status-chip">FAILED</span><span class="status-chip">CANCELLED</span></div></div><div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>ID</th><th>Type</th><th>Target</th><th>Status</th><th>Attempts</th><th>Created</th><th>Message</th><th>Control</th></tr></thead><tbody>{% for item in job_items %}{% set job=item.job %}{% set target=item.target %}<tr data-job-id="{{ job.id }}"><td>#{{ job.id }}</td><td><strong>{{ job.job_type }}</strong></td><td>{% if target.ticker %}<a class="ticker-link compact" href="{{ url_for('web.company_section', ticker=target.ticker, section='overview') }}"><strong>{{ target.ticker }}</strong></a>{% else %}<span class="status-chip">{{ target.label }}</span>{% endif %}</td><td><span class="status-chip" data-job-status>{{ job.status }}</span></td><td data-job-attempts>{{ job.attempts }}/{{ job.max_attempts }}</td><td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td data-job-error>{{ job.error_message[:160] if job.error_message else '—' }}</td><td>{% if job.status in ['QUEUED','RUNNING'] %}<form method="post" action="{{ url_for('web.cancel_active_job', job_id=job.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button micro danger" type="submit" onclick="return confirm('Cancel job #{{ job.id }} ({{ job.job_type }})? Valid data already committed will be preserved.')">{{ 'Kill / Cancel' if job.status == 'RUNNING' else 'Cancel' }}</button></form>{% else %}<span class="muted">—</span>{% endif %}</td></tr>{% else %}<tr><td colspan="8" class="empty-cell">No jobs yet.</td></tr>{% endfor %}</tbody></table></div></div>
+  <details class="panel recent-jobs">
+    <summary class="recent-jobs-summary">
+      <div>
+        <p class="eyebrow">BACKGROUND WORK</p>
+        <h2>Recent jobs</h2>
+        <p class="muted">{{ queue_status.running }} running · {{ queue_status.queued }} queued · {{ queue_status.failed }} failed · {{ queue_status.cancelled }} cancelled. Click to view the job list.</p>
+      </div>
+      <span class="recent-jobs-toggle">View list</span>
+    </summary>
+    <div class="recent-jobs-body">
+      <p class="muted">Target shows the ticker for security-specific work, the company for company-scoped work, or GLOBAL for general scans/portfolio work.</p>
+      <div class="job-state-legend"><span class="status-chip">QUEUED</span><span class="status-chip">RUNNING</span><span class="status-chip">DONE</span><span class="status-chip">FAILED</span><span class="status-chip">CANCELLED</span></div>
+      <div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>ID</th><th>Type</th><th>Target</th><th>Status</th><th>Attempts</th><th>Created</th><th>Message</th><th>Control</th></tr></thead><tbody>{% for item in job_items %}{% set job=item.job %}{% set target=item.target %}<tr data-job-id="{{ job.id }}"><td>#{{ job.id }}</td><td><strong>{{ job.job_type }}</strong></td><td>{% if target.ticker %}<a class="ticker-link compact" href="{{ url_for('web.company_section', ticker=target.ticker, section='overview') }}"><strong>{{ target.ticker }}</strong></a>{% else %}<span class="status-chip">{{ target.label }}</span>{% endif %}</td><td><span class="status-chip" data-job-status>{{ job.status }}</span></td><td data-job-attempts>{{ job.attempts }}/{{ job.max_attempts }}</td><td>{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td data-job-error>{{ job.error_message[:160] if job.error_message else '—' }}</td><td>{% if job.status in ['QUEUED','RUNNING'] %}<form method="post" action="{{ url_for('web.cancel_active_job', job_id=job.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button micro danger" type="submit" onclick="return confirm('Cancel job #{{ job.id }} ({{ job.job_type }})? Valid data already committed will be preserved.')">{{ 'Kill / Cancel' if job.status == 'RUNNING' else 'Cancel' }}</button></form>{% else %}<span class="muted">—</span>{% endif %}</td></tr>{% else %}<tr><td colspan="8" class="empty-cell">No jobs yet.</td></tr>{% endfor %}</tbody></table></div>
+    </div>
+  </details>
   <div class="panel"><div class="panel-head"><h2>Refresh runs</h2></div>{% for run in refreshes %}<div class="list-row"><div><strong>{{ run.refresh_type }}</strong><p>{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}{% if run.finished_at %} → {{ run.finished_at.strftime('%H:%M') }}{% endif %}</p></div><span class="status-chip">{{ run.status }}</span></div>{% else %}<p class="muted">No refresh history.</p>{% endfor %}</div>
 </section>
 {% endblock %}
