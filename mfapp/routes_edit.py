@@ -7,7 +7,7 @@ from flask import abort, flash, g, redirect, request, url_for
 
 from .access import audit, require_control_view
 from .core_models import (
-    BearCaseItem, Catalyst, Coverage, DecisionJournal, Event, Expectation, InvestmentState,
+    BearCaseItem, Catalyst, Coverage, DecisionJournal, DecisionOutcome, Event, Expectation, InvestmentState,
     ManagementAssessment, MonitoringHistory, MonitoringRule, Position, PositionProfile,
     PortfolioRiskPlan, Security, Source, ValuationScenario,
 )
@@ -448,9 +448,68 @@ def save_risk(ticker):
 @bp.post("/company/<ticker>/journal")
 @role_required("CONTROL")
 def add_journal(ticker):
-    require_control_view(); ctx = _ctx(ticker); decision = str(request.form.get("decision") or ctx["investment"].action or "REVIEW").strip()[:100]
-    evidence_for = str(request.form.get("evidence_for") or "").strip(); evidence_against = str(request.form.get("evidence_against") or "").strip(); bias_notes = str(request.form.get("bias_notes") or "").strip(); outcome = str(request.form.get("outcome") or "").strip(); post_mortem = str(request.form.get("post_mortem") or "").strip(); lessons = str(request.form.get("lessons") or "").strip()
-    snap = create_snapshot(ctx["coverage"], g.user.id, snapshot_type="DECISION", decision_context={"decision": decision, "evidence_for": evidence_for, "evidence_against": evidence_against, "bias_notes": bias_notes, "outcome": outcome, "post_mortem": post_mortem, "lessons": lessons})
-    db.session.add(DecisionJournal(coverage_id=ctx["coverage"].id, user_id=g.user.id, decision=decision, research_state=ctx["coverage"].research_state, investment_state=ctx["investment"].state, thesis_snapshot={"snapshot_id": snap.id, "thesis": ctx["research"].thesis, "outcome": outcome, "post_mortem": post_mortem, "lessons": lessons}, risk_snapshot={"invalidation": ctx["risk"].thesis_invalidation, "locked_at": ctx["risk"].invalidation_locked_at.isoformat() if ctx["risk"].invalidation_locked_at else None}, valuation_snapshot=ctx["valuation"], evidence_for=evidence_for, evidence_against=evidence_against, bias_notes=bias_notes))
-    audit("journal.create", "coverage", ctx["coverage"].id, {"snapshot_id": snap.id}); db.session.commit(); _queue_recalc(ctx); flash("Decision Journal entry and snapshot saved. Research cache queued for update.", "success")
+    require_control_view()
+    ctx = _ctx(ticker)
+    decision = str(request.form.get("decision") or ctx["investment"].action or "REVIEW").strip()[:100]
+    evidence_for = str(request.form.get("evidence_for") or "").strip()
+    evidence_against = str(request.form.get("evidence_against") or "").strip()
+    bias_notes = str(request.form.get("bias_notes") or "").strip()
+    snap = create_snapshot(ctx["coverage"], g.user.id, snapshot_type="DECISION", decision_context={
+        "decision": decision,
+        "evidence_for": evidence_for,
+        "evidence_against": evidence_against,
+        "bias_notes": bias_notes,
+    })
+    db.session.add(DecisionJournal(
+        coverage_id=ctx["coverage"].id,
+        user_id=g.user.id,
+        decision=decision,
+        research_state=ctx["coverage"].research_state,
+        investment_state=ctx["investment"].state,
+        thesis_snapshot={"snapshot_id": snap.id, "thesis": ctx["research"].thesis},
+        risk_snapshot={
+            "invalidation": ctx["risk"].thesis_invalidation,
+            "locked_at": ctx["risk"].invalidation_locked_at.isoformat() if ctx["risk"].invalidation_locked_at else None,
+        },
+        valuation_snapshot=ctx["valuation"],
+        evidence_for=evidence_for,
+        evidence_against=evidence_against,
+        bias_notes=bias_notes,
+    ))
+    audit("journal.create", "coverage", ctx["coverage"].id, {"snapshot_id": snap.id})
+    db.session.commit()
+    _queue_recalc(ctx)
+    flash("Decision Journal entry frozen. Outcomes can be appended later without rewriting the original decision.", "success")
+    return redirect(url_for("web.company_section", ticker=ticker.upper(), section="journal"))
+
+
+@bp.post("/company/<ticker>/journal/<int:journal_id>/outcome")
+@role_required("CONTROL")
+def add_journal_outcome(ticker, journal_id):
+    require_control_view()
+    ctx = _ctx(ticker)
+    journal = DecisionJournal.query.filter_by(
+        id=journal_id,
+        coverage_id=ctx["coverage"].id,
+        user_id=g.user.id,
+    ).first()
+    if journal is None:
+        abort(404)
+    outcome = str(request.form.get("outcome") or "").strip()
+    post_mortem = str(request.form.get("post_mortem") or "").strip()
+    lessons = str(request.form.get("lessons") or "").strip()
+    if not any((outcome, post_mortem, lessons)):
+        flash("Add an outcome, post-mortem or lesson before saving.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="journal"))
+    db.session.add(DecisionOutcome(
+        journal_id=journal.id,
+        coverage_id=ctx["coverage"].id,
+        user_id=g.user.id,
+        outcome=outcome,
+        post_mortem=post_mortem,
+        lessons=lessons,
+    ))
+    audit("journal.outcome.append", "decision_journal", journal.id, {"ticker": ticker.upper()})
+    db.session.commit()
+    flash("Outcome appended. The original decision snapshot was not changed.", "success")
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section="journal"))
