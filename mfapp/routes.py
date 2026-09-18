@@ -33,7 +33,7 @@ from .research_synthesis import build_synthesis
 from .research_cache import latest_research_cache, latest_cache_map
 from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
-from .services import can_view_publication, coverage_for_ticker, ensure_workspace, valuation_result
+from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
 from .symbols import validate_ticker
 
 bp = Blueprint("web", __name__)
@@ -525,24 +525,19 @@ def add_coverage():
     require_control_view(); ticker = str(request.form.get("ticker") or "").strip().upper(); validation = validate_ticker(ticker)
     if not validation.valid:
         flash(validation.message or "Ticker not found / symbol not recognized.", "error"); return redirect(request.referrer or url_for("web.dashboard"))
-    security = Security.query.filter(db.func.upper(Security.ticker) == ticker, Security.active.is_(True)).order_by(Security.is_primary.desc()).first()
-    if security:
-        existing = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
-        if existing:
-            if str(existing.status or "").upper() == "ARCHIVED":
-                existing.status = "MONITOR"
-                existing.research_state = existing.research_state if existing.research_state != "ARCHIVED" else "UNDER_REVIEW"
-                existing.updated_at = utcnow()
-                audit("coverage.restore", "coverage", existing.id, {"ticker": ticker})
-                db.session.commit()
-                flash(f"{ticker} restored to active Coverage.", "success")
-                return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
-            flash("Ticker already exists in Coverage.", "error"); return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
-    else:
-        company = Company(legal_name=validation.name or ticker, display_name=validation.name or ticker); db.session.add(company); db.session.flush()
-        security = Security(company_id=company.id, ticker=ticker, exchange=validation.exchange, security_type=validation.instrument_type or "COMMON_STOCK",
-                            currency=validation.currency or "USD", provider_symbol=ticker.replace(".", "-"), validation_source=validation.source, validated_at=utcnow())
-        db.session.add(security); db.session.flush()
+    security, _ = ensure_security_from_validation(validation)
+    existing = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    if existing:
+        if str(existing.status or "").upper() == "ARCHIVED":
+            existing.status = "MONITOR"
+            existing.research_state = existing.research_state if existing.research_state != "ARCHIVED" else "UNDER_REVIEW"
+            existing.updated_at = utcnow()
+            audit("coverage.restore", "coverage", existing.id, {"ticker": ticker})
+            db.session.commit()
+            flash(f"{ticker} restored to active Coverage.", "success")
+            return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
+        flash("Ticker already exists in Coverage.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
     coverage = Coverage(user_id=g.user.id, security_id=security.id, status="MONITOR", research_state="UNRATED")
     db.session.add(coverage); db.session.flush(); ensure_workspace(coverage, g.user.id)
     audit("coverage.create", "coverage", coverage.id, {"ticker": ticker, "validation_source": validation.source}); db.session.commit()
