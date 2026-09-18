@@ -192,6 +192,33 @@
   window.addEventListener('resize',()=>{window.clearTimeout(resizeTimer);resizeTimer=window.setTimeout(renderCharts,180)});
   window.addEventListener('mf-theme-change',()=>window.setTimeout(renderCharts,30));
 
+  // Central semantic status contract. Components expose meaning; CSS owns color.
+  const semanticGroups = {
+    positive: ['POSITIVE','GOOD','ATTRACTIVE','FAVORABLE','SUPPORTIVE','MET','PASS','STRENGTH','BULLISH','LONG','READY','APPROVED','DONE','VALIDATED','PUBLIC','OK'],
+    negative: ['NEGATIVE','BAD','EXPENSIVE','DEMANDING','HOSTILE','MISS','FAIL','WEAKNESS','BEARISH','SHORT','FAILED','ERROR','DETERIORATING'],
+    caution: ['MIXED','NEUTRAL','FAIR','BALANCED','UNCLEAR','PENDING','WATCH','IN LINE','UNRATED','UNDER REVIEW','LIMITED','REVIEW','MISSING EVIDENCE','PENDING APPROVAL','QUEUED'],
+    info: ['RUNNING','INFO','SYSTEM','VALIDATION','CHECKING','LOCKED'],
+    cancelled: ['CANCELLED','SUPERSEDED']
+  };
+  function semanticStatus(value) {
+    const valueText=String(value||'').trim().toUpperCase().replaceAll('_',' ');
+    if(!valueText)return'neutral';
+    for(const [group,tokens] of Object.entries(semanticGroups)){
+      if(tokens.some(token=>valueText===token||valueText.startsWith(token+' ')||valueText.endsWith(' '+token)))return group;
+    }
+    return 'neutral';
+  }
+  function applySemanticStatuses(scope=document) {
+    scope.querySelectorAll?.('.status-chip,.gate-status,[data-status-value]').forEach((el)=>{
+      const value=el.dataset.statusValue||el.textContent||'';
+      el.dataset.semantic=semanticStatus(value);
+    });
+    scope.querySelectorAll?.('.lens-card').forEach((el)=>{
+      el.dataset.semantic=semanticStatus(el.querySelector('strong')?.textContent||'');
+    });
+  }
+  applySemanticStatuses();
+
   // CONTROL background-job observer + detached executor fallback.
   // Page requests stay fast: /jobs/pump only starts a separate CLI process and returns.
   const workerChip = document.getElementById('mf-worker-chip');

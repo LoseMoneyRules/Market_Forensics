@@ -51,8 +51,6 @@
         <td>
           <form class="coverage-manage-inline" method="post" action="{{ url_for('web.manage_coverage', ticker=row.security.ticker) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input class="priority-input" name="priority" inputmode="numeric" value="{{ row.coverage.priority }}" aria-label="Priority">
-            <button class="button micro" type="submit" name="action" value="save">Save</button>
             <button class="button micro danger" type="submit" name="action" value="archive" onclick="return confirm('Remove {{ row.security.ticker }} from active Coverage? Research history will be preserved.')">Remove</button>
           </form>
         </td>

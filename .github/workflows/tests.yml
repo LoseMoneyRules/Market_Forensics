@@ -65,7 +65,7 @@ jobs:
           })
           response = app.test_client().get("/health")
           assert response.status_code == 200, response.data
-          assert response.get_json()["version"] == "0.2.0"
+          assert response.get_json()["version"] == "0.2.1"
           assert report_backend_status()["backend"] == "stdlib-fallback"
           data = {
               "branding": {"title":"Market Forensics","footer":"Lose Money Rules"},

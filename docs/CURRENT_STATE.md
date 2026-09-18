@@ -6,17 +6,17 @@
 > It MUST be updated in the same pull request whenever VERSION, architecture, deployment state,
 > release gates, job execution, or a material product workflow changes.
 
-**State-Version: 0.2.0**  
+**State-Version: 0.2.1**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → heavy jobs in background → cached results → automatic UI refresh when jobs finish  
-**Last release family:** 0.2.0
+**Last release family:** 0.2.1 candidate
 
 ---
 
 ## 1. Current release objective
 
-0.2.0 is the clean web-native baseline.
+0.2.0 remains the clean web-native architectural baseline. 0.2.1 is a refinement release only: UI/UX, visual polish, job controls, dark/mobile hardening, Financial Flows presentation and small operational fixes. It does not reopen the Research, valuation, expectations, Portfolio, MariaDB, security or caching architecture.
 
 Product flow:
 
@@ -48,11 +48,11 @@ Do NOT reset or delete:
 GitHub `main` is NOT automatically production.
 Production changes only after the manual Namecheap deployment workflow succeeds.
 
-A release is live only after external health returns:
+Production remains on the previously deployed 0.2.0 release until the manual 0.2.1 Namecheap workflow succeeds. A 0.2.1 release is live only after external health returns:
 
 - HTTP 200
 - `status = ok`
-- `version = 0.2.0`
+- `version = 0.2.1`
 - `architecture = web-native`
 
 A failed candidate health check must roll back automatically.
@@ -109,7 +109,7 @@ Minimum acceptable cadence for the five-minute quote freshness objective:
 
 **every 5 minutes**
 
-0.2.0 also includes a CONTROL browser fallback:
+0.2.0 includes a CONTROL browser fallback, retained unchanged in principle by 0.2.1:
 
 - the browser observes queue status;
 - if jobs are due and no executor is RUNNING, it calls `/jobs/pump`;
@@ -118,6 +118,16 @@ Minimum acceptable cadence for the five-minute quote freshness objective:
 - CLI and cron share a cross-process lock so only one queue executor runs at a time.
 
 Queued jobs must therefore progress even if cron is missing/late while CONTROL is open, without sacrificing page responsiveness.
+
+0.2.1 hardens job operations without changing that architecture:
+
+- Recent Jobs exposes clear QUEUED / RUNNING / DONE / FAILED / CANCELLED states;
+- CONTROL may cancel QUEUED or RUNNING jobs;
+- cancellation is audited and preserves valid data already committed;
+- RUNNING jobs carry an executor identity for best-effort verified termination;
+- DISCOVERY_SCAN has a short lease in addition to its 90-second hard execution deadline;
+- stale RUNNING attempts are closed cleanly and retry or fail according to max attempts;
+- queue/lock cleanup must prevent a dead process from leaving a job RUNNING forever.
 
 ---
 
@@ -202,7 +212,7 @@ Legacy BUY / SELL / WAIT evidence scoring may exist diagnostically but MUST NOT 
 
 ---
 
-## 8. Key analytical capabilities in 0.2.0
+## 8. Key analytical capabilities inherited from 0.2.0
 
 - Process Readiness and Evidence Signals
 - WHY NOW / WHY NOT YET / WHAT CHANGES / WHAT KILLS
@@ -237,6 +247,8 @@ CONTROL reports:
 - Full Word
 - Discovery landscape PDF
 
+In 0.2.1 the three company Research exports appear only at the bottom of Overview under EXPORT RESEARCH. Process Readiness owns the Publish entry point; publishing remains gated by current Research readiness and continues to use the existing PRIVATE / FRIEND / INSIDER separation.
+
 Optional reporting packages must NEVER prevent application startup.
 If rich report dependencies are missing, startup remains healthy and standard-library fallbacks are used.
 
@@ -265,7 +277,10 @@ Never publish:
 - Research sub-navigation usable on phone
 - no purple
 - institutional blue theme
+- centralized semantic status colors: positive green, negative red, caution/neutral amber or gray, informational blue
+- purpose-built light and dark themes
 - responsive tables/charts/forms
+- Financial Flows readable on desktop and mobile without falsifying negative values
 - footer: Lose Money Rules
 
 Broken mobile navigation blocks release.
@@ -279,35 +294,49 @@ Before merge:
 1. Python syntax
 2. JavaScript syntax
 3. workflow YAML validation
-4. complete 0.2.0 release/parity suite
+4. complete 0.2.0 release/parity suite plus 0.2.1 contracts
 5. production-minimal startup smoke
 6. fast cached-navigation contract
 7. real RECALCULATE → Research cache test
 8. job executor tests
 9. mobile-navigation contract
 10. five-minute current-price refresh contract
+11. job cancel/kill and stale RUNNING recovery contracts
+12. Publish/readiness, export-location, semantic-color, dark-theme and Financial Flows contracts
 
 After merge:
 
-11. main CI green
+13. main CI green
 
 Production:
 
-12. manual Namecheap deploy
-13. candidate /health HTTP 200
-14. version 0.2.0
-15. architecture web-native
-16. rollback automatically if candidate fails
+14. manual Namecheap deploy
+15. candidate /health HTTP 200
+16. version 0.2.1
+17. architecture web-native
+18. rollback automatically if candidate fails
 
-Only after step 15 succeeds is the version considered LIVE.
+Only after step 17 succeeds is 0.2.1 considered LIVE. Until then, production remains the prior healthy release.
 
 ---
 
 ## 12. Current development note
 
-The current 0.2.0 production-hardening work includes the detached background executor fallback so queued jobs do not remain stuck when cPanel cron is absent or delayed.
+0.2.1 is currently a release candidate, not production.
 
-Before telling the user to deploy, verify that this job-executor change is merged into `main` and that post-merge CI is green.
+Its scope is deliberately limited to:
+
+- restore Publish access under Process Readiness;
+- move company Research exports to Overview bottom only and keep them functional;
+- make Research Conclusion compact and hierarchical;
+- add CONTROL-only job cancellation and stale RUNNING recovery;
+- simplify Manage to Remove-only where applicable;
+- rebuild Financial Flows presentation without changing sound accounting logic;
+- centralize semantic status colors;
+- audit and harden dark mode;
+- preserve the stabilized mobile navigation and fast-navigation contracts.
+
+Before telling the user to deploy, verify PR CI green, merge to main, verify post-merge main CI green, and only then run the manual Namecheap deployment workflow.
 
 ---
 
@@ -333,6 +362,6 @@ If VERSION changes and **State-Version** does not match, CI must fail.
 
 Detailed release-specific audit remains in:
 
-`docs/RELEASE_0_2_0.md`
+`docs/RELEASE_0_2_0.md` remains the 0.2.0 baseline audit. 0.2.1 release evidence belongs in its release PR/tests and any dedicated 0.2.1 audit added before FINAL.
 
 This file is the concise handoff; release audit documents provide the deeper evidence.
