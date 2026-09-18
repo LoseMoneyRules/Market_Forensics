@@ -8,8 +8,8 @@ from cryptography.fernet import Fernet
 
 from mfapp import create_app
 from mfapp.core_models import (
-    Company, Coverage, InvestmentState, MarketSnapshot, PortfolioRiskPlan, Position,
-    PositionProfile, ResearchGateApproval, RiskPlan, Security,
+    Company, Coverage, DecisionJournal, DecisionOutcome, InvestmentState, MarketSnapshot,
+    PortfolioRiskPlan, Position, PositionProfile, ResearchGateApproval, RiskPlan, Security,
 )
 from mfapp.extensions import db
 from mfapp.models import User
@@ -232,6 +232,73 @@ def test_026_fundamentals_is_canonical_and_numbers_redirects(tmp_path, monkeypat
     from mfapp.routes import SECTIONS
     assert ("fundamentals", "Fundamentals") in SECTIONS
     assert all(key != "numbers" for key, _ in SECTIONS)
+
+
+def test_026_fundamental_forensics_restore_local_metrics_without_fake_roic():
+    from mfapp.calculations import financial_metrics
+
+    previous = {
+        "revenue": 900, "inventory": 90, "receivables": 120, "diluted_shares": 110,
+    }
+    current = {
+        "revenue": 1000, "cogs": 600, "gross_profit": 400, "operating_income": 150,
+        "pretax_income": 120, "income_tax": 24, "net_income": 100, "cfo": 130,
+        "fcf": 110, "inventory": 120, "receivables": 150, "payables": 80,
+        "diluted_shares": 100, "cash": 100, "debt": 200, "equity": 500, "assets": 1000,
+    }
+    metrics = financial_metrics(current, previous)
+    assert round(metrics["cfo_to_net_income"], 2) == 1.30
+    assert round(metrics["inventory_to_revenue_pct"], 1) == 12.0
+    assert round(metrics["receivables_to_revenue_pct"], 1) == 15.0
+    assert round(metrics["share_count_growth_pct"], 1) == -9.1
+    assert metrics["dpo"] is not None and metrics["cash_conversion_days"] is not None
+    assert round(metrics["roic_pct"], 1) == 20.0
+
+    incomplete = dict(current)
+    incomplete["income_tax"] = None
+    assert financial_metrics(incomplete, previous)["roic_pct"] is None
+
+
+def test_026_decision_journal_outcomes_are_append_only(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "journal")
+    uid = seed_control(app)
+    with app.app_context():
+        company = Company(legal_name="Example Co", display_name="Example Co")
+        db.session.add(company); db.session.flush()
+        security = Security(company_id=company.id, ticker="EXM", exchange="NYSE", currency="USD", active=True, is_primary=True)
+        db.session.add(security); db.session.flush()
+        coverage = Coverage(user_id=uid, security_id=security.id, status="RESEARCH", research_state="UNDER_REVIEW")
+        db.session.add(coverage); db.session.flush()
+        research, _, investment, _ = ensure_workspace(coverage, uid)
+        research.thesis = "Original thesis"
+        investment.action = "WAIT"
+        db.session.commit()
+
+    client = app.test_client(); login_control(client, uid)
+    created = client.post("/company/EXM/journal", data={
+        "decision": "WAIT",
+        "evidence_for": "Evidence A",
+        "evidence_against": "Evidence B",
+        "bias_notes": "Watch confirmation bias",
+    })
+    assert created.status_code == 302
+    with app.app_context():
+        journal = DecisionJournal.query.one()
+        journal_id = journal.id
+        frozen = dict(journal.thesis_snapshot)
+        assert "outcome" not in frozen and "post_mortem" not in frozen and "lessons" not in frozen
+
+    appended = client.post(f"/company/EXM/journal/{journal_id}/outcome", data={
+        "outcome": "Price moved, thesis unchanged",
+        "post_mortem": "Process was correct; timing was early",
+        "lessons": "Do not move invalidation after the fact",
+    })
+    assert appended.status_code == 302
+    with app.app_context():
+        journal = DecisionJournal.query.get(journal_id)
+        assert dict(journal.thesis_snapshot) == frozen
+        outcome = DecisionOutcome.query.filter_by(journal_id=journal_id).one()
+        assert "timing was early" in outcome.post_mortem
 
 
 def test_026_visual_contracts_cover_working_capital_and_wrapped_flows():
