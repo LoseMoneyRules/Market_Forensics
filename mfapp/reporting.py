@@ -743,4 +743,20 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     return out
 
 
-__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf","render_discovery_pdf","report_backend_status"]
+def render_discovery_pdf_safe(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
+    try:
+        return render_discovery_pdf(scan, branding)
+    except Exception:
+        branding = dict(branding or {})
+        lines = [str(branding.get("title") or "Market Forensics")+" · Discovery", ""]
+        for idx, row in enumerate(list(scan.get("candidates") or [])[:60], start=1):
+            try:
+                score = float(row.get("scan_score") or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+            lines.append(f"{idx}. {row.get('ticker') or ''} · score {score:.1f} · {row.get('research_side') or 'RESEARCH'}")
+        lines += ["", str(branding.get("footer") or "Lose Money Rules")]
+        return _fallback_pdf(lines, landscape_page=True)
+
+
+__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf","render_discovery_pdf","render_docx_safe","render_pdf_safe","render_discovery_pdf_safe","report_backend_status"]
