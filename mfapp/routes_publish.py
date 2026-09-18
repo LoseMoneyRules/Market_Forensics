@@ -21,13 +21,23 @@ def _queue_status(user_id: int) -> dict:
     queued = Job.query.filter_by(user_id=user_id, status="QUEUED").count()
     running = Job.query.filter_by(user_id=user_id, status="RUNNING").count()
     failed = Job.query.filter_by(user_id=user_id, status="FAILED").count()
-    return {"due": due, "queued": queued, "running": running, "failed": failed}
+    finished = Job.query.filter(
+        Job.user_id == user_id,
+        Job.status.in_(["DONE", "FAILED"]),
+        Job.finished_at.is_not(None),
+    ).order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    return {
+        "due": due, "queued": queued, "running": running, "failed": failed,
+        "last_finished_id": finished.id if finished else None,
+        "last_finished_at": finished.finished_at.isoformat() if finished and finished.finished_at else None,
+        "executor": "cron",
+    }
 
 
 def _job_flash(job: Job) -> str:
     if getattr(job, "_mf_reused", False):
         return f"{job.job_type} is already {job.status.lower()} as job #{job.id}; no duplicate was added."
-    return f"{job.job_type} queued as job #{job.id}. Browser worker will process it while CONTROL is open."
+    return f"{job.job_type} queued as job #{job.id}. Background worker/cron will process it."
 
 
 def _publication_view(publication: Publication, role: str) -> dict:
