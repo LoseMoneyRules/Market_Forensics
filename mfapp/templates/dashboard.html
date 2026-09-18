@@ -36,7 +36,7 @@
       <tr>
         <td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td>
         <td><span class="action-chip">{{ row.decision_lenses.research_conclusion }}</span></td>
-        <td><strong>{{ row.decision_lenses.value }}</strong> · {{ row.decision_lenses.path }}</td>
+        <td>{{ row.decision_lenses.value }} · {{ row.decision_lenses.path }}</td>
         <td>{{ row.decision_lenses.model_confidence }}</td>
         <td class="coverage-number-col">{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
         <td class="coverage-number-col">{% if row.valuation.base is not none %}&#36;{{ '%.2f'|format(row.valuation.base) }}{% else %}—{% endif %}</td>
@@ -44,7 +44,7 @@
         <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
         <td><span class="status-chip" title="Latest point-in-time walk-forward validation status">{{ row.readiness.validation.state }}</span></td>
         <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}{{ '%.0f'|format(row.freshness_hours*60) }}m{% else %}{{ '%.1f'|format(row.freshness_hours) }}h{% endif %}</td>
-        <td><strong>{{ row.next_action }}</strong></td>
+        <td>{{ row.next_action }}</td>
         <td><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
         <td class="coverage-manage-col">
           <form class="coverage-manage-inline" method="post" action="{{ url_for('web.manage_coverage', ticker=row.security.ticker) }}">
