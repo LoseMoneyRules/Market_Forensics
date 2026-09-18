@@ -353,7 +353,19 @@ def company_section(ticker, section):
     elif section == "monitoring":
         rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all()
         histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}
-        extra.update({"monitor_rules": rules, "monitor_histories": histories, "monitor_plan": monitoring_plan(company.id, ctx["valuation"], ctx["intelligence"], ctx["model"])})
+        exceptions = []
+        for rule in rules:
+            latest_history = (histories.get(rule.id) or [None])[0]
+            if latest_history and str(latest_history.status or "").upper() in {"WATCH", "FAIL"}:
+                exceptions.append({"rule": rule, "history": latest_history})
+        alerts = Alert.query.filter_by(user_id=g.user.id, coverage_id=coverage.id).order_by(Alert.created_at.desc()).limit(20).all()
+        extra.update({
+            "monitor_rules": rules,
+            "monitor_histories": histories,
+            "monitor_exceptions": exceptions,
+            "monitor_alerts": alerts,
+            "monitor_plan": monitoring_plan(company.id, ctx["valuation"], ctx["intelligence"], ctx["model"]),
+        })
     elif section == "journal":
         extra["journal_rows"] = DecisionJournal.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionJournal.created_at.desc()).all()
         extra["snapshots"] = Snapshot.query.filter_by(coverage_id=coverage.id).order_by(Snapshot.created_at.desc()).limit(20).all()
