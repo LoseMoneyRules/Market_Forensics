@@ -340,7 +340,10 @@ def test_020_private_report_and_publication_boundaries(tmp_path, monkeypatch):
             assert "321.5" not in report_text
             assert "27.75" not in report_text
 
-        snapshot = create_snapshot(coverage, uid)
+        snapshot = create_snapshot(coverage, uid, decision_context={
+            "research_conclusion": "LONG WATCH",
+            "lenses": [{"label": "VALUE", "state": "ATTRACTIVE"}],
+        })
         db.session.add(snapshot); db.session.commit()
         published = publication_payload(snapshot, "INSIDER")
         published_text = str(published)
@@ -349,11 +352,14 @@ def test_020_private_report_and_publication_boundaries(tmp_path, monkeypatch):
         assert "'position':" not in published_text
         assert "max_loss_pct" not in published_text
         assert "max_position_pct" not in published_text
+        assert published["decision"]["research_conclusion"] == "LONG WATCH"
 
     client = app.test_client(); login_control(client, uid)
     pdf = client.get("/company/EXM/report/pdf?mode=executive")
+    full_pdf = client.get("/company/EXM/report/pdf?mode=full")
     docx = client.get("/company/EXM/report/docx?mode=full")
     assert pdf.status_code == 200 and pdf.mimetype == "application/pdf" and len(pdf.data) > 500
+    assert full_pdf.status_code == 200 and full_pdf.mimetype == "application/pdf" and len(full_pdf.data) > 500
     assert docx.status_code == 200 and "openxmlformats" in docx.mimetype and len(docx.data) > 1000
 
 
@@ -638,6 +644,15 @@ def test_020_complete_parity_surfaces_and_canonical_conclusion_contract():
     assert "{{ intelligence.action }}" not in portfolio
     assert "decision_lenses.research_conclusion" in base
     assert "row.decision_lenses.research_conclusion" in dashboard
+    assert "brief.action" not in company
+    assert "Research action" not in company
+    assert "Expected Value" in company
+    assert "EXCEPTIONS FIRST" in company
+    assert "Freshness" in dashboard
+    assert "Next action" in dashboard
+    providers = Path("mfapp/data_providers.py").read_text()
+    assert "return [_alpaca(ticker, user_id), _tiingo(ticker, user_id), _alpha_vantage(ticker, user_id), _public_chart(ticker)]" in providers
+    assert "last-good cache" in providers
 
 
 def test_020_discovery_landscape_pdf_and_full_refresh_contract(tmp_path, monkeypatch):
