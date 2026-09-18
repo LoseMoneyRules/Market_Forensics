@@ -18,7 +18,7 @@ from .jobs import enqueue_job
 from .data_providers import latest_snapshot, provider_status
 from .models import AuditEvent, Invite, User
 from .core_models import (
-    Alert, BearCaseItem, Catalyst, Company, Coverage, DataQualityIssue, DecisionJournal,
+    Alert, BearCaseItem, Catalyst, Company, Coverage, DataQualityIssue, DecisionJournal, DecisionOutcome,
     Event, Expectation, FinancialFlow, FinancialPeriod, InvestmentState, Job,
     ManagementAssessment, MarketSnapshot, MonitoringHistory, MonitoringRule, Position, Provenance,
     Publication, RefreshRun, ResearchState, ResearchVersion, RiskPlan, Security,
@@ -695,6 +695,7 @@ def company_section(ticker, section):
         })
     elif section == "journal":
         extra["journal_rows"] = DecisionJournal.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionJournal.created_at.desc()).all()
+        extra["journal_outcomes"] = DecisionOutcome.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionOutcome.created_at.desc()).all()
         extra["snapshots"] = Snapshot.query.filter_by(coverage_id=coverage.id).order_by(Snapshot.created_at.desc()).limit(20).all()
         extra["journal_prefill"] = journal_prefill(ctx["intelligence"], ctx["valuation"], ctx["model"])
     elif section == "audit":
