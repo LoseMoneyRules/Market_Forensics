@@ -10,7 +10,7 @@ from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
 from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, numbers_completeness, quarterly_rows, scenario_forecasts
-from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_series
+from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_context_metrics, tape_series
 from .management_promises import evaluate_promises
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
@@ -263,6 +263,7 @@ def _cached_tape_for_months(tape: dict, months: int) -> dict:
         "metrics": metric_defaults | dict((tape or {}).get("metrics") or {}),
     } | dict(tape or {})
     base["metrics"] = metric_defaults | dict((tape or {}).get("metrics") or {})
+    base["metrics"].update(tape_context_metrics(base["metrics"]))
     if months >= 12:
         return base
     tape = base
