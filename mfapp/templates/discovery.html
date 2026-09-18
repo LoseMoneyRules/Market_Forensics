@@ -12,6 +12,7 @@
       <div><p class="eyebrow">MARKET-WIDE LIGHT SCAN</p><h2>Long / short research radar</h2><p class="muted">Provider screeners find activity and dislocations. Stored Research cache supplies Base-target room for known names; unknown names are explicitly marked target unknown until promoted.</p></div>
       <div class="button-row"><form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Run market scan</button></form>{% if market_scan.candidates %}<a class="button" href="{{ url_for('web.discovery_report') }}">Landscape PDF</a>{% endif %}</div>
     </div>
+    {% if scan_failure %}<div class="notice amber"><strong>LAST SCAN FAILED.</strong> {{ scan_failure }}. The page remains usable and any prior successful scan is shown below.</div>{% endif %}
     {% if market_scan.candidates %}
       <div class="scan-summary"><span class="status-chip">{{ market_scan.candidate_count }} candidates</span><span class="status-chip" data-status-value="LONG">{{ market_scan.long_count or 0 }} long radar</span><span class="status-chip" data-status-value="SHORT">{{ market_scan.short_count or 0 }} short radar</span><span class="status-chip">{{ market_scan.no_edge_count or 0 }} near Base / no edge</span><span class="status-chip">{{ market_scan.known_enriched }} locally enriched</span>{% if market_scan_job %}<small>Last scan {{ market_scan_job.finished_at }}</small>{% endif %}</div>
       <div class="table-card embedded scroll"><table class="data-table numeric discovery-radar-table">
@@ -34,6 +35,7 @@
 
   {% if q %}
   <div class="panel">
+    {% if external_error %}<div class="notice amber"><strong>SEARCH UNAVAILABLE.</strong> {{ external_error }}. No candidate was invented or silently substituted.</div>{% endif %}
     <div class="panel-head"><div><p class="eyebrow">EXTERNAL UNIVERSE</p><h2>Search results for {{ q }}</h2></div><span class="status-chip">{{ external.provider }}</span></div>
     <div class="discovery-results">
       {% for item in external.results %}
