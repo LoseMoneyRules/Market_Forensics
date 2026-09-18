@@ -455,3 +455,6 @@ html[data-theme="dark"] .mobile-backdrop{background:rgba(2,8,14,.68)}
 @media(max-width:1250px){.fundamentals-current-strip{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:760px){.fundamentals-current-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:440px){.fundamentals-current-strip{grid-template-columns:1fr}}
+
+/* 0.2.8 readiness navigation */
+.gate-link{color:var(--navy);font-weight:750;text-decoration:none}.gate-link:hover{text-decoration:underline}
