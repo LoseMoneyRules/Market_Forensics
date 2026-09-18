@@ -49,6 +49,14 @@ def _alpaca_pages(ticker: str, user_id: int, start: date, end: date, adjustment:
             headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret},
             params=params, timeout=35,
         )
+        if response.status_code in {400, 403, 422} and params.get("feed"):
+            retry_params = dict(params)
+            retry_params.pop("feed", None)
+            response = requests.get(
+                f"https://data.alpaca.markets/v2/stocks/{ticker}/bars",
+                headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret},
+                params=retry_params, timeout=35,
+            )
         if response.status_code != 200:
             raise RuntimeError(f"Alpaca historical HTTP {response.status_code}")
         payload = response.json() or {}
@@ -63,7 +71,10 @@ def _alpaca_history(ticker: str, user_id: int, start: date, end: date) -> list[d
     raw = _alpaca_pages(ticker, user_id, start, end, "raw")
     if not raw:
         return []
-    split = _alpaca_pages(ticker, user_id, start, end, "split")
+    try:
+        split = _alpaca_pages(ticker, user_id, start, end, "split")
+    except Exception:
+        split = []
     split_map = {str(row.get("t") or "")[:10]: row for row in split}
     out = []
     for row in raw:
@@ -131,8 +142,11 @@ def _public_history(ticker: str, start: date, end: date) -> list[dict[str, Any]]
         return []
     node = result[0]
     timestamps = node.get("timestamp") or []
-    quote = (((node.get("indicators") or {}).get("quote") or [{}])[0])
+    indicators = node.get("indicators") or {}
+    quote = ((indicators.get("quote") or [{}])[0])
+    adjusted_node = ((indicators.get("adjclose") or [{}])[0])
     closes, volumes = quote.get("close") or [], quote.get("volume") or []
+    adjusted_closes = adjusted_node.get("adjclose") or []
     split_events = ((node.get("events") or {}).get("splits") or {})
     split_by_day: dict[date, float] = {}
     for raw in split_events.values():
@@ -154,9 +168,11 @@ def _public_history(ticker: str, start: date, end: date) -> list[dict[str, Any]]
         if close is None or close <= 0:
             continue
         factor = factors.get(day, 1.0)
+        adjusted = _num(adjusted_closes[idx] if idx < len(adjusted_closes) else None)
+        split_adjusted = adjusted if adjusted is not None and adjusted > 0 else close * factor
         out.append({
             "trade_date": day, "provider": "Public historical chart", "close_raw": close,
-            "close_split_adjusted": close * factor, "split_basis_factor": factor,
+            "close_split_adjusted": split_adjusted, "split_basis_factor": (split_adjusted / close) if close else factor,
             "volume": _num(volumes[idx] if idx < len(volumes) else None), "quality": "PUBLIC_FALLBACK",
             "payload": {"source": "public_chart", "split_event": split_by_day.get(day)},
         })
