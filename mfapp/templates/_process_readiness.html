@@ -8,10 +8,15 @@
   <div class="gate-row" data-gate-key="{{ gate.key }}">
     <span>{{ gate.label }}</span>
     <strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}</strong>
-    <form class="gate-approval-form" method="post" action="{{ url_for('web.approve_research_gate', ticker=security.ticker, gate_key=gate.key) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      {% if gate.approved %}<button class="button micro" type="submit" name="action" value="revoke">Reopen</button>{% elif gate.evidence_ready %}<button class="button micro primary" type="submit" name="action" value="approve">Approve</button>{% else %}<span class="muted">—</span>{% endif %}
+    {% if gate.approved %}
+    <form class="gate-approval-form" method="post" data-gate-action="revoke" action="{{ url_for('web.approve_research_gate_action', ticker=security.ticker, gate_key=gate.key, action='revoke') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button micro" type="submit">Reopen</button>
     </form>
+    {% elif gate.evidence_ready %}
+    <form class="gate-approval-form" method="post" data-gate-action="approve" action="{{ url_for('web.approve_research_gate_action', ticker=security.ticker, gate_key=gate.key, action='approve') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button micro primary" type="submit">Approve</button>
+    </form>
+    {% else %}<span class="muted">—</span>{% endif %}
   </div>
   {% endfor %}
   <div class="publish-readiness {{ 'ready' if readiness.ready_to_validate else 'pending' }}">
