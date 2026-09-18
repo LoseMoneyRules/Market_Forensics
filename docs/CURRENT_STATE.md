@@ -17,13 +17,24 @@
 **Main release:** 0.2.8 core merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; same-version UI/report polish merged through PR #28 at `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; VERSION remains `0.2.8`  
 **Latest verified main CI:** run `35380378348` / #840 = completed / success on `102e6ed2bdbf2a6fe88781f334c0d178cc52f2fa`; release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
 **0.2.8 polish deploy:** pending a new manual `workflow_dispatch`; deploy #39 is the current production baseline and predates PR #28  
-**Release phase:** 0.2.8 is LIVE; the same-version polish is complete and validated on main but is not yet the production code until a new Namecheap deploy succeeds  
-**Branch:** `main`
+**Active second polish:** branch `polish/0.2.8-data-ui-2`; VERSION remains `0.2.8`; data-completeness recovery + small layout corrections, pending CI / merge / deploy  
+**Release phase:** 0.2.8 is LIVE; PR #28 is validated on main but not yet known deployed, and the second same-version polish is still a candidate branch  
+**Branch:** `polish/0.2.8-data-ui-2`
 
-Deploy #39 remains the authoritative production baseline and confirms that unchanged reporting dependencies are preserved server-side without retransmission. The merged polish keeps application VERSION 0.2.8 and now only needs the separate production deployment step.
+Deploy #39 remains the authoritative production baseline. The active second polish does not change VERSION or architecture and must not be treated as production until its own merge and Namecheap deploy succeed.
 ---
 
 ## 0.2.8 release scope
+
+Second same-version polish on `polish/0.2.8-data-ui-2`:
+- Coverage moves Refresh stale / Refresh all below the table and its single Process/Validate note; a fully approved process displays only READY rather than 13/13 plus READY.
+- Validate keeps the walk-forward action bar immediately below the Research tabs.
+- Fundamentals keeps its eight current KPIs on one row on wide screens and moves Data Completeness to the bottom.
+- Data Completeness is analytical rather than merely “four quarters exist”: it flags statement gaps, historically expected balance-sheet fields that disappear, and historically available derived metrics such as DIO, Inventory / Revenue, ROIC and Net debt / FCF.
+- SEC normalization broadens canonical concepts, adds exact consolidated statement-label fallback across available filing taxonomies, and composes debt from current + short-term + non-current components when no verified combined-debt fact exists. A bare LongTermDebt fact is not treated as total debt.
+- Alpha Vantage remains secondary and fills only fields still missing after SEC; no valid SEC fact is overwritten and unresolved values remain visible rather than guessed.
+- SEC ingest already recalculates Financial Flows immediately, so recovered normalized statement inputs rebuild the flow payload automatically.
+- Tape posture / pressure / next-confirmation cards lose the colored top rule and use shorter descriptions.
 
 Current same-version polish on `polish/0.2.8-ui-reports`:
 - Research intelligence summary pills use regular weight instead of bold.
