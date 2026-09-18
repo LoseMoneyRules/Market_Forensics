@@ -311,6 +311,53 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         regime = "MIXED"
 
     rank_score = max(0.0, min(100.0, 50.0 + net_tape - 25.0))
+
+    pressure_delta = None
+    if long_demand is not None and bear_pressure is not None:
+        pressure_delta = long_demand - bear_pressure
+    if pressure_delta is None:
+        pressure_direction = "LOW DATA"
+        pressure_tone = "watch"
+        pressure_detail = "Long and short pressure cannot be separated with the stored evidence."
+    elif pressure_delta >= 12:
+        pressure_direction = "LONG"
+        pressure_tone = "positive"
+        pressure_detail = f"Long-demand score leads bear pressure by {pressure_delta:.0f} pts."
+    elif pressure_delta <= -12:
+        pressure_direction = "SHORT"
+        pressure_tone = "negative"
+        pressure_detail = f"Bear pressure leads long-demand score by {abs(pressure_delta):.0f} pts."
+    else:
+        pressure_direction = "LATERAL"
+        pressure_tone = "watch"
+        pressure_detail = f"Long vs bear pressure spread is only {pressure_delta:+.0f} pts."
+
+    if confidence == "LOW":
+        posture = "WAIT FOR DATA"
+        posture_tone = "watch"
+        confirmation_state = "REFRESH"
+        next_confirmation = "Need more price history plus FINRA / positioning evidence before trusting the tape."
+    elif regime == "MIXED" or pressure_direction in {"LATERAL", "LOW DATA"} or (battle is not None and battle >= 70):
+        posture = "WAIT FOR CONFIRMATION"
+        posture_tone = "watch"
+        confirmation_state = "NO CLEAN EDGE"
+        next_confirmation = "Wait for long-demand and bear-pressure scores to separate by at least 12 pts with price resilience confirming the same direction."
+    elif pressure_direction == "LONG" and regime == "SUPPORTIVE":
+        posture = "SUPPORTIVE TAPE"
+        posture_tone = "positive"
+        confirmation_state = "LONG PRESSURE"
+        next_confirmation = "Stronger confirmation if long demand remains > bear pressure by ≥12 pts and price resilience stays at/above 55."
+    elif pressure_direction == "SHORT" and regime == "HOSTILE":
+        posture = "HOSTILE TAPE"
+        posture_tone = "negative"
+        confirmation_state = "SHORT PRESSURE"
+        next_confirmation = "Stronger confirmation if bear pressure remains > long demand by ≥12 pts and price resilience falls below 45."
+    else:
+        posture = "WAIT FOR CONFIRMATION"
+        posture_tone = "watch"
+        confirmation_state = "CONFLICTED"
+        next_confirmation = "Directional scores and regime disagree; wait for the conflict to resolve instead of forcing a tape call."
+
     return {
         "months": months,
         "market": weekly,
@@ -343,6 +390,13 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "rank_score": rank_score,
             "regime": regime,
             "confidence": confidence,
+            "posture": posture,
+            "posture_tone": posture_tone,
+            "pressure_direction": pressure_direction,
+            "pressure_tone": pressure_tone,
+            "pressure_detail": pressure_detail,
+            "confirmation_state": confirmation_state,
+            "next_confirmation": next_confirmation,
         },
     }
 
