@@ -145,8 +145,9 @@ def _compose_debt(direct: dict | None, current: dict | None, noncurrent: dict | 
         parts.append(rec)
     if len(parts) >= 2:
         return sum((_as_decimal(rec.get("val")) or Decimal("0")) for rec in parts), parts, "SUM_CURRENT_NONCURRENT_DEBT"
-    if direct_value is not None:
-        return direct_value, [direct], "DIRECT_DEBT_FALLBACK"
+    # A bare LongTermDebt fact is not proven total debt: a current portion or
+    # short-term borrowing can live elsewhere. Leave it unresolved so the
+    # secondary fallback may supply a true total instead of understating debt.
     return None, [], ""
 
 
@@ -757,6 +758,9 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 "accession": next((raw.get("accn") for raw in debt_records if raw.get("accn")), None),
                 "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
             }
+        elif str((instant.get("debt", {}).get(fy) or {}).get("tag") or "") == "LongTermDebt":
+            normalized.debt = None
+            source_map.pop("debt", None)
         _finish_normalized(normalized, source_map, period_type="FY")
         for field, ref in source_map.items():
             db.session.add(Provenance(source_id=source.id, object_type="normalized_financial", object_id=str(period.id), field_name=field, raw_or_normalized="NORMALIZED", financial_period_id=period.id, provider="SEC", freshness_at=utcnow(), calculation_version=CALCULATION_VERSION, notes=f"{ref.get('tag','')} / {ref.get('accession','')} / {ref.get('method','')}"))
@@ -843,6 +847,9 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 "accession": next((raw.get("accn") for raw in debt_records if raw.get("accn")), None),
                 "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
             }
+        elif str((quarter_instant.get("debt", {}).get((fy, fp)) or {}).get("tag") or "") == "LongTermDebt":
+            normalized.debt = None
+            source_map.pop("debt", None)
         _finish_normalized(normalized, source_map, period_type=fp)
         quarter_saved += 1
 
