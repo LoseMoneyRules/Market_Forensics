@@ -81,9 +81,9 @@ def provider_overview(user_id: int) -> list[dict[str, Any]]:
     status = provider_status(user_id)
     return [
         {"key": "sec", "name": "SEC EDGAR", "category": "Fundamentals / filings", "state": "READY" if status["sec"] else "NEEDS USER-AGENT", "required": True, "capabilities": "10-K, 10-Q, 8-K, XBRL facts, normalized financials, provenance"},
-        {"key": "alpaca", "name": "Alpaca", "category": "Market data", "state": "READY" if status["alpaca"] else "OPTIONAL", "required": False, "capabilities": "Authenticated quote + historical price source"},
+        {"key": "alpaca", "name": "Alpaca", "category": "Market data", "state": "READY" if status["alpaca"] else "OPTIONAL", "required": False, "capabilities": "Authenticated quote + historical price + Large/Whale trade-flow source"},
         {"key": "finra", "name": "FINRA public files", "category": "Positioning / flows", "state": "PUBLIC", "required": False, "capabilities": "Reg SHO daily short-sale volume; no credential required"},
-        {"key": "finra_api", "name": "FINRA Query API", "category": "Positioning / flows", "state": "READY" if status["finra_api"] else "OPTIONAL", "required": False, "capabilities": "Consolidated short interest, days-to-cover, changes, threshold history"},
+        {"key": "finra_api", "name": "FINRA Query API", "category": "Positioning / flows", "state": "READY" if status["finra_api"] else "OPTIONAL", "required": False, "capabilities": "Consolidated short interest, days-to-cover, threshold history, weekly ATS/non-ATS"},
         {"key": "tiingo", "name": "Tiingo", "category": "Market redundancy", "state": "READY" if status["tiingo"] else "OPTIONAL", "required": False, "capabilities": "Independent quote and historical cross-check"},
         {"key": "alpha_vantage", "name": "Alpha Vantage", "category": "Market + fundamental redundancy", "state": "READY" if status["alpha_vantage"] else "OPTIONAL", "required": False, "capabilities": "Secondary delayed quote plus missing-field income statement / balance sheet / cash-flow fallback; SEC remains primary"},
         {"key": "massive", "name": "Massive", "category": "Future market depth", "state": "READY" if status["massive"] else "OPTIONAL", "required": False, "capabilities": "Credential retained for future options / reference / market-depth modules"},
