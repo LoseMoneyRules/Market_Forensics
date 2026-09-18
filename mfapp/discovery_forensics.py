@@ -334,17 +334,17 @@ def _local_forensics(context: dict[str, Any], price: float, day_move: float | No
     if not company_id:
         return None
     quarters = list(reversed(quarterly_rows(company_id, 8)))
+    annual = list(reversed(annual_rows(company_id, 4)))
     current = _ttm(quarters, 0)
     prior = _ttm(quarters, 4)
-    if current is None and len(annual) >= 2:
-        current, prior = annual[-1], annual[-2]
-    annual = list(reversed(annual_rows(company_id, 4)))
-    if current is None and len(annual) >= 2:
+    if (current is None or prior is None) and len(annual) >= 2:
         current, prior = annual[-1], annual[-2]
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
     stored_base = _num((context.get("valuation") or {}).get("base"))
     base_gap = _num(context.get("base_gap_pct"))
+    if stored_base is None or base_gap is None:
+        return None
     return {
         "base": stored_base,
         "gap_pct": base_gap,
@@ -353,7 +353,7 @@ def _local_forensics(context: dict[str, Any], price: float, day_move: float | No
         "signals": signals,
         "long_score": long_score,
         "short_score": short_score,
-        "source": "STORED RESEARCH + SEC OPERATING DATA",
+        "source": "STORED RESEARCH + NORMALIZED SEC OPERATING DATA",
     }
 
 
@@ -368,12 +368,14 @@ def _external_forensics(symbol: str, price: float, day_move: float | None, meta:
     valuation = _valuation_from_history(annual, current, prior, price)
     if valuation.get("base") is None or valuation.get("gap_pct") is None:
         return None
+    if current is None or prior is None:
+        current, prior = annual[-1], annual[-2]
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
     return {
         "base": valuation["base"],
         "gap_pct": valuation["gap_pct"],
-        "quality": "FORENSIC BASE · SAME VALUATION ENGINE",
+        "quality": f"FORENSIC BASE · {valuation.get('valuation_methods', 0)} METHODS",
         "snapshot": snapshot,
         "signals": signals,
         "long_score": long_score,
