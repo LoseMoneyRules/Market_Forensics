@@ -20,7 +20,7 @@ from mfapp.secdata import (
 )
 from mfapp.security import encrypt_secret, hash_password
 from mfapp.services import ensure_workspace
-from mfapp.research_cache import cache_event_type
+from mfapp.research_cache import cache_event_type, patch_research_cache_readiness
 from mfapp.triangulation_engine import apply_peer_valuation_overlay
 
 
@@ -330,6 +330,12 @@ def test_028_readiness_links_and_coverage_alpha_sort_contract():
     assert ".gate-link{color:var(--navy);font-weight:400" in css
     state = Path("docs/CURRENT_STATE.md").read_text()
     assert "use as little bold as possible" in state
+    js = Path("mfapp/static/js/app.js").read_text()
+    template = Path("mfapp/templates/company_section.html").read_text()
+    workspace = Path("mfapp/workspace_routes.py").read_text()
+    assert "data-research-conclusion" in template
+    assert "payload?.research_conclusion" in js
+    assert '"research_conclusion": (updated_lenses or {}).get("research_conclusion")' in workspace
     assert Path("VERSION").read_text().strip() == "0.2.8"
 
 
@@ -401,6 +407,40 @@ def test_028_non_applied_peer_overlay_keeps_stable_schema():
     assert overlay["intrinsic_base"] == 190.0
     assert overlay["forensic_base"] == 190.0
     assert overlay["peer_estimate"] is None
+
+
+def test_028_gate_readiness_updates_research_conclusion_without_heavy_recalc(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "readiness_conclusion")
+    uid = seed_control_workspace(app, ticker="RDY")
+    with app.app_context():
+        coverage = Coverage.query.join(Security, Coverage.security_id == Security.id).filter(Security.ticker == "RDY").first()
+        security = db.session.get(Security, coverage.security_id)
+        company = db.session.get(Company, security.company_id)
+        db.session.add(Event(
+            company_id=company.id,
+            event_type=cache_event_type(coverage.id),
+            title="RDY research cache",
+            event_date=datetime.now(timezone.utc).replace(tzinfo=None),
+            payload={
+                "valuation": {"current_price": 100.0, "bear": 80.0, "base": 100.0, "bull": 120.0, "expected_value": 100.0},
+                "intelligence": {"positives": 0, "negatives": 0, "confidence": "LOW", "warnings": []},
+                "management": {},
+                "tape": {"metrics": {"regime": "MIXED"}},
+                "decision_lenses": {"research_conclusion": "RESEARCH INCOMPLETE"},
+            },
+        ))
+        db.session.commit()
+
+        updated = patch_research_cache_readiness(
+            coverage.id,
+            {"gates": [], "ready_to_validate": True, "validation": {"state": "NOT RUN"}},
+        )
+        db.session.commit()
+
+        assert updated is not None
+        assert updated["research_conclusion"] == "READY TO VALIDATE"
+        cache = Event.query.filter_by(event_type=cache_event_type(coverage.id)).order_by(Event.id.desc()).first()
+        assert cache.payload["decision_lenses"]["research_conclusion"] == "READY TO VALIDATE"
 
 
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():
