@@ -290,33 +290,113 @@
 
   {% elif section == 'tape' %}
     {% set si = finra_summary.latest_short_interest %}
-    <div class="action-bar"><div><h2>Tape / Flows · {{ tape_series.months }} months</h2><p>Price, volume and FINRA positioning are context — never intrinsic value.</p></div><div class="button-row tape-controls"><a href="?months=6" class="{% if tape_series.months==6 %}active{% endif %}">6M</a><a href="?months=12" class="{% if tape_series.months==12 %}active{% endif %}">12M</a><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='finra') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Refresh FINRA</button></form><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='positioning') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Refresh options / borrow</button></form></div></div>
     {% set tm = tape_series.metrics %}
-    <div class="panel tape-read">
-      <div class="panel-head"><div><p class="eyebrow">MACHINE READ</p><h2>{{ tm.regime }} tape</h2></div><span class="status-chip">{{ tm.confidence }} confidence</span></div>
-      <div class="metric-grid">
-        <div><span>Absorption</span><strong>{{ '%.0f'|format(tm.absorption) if tm.absorption is not none else '—' }}</strong><small>Price resilience vs short-volume pressure</small></div>
-        <div><span>Price resilience</span><strong>{{ '%.0f'|format(tm.price_resilience) if tm.price_resilience is not none else '—' }}</strong><small>Return held against short pressure</small></div>
-        <div><span>Long demand</span><strong>{{ '%.0f'|format(tm.long_demand) if tm.long_demand is not none else '—' }}</strong><small>Momentum + volume + turnover + options</small></div>
-        <div><span>Bear pressure</span><strong>{{ '%.0f'|format(tm.bear_pressure) if tm.bear_pressure is not none else '—' }}</strong><small>Negative momentum + short / put pressure</small></div>
-        <div><span>Battle intensity</span><strong>{{ '%.0f'|format(tm.battle_intensity) if tm.battle_intensity is not none else '—' }}</strong><small>Volume / turnover / positioning conflict</small></div>
-        <div><span>Net tape</span><strong>{{ '%+.1f'|format(tm.net_tape) if tm.net_tape is not none else '—' }}</strong><small>Context only — never intrinsic value</small></div>
-        <div><span>Tape rank</span><strong>{{ '%.0f'|format(tm.rank_score) if tm.rank_score is not none else '—' }}</strong><small>0–100 internal context rank</small></div>
+    <div class="action-bar">
+      <div>
+        <h2>Tape / Flows · {{ tape_series.months }} months</h2>
+        <p>Market plumbing and positioning context. Large / Whale is a trade-size proxy, never buyer identity and never intrinsic value.</p>
+      </div>
+      <div class="button-row tape-controls">
+        <a href="?months=6" class="{% if tape_series.months==6 %}active{% endif %}">6M</a>
+        <a href="?months=12" class="{% if tape_series.months==12 %}active{% endif %}">12M</a>
+        <form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='finra') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Refresh FINRA</button></form>
+        <form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='positioning') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Refresh Tape / Positioning</button></form>
+      </div>
+    </div>
+
+    <div class="panel tape-v2 tape-regime-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">MACHINE READ · TAPE ENGINE V2</p>
+          <h2>{{ tm.forensic_regime or 'LOW DATA' }} · Rank {{ tm.rank or '—' }}</h2>
+          <p class="muted">{{ tm.machine_read or 'Refresh tape evidence.' }}</p>
+        </div>
+        <span class="status-chip">{{ '%.0f'|format(tm.data_confidence) if tm.data_confidence is not none else '0' }}% data confidence</span>
+      </div>
+      <div class="metric-grid tape-score-grid">
+        <div><span>Institutional Flow</span><strong>{{ '%.0f'|format(tm.institutional_flow) if tm.institutional_flow is not none else '—' }}</strong><small>Adaptive Large / Whale trade-flow proxy</small></div>
+        <div><span>Long Demand</span><strong>{{ '%.0f'|format(tm.long_demand) if tm.long_demand is not none else '—' }}</strong><small>Flow + price response</small></div>
+        <div><span>Short Pressure</span><strong>{{ '%.0f'|format(tm.bear_pressure) if tm.bear_pressure is not none else '—' }}</strong><small>FINRA + price + optional positioning</small></div>
+        <div><span>Absorption</span><strong>{{ '%.0f'|format(tm.absorption) if tm.absorption is not none else '—' }}</strong><small>Does price absorb supply?</small></div>
+        <div><span>Price resilience</span><strong>{{ '%.0f'|format(tm.price_resilience) if tm.price_resilience is not none else '—' }}</strong><small>Close / return response</small></div>
+        <div><span>Battle Intensity</span><strong>{{ '%.0f'|format(tm.battle_intensity) if tm.battle_intensity is not none else '—' }}</strong><small>Two-sided pressure</small></div>
+        <div><span>Net Tape</span><strong>{{ '%.0f'|format(tm.net_tape) if tm.net_tape is not none else '—' }}</strong><small>0–100 evidence organization</small></div>
+        <div><span>Path</span><strong>{{ tm.regime or 'MIXED' }}</strong><small>Used by Decision Lenses</small></div>
+      </div>
+      <div class="tape-context-row">
         <div class="tape-context-card {{ tm.posture_tone or 'watch' }}"><span>Tape posture</span><strong>{{ tm.posture or 'WAIT' }}</strong><small>Tape context, not valuation.</small></div>
         <div class="tape-context-card {{ tm.pressure_tone or 'watch' }}"><span>Directional pressure</span><strong>{{ tm.pressure_direction or 'LATERAL' }}</strong><small>{{ tm.pressure_detail or 'No clean directional spread.' }}</small></div>
         <div class="tape-context-card info"><span>Next confirmation</span><strong>{{ tm.confirmation_state or 'NEEDS EVIDENCE' }}</strong><small>{{ tm.next_confirmation or 'Refresh tape evidence.' }}</small></div>
       </div>
     </div>
-    <div class="kpi-grid">
+
+    <div class="panel tape-v2">
+      <div class="panel-head">
+        <div><p class="eyebrow">LARGE / WHALE POSITIONING</p><h2>Adaptive trade-size flow</h2></div>
+        <span class="status-chip">{{ tm.flow_feed_scope or 'NO FLOW DATA' }}</span>
+      </div>
+      <div class="tape-flow-grid">
+        <div><span>Large Buy</span><strong>{{ tm.large_buy|mf_num(0) if tm.large_buy is not none else '—' }}</strong></div>
+        <div><span>Large Sell</span><strong>{{ tm.large_sell|mf_num(0) if tm.large_sell is not none else '—' }}</strong></div>
+        <div><span>Net Large</span><strong>{{ tm.net_large|mf_num(0) if tm.net_large is not none else '—' }}</strong></div>
+        <div><span>Very Large Buy</span><strong>{{ tm.very_large_buy|mf_num(0) if tm.very_large_buy is not none else '—' }}</strong></div>
+        <div><span>Very Large Sell</span><strong>{{ tm.very_large_sell|mf_num(0) if tm.very_large_sell is not none else '—' }}</strong></div>
+        <div><span>Net Very Large</span><strong>{{ tm.net_very_large|mf_num(0) if tm.net_very_large is not none else '—' }}</strong></div>
+        <div><span>Whale Buy</span><strong>{{ tm.whale_buy|mf_num(0) if tm.whale_buy is not none else '—' }}</strong></div>
+        <div><span>Whale Sell</span><strong>{{ tm.whale_sell|mf_num(0) if tm.whale_sell is not none else '—' }}</strong></div>
+        <div><span>Net Whale</span><strong>{{ tm.net_whale|mf_num(0) if tm.net_whale is not none else '—' }}</strong></div>
+      </div>
+      <p class="muted tape-source-note">
+        Method {{ tm.flow_method or '—' }} · flow confidence {{ '%.0f'|format(tm.flow_confidence_pct) if tm.flow_confidence_pct is not none else '—' }}%
+        · Large {{ tm.large_threshold|mf_num(0) if tm.large_threshold is not none else '—' }}
+        · Whale {{ tm.whale_threshold|mf_num(0) if tm.whale_threshold is not none else '—' }}.
+        {% if tm.flow_feed_scope == 'IEX_PARTIAL_MARKET' %}IEX is partial-market evidence; confidence is automatically reduced.{% elif tm.flow_feed_scope == 'CONSOLIDATED_SIP' %}Historical SIP provides consolidated US-exchange coverage for the sampled window.{% endif %}
+      </p>
+    </div>
+
+    <div class="two-col tape-change-grid">
+      <div class="panel"><p class="eyebrow">WHAT CHANGED?</p><h2>Latest tape delta</h2><ul class="compact-list">{% for item in tape_series.what_changed %}<li>{{ item }}</li>{% else %}<li>No material change stored yet.</li>{% endfor %}</ul></div>
+      <div class="panel"><p class="eyebrow">WHAT WOULD CHANGE THE REGIME?</p><h2>Required confirmation</h2><ul class="compact-list">{% for item in tape_series.what_would_change_regime %}<li>{{ item }}</li>{% else %}<li>More evidence is required.</li>{% endfor %}</ul></div>
+    </div>
+
+    <div class="kpi-grid tape-support-kpis">
       <div class="kpi"><span>Borrow status</span><strong>{{ tm.borrow_status|upper }}</strong><small>{% if tm.shortable is sameas true %}Shortable{% elif tm.shortable is sameas false %}Not shortable{% else %}No fresh borrow read{% endif %}{% if tm.locate_price is not none %} · locate {{ tm.locate_price|mf_num(4) }}{% endif %}</small></div>
-      <div class="kpi"><span>Borrow fee</span><strong>{% if tm.borrow_fee_pct is not none %}{{ '%.2f'|format(tm.borrow_fee_pct) }}%{% else %}—{% endif %}</strong><small>{% if tm.borrow_fee_source %}{{ tm.borrow_fee_source }}{% else %}Add a sourced observation when provider data is unavailable{% endif %}</small></div>
+      <div class="kpi"><span>Borrow fee</span><strong>{% if tm.borrow_fee_pct is not none %}{{ '%.2f'|format(tm.borrow_fee_pct) }}%{% else %}—{% endif %}</strong><small>{% if tm.borrow_fee_source %}{{ tm.borrow_fee_source }}{% else %}Optional sourced observation{% endif %}</small></div>
       <div class="kpi"><span>Put / Call OI</span><strong>{% if tm.put_call_oi is not none %}{{ '%.2f'|format(tm.put_call_oi) }}{% else %}—{% endif %}</strong><small>{% if tm.put_open_interest is not none %}Put {{ tm.put_open_interest|mf_num(0) }} · Call {{ tm.call_open_interest|mf_num(0) }}{% endif %}</small></div>
       <div class="kpi"><span>Turnover impulse</span><strong>{% if tm.turnover_ratio_20d is not none %}{{ '%.2f'|format(tm.turnover_ratio_20d) }}x{% else %}—{% endif %}</strong><small>20d vs prior stored turnover</small></div>
-      <div class="kpi"><span>Short interest</span><strong>{{ si.current_short|mf_num(1) if si else '—' }}</strong><small>{% if si %}{{ si.settlement_date or 'latest' }}{% else %}FINRA API required{% endif %}</small></div><div class="kpi"><span>SI change</span><strong>{% if si and si.change_percent is not none %}{{ '%+.1f'|format(si.change_percent|float) }}%{% else %}—{% endif %}</strong><small>vs prior report</small></div><div class="kpi"><span>Days to cover</span><strong>{% if si and si.days_to_cover is not none %}{{ '%.2f'|format(si.days_to_cover|float) }}{% else %}—{% endif %}</strong></div><div class="kpi accent"><span>Daily short vol · 20d</span><strong>{% if finra_summary.daily_20d_short_pct is not none %}{{ '%.1f'|format(finra_summary.daily_20d_short_pct * 100) }}%{% else %}—{% endif %}</strong><small>{% if finra_summary.daily_5d_short_pct is not none %}5d {{ '%.1f'|format(finra_summary.daily_5d_short_pct * 100) }}%{% endif %}</small></div></div>
-    <div class="chart-grid tape-chart-grid"><div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">POSITIONING HISTORY</p><h2>Price + FINRA Short Interest · {{ tape_series.months }}M</h2></div></div><canvas data-mf-chart="tape-price-short" data-price-series='{{ tape_series.market|tojson|forceescape }}' data-short-series='{{ tape_series.short_interest|tojson|forceescape }}'></canvas>{% if not tape_series.market %}<p class="muted">Historical market series not stored yet. Running Historical Test builds the price history automatically.</p>{% endif %}{% if not tape_series.short_interest %}<p class="muted">Refresh FINRA to add reported Short Interest settlements to the same chart.</p>{% endif %}</div><div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">DAILY PRESSURE</p><h2>FINRA Daily Short Volume %</h2></div></div><canvas data-mf-chart="tape-short" data-series='[{% for r in tape_series.short_volume %}{"label":"{{ r.date[5:] }}","short_pct":{{ r.short_pct if r.short_pct is not none else "null" }}}{% if not loop.last %},{% endif %}{% endfor %}]'></canvas>{% if not tape_series.short_volume %}<p class="muted">Refresh FINRA to populate the daily series.</p>{% endif %}</div></div>
-    {% if tape_series.short_interest %}<div class="table-card scroll"><table class="data-table numeric"><thead><tr><th>Settlement</th><th>Short interest</th><th>Days to cover</th></tr></thead><tbody>{% for r in tape_series.short_interest|reverse %}<tr><td>{{ r.date }}</td><td>{{ num(r.short) }}</td><td>{{ '%.2f'|format(r.days_to_cover) if r.days_to_cover is not none else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+      <div class="kpi"><span>Short interest</span><strong>{{ si.current_short|mf_num(1) if si else '—' }}</strong><small>{% if si %}{{ si.settlement_date or 'latest' }}{% else %}FINRA API required{% endif %}</small></div>
+      <div class="kpi"><span>SI change</span><strong>{% if si and si.change_percent is not none %}{{ '%+.1f'|format(si.change_percent|float) }}%{% else %}—{% endif %}</strong><small>vs prior settlement</small></div>
+      <div class="kpi"><span>Days to cover</span><strong>{% if si and si.days_to_cover is not none %}{{ '%.2f'|format(si.days_to_cover|float) }}{% else %}—{% endif %}</strong></div>
+      <div class="kpi accent"><span>Daily short vol · 20d</span><strong>{% if finra_summary.daily_20d_short_pct is not none %}{{ '%.1f'|format(finra_summary.daily_20d_short_pct * 100) }}%{% else %}—{% endif %}</strong><small>{% if finra_summary.daily_5d_short_pct is not none %}5d {{ '%.1f'|format(finra_summary.daily_5d_short_pct * 100) }}%{% endif %}</small></div>
+    </div>
+
+    <div class="chart-grid tape-chart-grid tape-v2-charts">
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">PRICE + FLOW</p><h2>Price + cumulative institutional flow</h2></div></div><canvas data-mf-chart="tape-price-flow" data-price-series='{{ tape_series.daily_market|tojson|forceescape }}' data-flow-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas>{% if not tape_series.institutional_flow %}<p class="muted">Refresh Tape / Positioning to begin Large/Whale flow history.</p>{% endif %}</div>
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">VOLUME</p><h2>Daily volume</h2></div></div><canvas data-mf-chart="tape-volume" data-series='{{ tape_series.daily_market|tojson|forceescape }}'></canvas></div>
+
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">SHORT POSITIONING</p><h2>Price + FINRA Short Interest</h2></div></div><canvas data-mf-chart="tape-price-short" data-price-series='{{ tape_series.market|tojson|forceescape }}' data-short-series='{{ tape_series.short_interest|tojson|forceescape }}'></canvas>{% if not tape_series.short_interest %}<p class="muted">Refresh FINRA to add reported Short Interest settlements.</p>{% endif %}</div>
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">DAILY SHORT PRESSURE</p><h2>FINRA Daily Short Volume %</h2></div></div><canvas data-mf-chart="tape-short" data-series='{{ tape_series.short_volume|tojson|forceescape }}'></canvas>{% if not tape_series.short_volume %}<p class="muted">Refresh FINRA to populate the daily series.</p>{% endif %}</div>
+
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">INSTITUTIONAL FLOW</p><h2>Net Large Flow</h2></div></div><canvas data-mf-chart="tape-flow" data-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas>{% if not tape_series.institutional_flow %}<p class="muted">No stored trade-flow observations yet.</p>{% endif %}</div>
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">FLOW PERSISTENCE</p><h2>Cumulative 5D / 20D Large Flow</h2></div></div><canvas data-mf-chart="tape-cumulative-flow" data-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas></div>
+
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">TAPE SCORES</p><h2>Absorption · Short Pressure · Net Tape</h2></div></div><canvas data-mf-chart="tape-scores" data-series='{{ tape_series.tape_daily|tojson|forceescape }}'></canvas></div>
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">WHALE FLOW</p><h2>Net Whale Flow</h2></div></div><canvas data-mf-chart="tape-whale" data-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas></div>
+
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">OTC / ATS</p><h2>FINRA ATS share of reported OTC activity</h2></div></div><canvas data-mf-chart="tape-ats" data-series='{{ tape_series.ats|tojson|forceescape }}'></canvas>{% if not tape_series.ats %}<p class="muted">FINRA API credential + Refresh FINRA required. Weekly data is delayed.</p>{% endif %}</div>
+    </div>
+
+    {% if tape_series.institutional_flow %}
+    <div class="table-card scroll tape-flow-table">
+      <table class="data-table numeric">
+        <thead><tr><th>Date</th><th>Feed</th><th>Large Buy</th><th>Large Sell</th><th>Net Large</th><th>Net Whale</th><th>5D</th><th>20D</th><th>Confidence</th></tr></thead>
+        <tbody>{% for r in tape_series.institutional_flow|reverse %}<tr><td>{{ r.date }}</td><td>{{ r.feed|upper }}</td><td>{{ r.large_buy|mf_num(0) }}</td><td>{{ r.large_sell|mf_num(0) }}</td><td>{{ r.net_large|mf_num(0) }}</td><td>{{ r.net_whale|mf_num(0) }}</td><td>{{ r.cumulative_5d|mf_num(0) }}</td><td>{{ r.cumulative_20d|mf_num(0) }}</td><td>{{ '%.0f'|format(r.flow_confidence_pct) if r.flow_confidence_pct is not none else '—' }}%</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% endif %}
+
     <details class="panel tape-manual-evidence">
-      <summary><strong>Add sourced borrow-fee observation</strong></summary>
+      <summary>Add sourced borrow-fee observation</summary>
       <form class="stack" method="post" action="{{ url_for('web.add_borrow_fee', ticker=security.ticker) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-grid two"><label>Annualized borrow fee %<input name="annualized_fee_pct" inputmode="decimal" required></label><label>Source<input name="source" placeholder="IBKR / broker locate / prime broker" required></label></div>
