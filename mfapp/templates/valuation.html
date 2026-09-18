@@ -3,10 +3,9 @@
 {% macro money(v) %}{% if v is not none %}${{ '{:,.2f}'.format(v|float) }}{% else %}Pending quote{% endif %}{% endmacro %}
 {% block content %}
 <section class="page company-page">
-  <div class="company-head">
-    <div><div class="company-id"><span class="ticker-badge">{{ security.ticker }}</span><span>Intrinsic valuation</span></div><h1>{{ company.display_name }}</h1><div class="company-states"><span>Method <strong>Multi-method intrinsic</strong></span><span>Current basis <strong>{{ model_settings.get('current_financial_basis','FY') }}</strong></span><span>Calibration <strong>{{ calibration.get('source','TYPE_PRIOR')|replace('_',' ') }}</strong></span><span>Historical sample <strong>{{ calibration.get('sample_size',0) }}</strong></span><span>Quality <strong>{{ engine_result.get('quality','DATA_WARNING')|replace('_',' ') }}</strong></span></div></div>
-    <div class="company-actions"><div class="company-market"><span>Market reference · refreshes every 5 min</span><strong data-live-price>{{ money(engine_result.get('current_price')) }}</strong><small data-live-price-meta><i class="live-dot{% if reference_price_stale %} stale{% endif %}"></i>{{ reference_price_source }}{% if reference_price_stale %} · stale/reference fallback{% endif %}</small></div></div>
-  </div>
+  {% set company_header_context = 'Intrinsic valuation' %}
+  {% set company_header_states = [('Method', 'Multi-method intrinsic'), ('Current basis', model_settings.get('current_financial_basis','FY')), ('Calibration', calibration.get('source','TYPE_PRIOR')|replace('_',' ')), ('Historical sample', calibration.get('sample_size',0)), ('Quality', engine_result.get('quality','DATA_WARNING')|replace('_',' '))] %}
+  {% include "_company_header.html" %}
   {% set section='valuation' %}{% include "_research_tabs.html" %}
 
   <div class="kpi-grid">{% for name in ['BEAR','BASE','BULL'] %}{% set row=engine_result.get('scenarios',{}).get(name,{}) %}<div class="kpi"><span>{{ name|title }}</span><strong>{{ money(row.get('fair_value')) }}</strong><small>{% if row.get('gap_pct') is not none %}{{ '%+.1f'|format(row.get('gap_pct')|float) }}% vs market{% else %}{{ row.get('quality','PROVISIONAL')|replace('_',' ') }}{% endif %}</small></div>{% endfor %}<div class="kpi accent"><span>Expected value</span><strong>{{ money(engine_result.get('expected_value')) }}</strong><small>Probability weighted</small></div></div>
