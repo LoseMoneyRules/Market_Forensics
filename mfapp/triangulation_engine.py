@@ -289,6 +289,7 @@ def apply_peer_valuation_overlay(valuation: dict[str, Any], triangulation: dict[
     blended_base = base * (1.0 - weight) + peer * weight
     raw_factor = blended_base / base
     factor = max(0.90, min(1.10, raw_factor))
+    intrinsic_valuation = dict(out)
     original = {key: out.get(key) for key in ("bear", "base", "bull", "expected_value")}
     for key in ("bear", "base", "bull", "expected_value"):
         try:
@@ -296,7 +297,25 @@ def apply_peer_valuation_overlay(valuation: dict[str, Any], triangulation: dict[
                 out[key] = float(out[key]) * factor
         except (TypeError, ValueError, ArithmeticError):
             pass
+
+    # Keep all value-derived gaps internally consistent after the overlay.
+    try:
+        price = float(out.get("current_price")) if out.get("current_price") not in (None, 0) else None
+    except (TypeError, ValueError, ArithmeticError):
+        price = None
+    if price:
+        for value_key, gap_key in (
+            ("bear", "downside_pct"),
+            ("base", "base_upside_pct"),
+            ("bull", "bull_upside_pct"),
+        ):
+            try:
+                out[gap_key] = (float(out[value_key]) / price - 1.0) * 100.0 if out.get(value_key) is not None else None
+            except (TypeError, ValueError, ArithmeticError, ZeroDivisionError):
+                out[gap_key] = None
+
     out["intrinsic_scenarios"] = original
+    out["intrinsic_valuation"] = intrinsic_valuation
     out["peer_overlay"] = {
         "applied": True,
         "weight": weight,
