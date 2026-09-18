@@ -7,25 +7,38 @@
 > job execution, provider/data logic, SEC normalization, Discovery, Fundamentals, analytical
 > engines, reports/publication, security, Portfolio/Risk, or a material product workflow changes.
 
-**State-Version: 0.2.6**  
+**State-Version: 0.2.7**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.5 on Namecheap  
-**Main before 0.2.6:** 0.2.5 at `8feeda8c27ac46d5e3c7fd46cfbb0f76b19df52b`  
-**0.2.5 post-merge CI:** run `35356768235` / run #771 = completed / success  
-**0.2.5 Namecheap deploy:** run `35357228878` / deploy #34 = completed / success; candidate health + post-cleanup health passed; no rollback  
-**Active candidate:** 0.2.6 — Local parity recovery  
-**Branch:** `0.2.6`
+**Production:** 0.2.6 on Namecheap  
+**Main before 0.2.7:** 0.2.6 at `6ecc385b29445db2a3940451f071a2425cd4f3c3`  
+**0.2.6 post-merge CI:** run `35363115872` / run #787 = completed / success  
+**0.2.6 Namecheap deploy:** run `35363441025` / deploy #35 = completed / success; candidate health + post-cleanup health passed; no rollback  
+**Active candidate:** 0.2.7 — Research integrity / reporting / macro / peer valuation  
+**Branch:** `0.2.7`
 
-Production remains on deployed 0.2.5 until 0.2.6 passes every gate.
-
-0.2.5 passed its stated PR/post-merge gates and was deployed successfully. The subsequent V3.1.12-vs-Web
-capability audit found material product regressions that the old smoke tests did not detect
-(Portfolio-before-Research, Local-grade Risk/Position sizing, immutable journal outcomes, and the
-production rich-report dependency contract). Therefore 0.2.5 remains the production baseline while 0.2.6 supersedes it as the active correction candidate.
+0.2.6 is the verified production baseline. 0.2.7 is the active candidate and must not be called LIVE until its own PR CI, post-merge CI, deploy and production health all pass.
 
 ---
+
+## 0.2.7 release scope
+
+0.2.6 production baseline was verified before any 0.2.7 modification: main commit `6ecc385b29445db2a3940451f071a2425cd4f3c3`, VERSION `0.2.6`, CI #787 successful, Deploy #35 successful. CURRENT_STATE had still described production as 0.2.5; that stale statement is corrected here.
+
+0.2.7 is a deep research-integrity release, not a UI-only patch:
+- Report exports are fail-safe at the HTTP request boundary. Rich PDF/Word remains preferred; dependency-free PDF/DOCX emergency artifacts are served if branding/render/audit persistence fails. Audit failure cannot turn a valid download into HTTP 500.
+- Fundamentals always exposes Current basis, Gross Margin and ROIC. Missing filing inputs stay missing and are explained; no ROIC is guessed.
+- Expectations has a current observed basis strip: Revenue growth, Gross Margin, Operating Margin, FCF Margin, Cash Quality (CFO/NI) and ROIC.
+- Settings Refresh Runs is collapsed like Recent Jobs.
+- Research Command Center removes Discover/Portfolio shortcuts, moves Refresh stale/all under the Process/Validate legend, removes bold from Research Conclusion, and gives Next Action/Lens/Manage safe wrapping/width.
+- Overview Evidence Diagnostic is consolidated into the canonical FOR / AGAINST panel. Each visible signal shows its signed contribution weight; only the small summed diagnostic score remains. Threshold/validation cards are removed from this panel because they duplicate canonical Decision Lenses, readiness and Validate state.
+- Readiness is served from live DB state rather than the heavy research cache. Monitoring accepts a locked thesis invalidation or active monitoring rules as evidence. Decision Journal closes as soon as a persisted journal exists.
+- Research gate approvals are monotonic: changed evidence is flagged as changed/stale for review but an approval does not silently reopen until CONTROL explicitly reopens/revokes it.
+- Business adds sourced macro FOR/AGAINST evidence from background FRED context (rates, credit, USD, oil, inflation, industrial production, retail sales) mapped to explicit sector sensitivities. Macro fetching never runs during normal GET navigation.
+- Automatic triangulation now builds a peer fair-value cross-check from P/E, EV/Sales and FCF yield where evidence permits. It can influence forensic fair value only with >=2 peers and >=2 valuation methods, at an explicit 15–20% weight and a maximum +/-10% scenario shift. Intrinsic values remain stored/auditable and peer-only valuation is never allowed.
+- 0.2.7 has dedicated regression coverage in `tests/test_027_deep_release.py`.
+
 
 ## 1. Non-negotiable architecture
 
@@ -392,37 +405,28 @@ Permanent UI rules:
 
 ---
 
-## 10. 0.2.6 release gates
+## 10. 0.2.7 release gates
 
-Before merge, all of the following must pass:
+0.2.6 baseline/parity/security gates remain inherited. Before merge, 0.2.7 must additionally pass:
 
-1. Python syntax.
-2. JavaScript syntax.
-3. workflow YAML.
-4. all baseline/regression tests.
-5. 0.2.1–0.2.5 tests updated only where 0.2.6 intentionally changes the contract.
-6. dedicated `tests/test_026_parity.py`.
-7. every Research section returns without 500.
-8. Fundamentals is canonical and old Numbers route redirects.
-9. SEC comparative-period and four-consecutive-quarter TTM correctness remains green.
-10. Working Capital uses two independent scales.
-11. Command Center body has no bold except ticker.
-12. Financial Flow two-line node labels leave the value visible.
-13. Portfolio can add a validated real holding before Research exists.
-14. Portfolio-only security detail works.
-15. LONG/SHORT P/L and exposure are side-aware.
-16. remove Position preserves Research and money-risk history.
-17. Risk/Position sizing reproduces the accepted downside formula.
-18. 0.2.6 migration preserves old RiskPlan and existing holdings.
-19. Decision Journal outcome/post-mortem is append-only.
-20. rich PDF and Word renderer is installed by production requirements.
-21. production-minimal smoke requires `reports = rich`.
-22. candidate Namecheap `/health` requires `reports = rich`.
-23. report/publication privacy boundaries remain green.
-24. Discovery FORENSIC_FAIR_VALUE_V1 tests remain green.
-25. Approve → Reopen → Approve remains green with no RECALCULATE.
-26. Settings is the only visible version surface.
-27. VERSION == State-Version == 0.2.6.
+1. Python syntax, JavaScript syntax, workflow YAML and the full regression suite.
+2. dedicated `tests/test_027_deep_release.py`.
+3. PDF and Word research-report routes return valid artifacts even when branding/render/audit persistence is deliberately faulted.
+4. production-minimal rich-report smoke remains green; `reports = rich` is still required.
+5. Gross Margin is available from reported Gross Profit or the exact Revenue − COGS accounting bridge; no estimated gross profit.
+6. ROIC remains visible but is never fabricated when required filing facts are missing.
+7. Expectations exposes Current basis, Revenue growth, Gross Margin, Operating Margin, FCF Margin, Cash Quality and ROIC.
+8. Refresh Runs is collapsed by default like Recent Jobs.
+9. Research Conclusion is plain text; Next Action/Lens wrap safely; Manage remains inside the command table.
+10. Research Command Center has no Discover/Portfolio shortcut and places Refresh stale/all under the Process/Validate explanation.
+11. Monitoring and Decision Journal readiness update from live DB state without waiting for RECALCULATE.
+12. approved gates remain approved until explicit CONTROL reopen/revoke; changed evidence is visibly flagged for review.
+13. Business macro context is sourced, background-only and split into FOR / AGAINST with dated provenance.
+14. automatic peer triangulation remains auditable and cannot create a peer-only valuation.
+15. peer fair-value overlay requires >=2 peers and >=2 independent valuation methods, uses only 15–20% peer weight, and is capped at +/-10% scenario movement.
+16. private research, reports, snapshots and publications use the same forensic valuation contract while retaining intrinsic scenarios in audit metadata.
+17. normal GET navigation performs no new external macro/provider fetches.
+18. VERSION == State-Version == 0.2.7.
 
 The release is blocked by a broken capability even if its page returns HTTP 200.
 
@@ -430,18 +434,24 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
+CURRENT_STATE transition rule:
+- on PR/branch: document the current production baseline and candidate;
+- immediately when the release is merged to `main`: update this file on `main` to record the actual main commit and mark deploy as pending;
+- immediately after successful Namecheap deploy: update this file on `main` again with the deploy run, production version and production health result;
+- never leave an older production/main statement in this file after either transition.
+
 Required sequence:
 
-`0.2.6 branch → PR CI green → merge main → post-merge main CI green → manual Namecheap deploy → production health`
+`0.2.7 branch → PR CI green → merge main → post-merge main CI green → manual Namecheap deploy → production health`
 
 Do not merge merely because individual fixes look correct.
 
-Do not redeploy 0.2.5 as a substitute for the 0.2.6 corrections.
+Do not redeploy 0.2.6 as a substitute for the 0.2.7 corrections after main is advanced.
 
-Do not call 0.2.6 LIVE until the deploy workflow succeeds and production `/health` returns:
+Do not call 0.2.7 LIVE until the deploy workflow succeeds and production `/health` returns:
 - HTTP 200;
 - `status = ok`;
-- `version = 0.2.6`;
+- `version = 0.2.7`;
 - `architecture = web-native`;
 - `reports = rich`.
 

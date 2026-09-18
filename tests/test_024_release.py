@@ -268,9 +268,9 @@ def test_024_price_history_live_contract_is_visible_and_non_disruptive():
 
 
 def test_024_release_identity_and_deep_clean_rules():
-    assert Path("VERSION").read_text().strip() == "0.2.6"
+    assert Path("VERSION").read_text().strip() == "0.2.7"
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert "**State-Version: 0.2.6**" in state
+    assert "**State-Version: 0.2.7**" in state
     assert "Permanent clean-release rule" in state
     assert "Settings is the only user-facing" in state
     assert "Approve → Reopen → Approve" in state

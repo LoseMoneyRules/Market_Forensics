@@ -15,7 +15,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows, position_sizing
-from .reporting import get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
+from .reporting import emergency_discovery_report_stream, emergency_research_report_stream, get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
 from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
@@ -207,11 +207,22 @@ def discovery_report():
     if not scan.get("candidates"):
         flash("Run a market-wide Discovery scan before exporting the landscape report.", "error")
         return redirect(url_for("web.discovery"))
-    branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
-    stream = render_discovery_pdf_safe(scan, branding)
-    audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
-    db.session.commit()
-    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery.pdf", max_age=0)
+    try:
+        branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
+        stream = render_discovery_pdf_safe(scan, branding)
+    except Exception:
+        current_app.logger.exception("Discovery report render failed; serving emergency fallback")
+        db.session.rollback()
+        stream = emergency_discovery_report_stream()
+    try:
+        audit("discovery.report.export", "job", latest.id, {"format": "pdf", "candidates": len(scan.get("candidates") or [])})
+        db.session.commit()
+    except Exception:
+        # Export availability must never depend on the audit write succeeding.
+        current_app.logger.exception("Discovery report audit failed; export will still be served")
+        db.session.rollback()
+    stream.seek(0)
+    return send_file(stream, mimetype="application/pdf", as_attachment=True, download_name="Market_Forensics_Discovery.pdf", max_age=0, conditional=False)
 
 
 @bp.get("/company/<ticker>/report/<fmt>")
@@ -220,23 +231,33 @@ def research_report(ticker, fmt):
     require_control_view()
     ctx = _ctx(ticker)
     mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
-    branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
-    data = safe_research_report_data(ctx, mode=mode, branding=branding)
     fmt = str(fmt or "").lower()
-    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}"
-    if fmt == "docx":
-        stream = render_docx_safe(data)
-        mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        suffix = "docx"
-    elif fmt == "pdf":
-        stream = render_pdf_safe(data)
-        mimetype = "application/pdf"
-        suffix = "pdf"
-    else:
+    if fmt not in {"pdf", "docx"}:
         abort(404)
-    audit("research.report.export", "coverage", ctx["coverage"].id, {"ticker": ctx["security"].ticker, "format": fmt, "mode": mode})
-    db.session.commit()
-    return send_file(stream, mimetype=mimetype, as_attachment=True, download_name=f"{stem}.{suffix}", max_age=0)
+    stem = f"{ctx['security'].ticker}_Market_Forensics_{mode}"
+    mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if fmt == "docx" else "application/pdf"
+    suffix = fmt
+    try:
+        branding = get_report_branding(g.user.id, current_app.config.get("LOGO_URL", ""))
+        data = safe_research_report_data(ctx, mode=mode, branding=branding)
+        stream = render_docx_safe(data) if fmt == "docx" else render_pdf_safe(data)
+    except Exception:
+        current_app.logger.exception("Research report render failed for %s; serving emergency fallback", ctx["security"].ticker)
+        db.session.rollback()
+        stream = emergency_research_report_stream(
+            fmt,
+            ticker=ctx["security"].ticker,
+            company=ctx["company"].display_name,
+            mode=mode,
+        )
+    try:
+        audit("research.report.export", "coverage", ctx["coverage"].id, {"ticker": ctx["security"].ticker, "format": fmt, "mode": mode})
+        db.session.commit()
+    except Exception:
+        current_app.logger.exception("Research report audit failed for %s; export will still be served", ctx["security"].ticker)
+        db.session.rollback()
+    stream.seek(0)
+    return send_file(stream, mimetype=mimetype, as_attachment=True, download_name=f"{stem}.{suffix}", max_age=0, conditional=False)
 
 
 @bp.get("/portfolio")
@@ -318,11 +339,11 @@ def queue_refresh(ticker, kind):
     mapping = {
         "market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE",
         "prefill": "RESEARCH_PREFILL", "finra": "FINRA_IMPORT", "prices": "PRICE_HISTORY_REFRESH", "validate": "DEEP_VALIDATION",
-        "management": "MANAGEMENT_SCAN", "positioning": "POSITIONING_REFRESH",
+        "management": "MANAGEMENT_SCAN", "positioning": "POSITIONING_REFRESH", "macro": "MACRO_REFRESH",
     }
     job_type = mapping.get(kind)
     if not job_type: abort(404)
-    priorities = {"market": 10, "sec": 30, "prices": 35, "recalculate": 45, "prefill": 50, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
+    priorities = {"market": 10, "sec": 30, "prices": 35, "recalculate": 45, "prefill": 50, "macro": 55, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
                       payload={"coverage_id": ctx["coverage"].id, **({"lookback_years": 3} if kind == "prices" else {})}, priority=priorities.get(kind, 50))
     audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")

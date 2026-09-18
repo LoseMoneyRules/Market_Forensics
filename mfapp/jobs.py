@@ -22,6 +22,7 @@ from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
 from .historical_data import refresh_historical_prices
 from .historical_engine import run_historical_test
 from .management_promises import extract_promises, html_to_text, store_promises
+from .macro_context import refresh_macro_context
 from .market_discovery import market_scan
 from .positioning import refresh_positioning_bundle
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
@@ -409,7 +410,7 @@ def _bulk(user_id: int) -> dict[str, Any]:
     for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
         security = db.session.get(Security, coverage.security_id)
         if not security: continue
-        specs = [("MARKET_REFRESH", 20), ("PRICE_HISTORY_REFRESH", 35), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75), ("RECALCULATE", 95)]
+        specs = [("MARKET_REFRESH", 20), ("PRICE_HISTORY_REFRESH", 35), ("MACRO_REFRESH", 55), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75), ("RECALCULATE", 95)]
         if sec_ready:
             specs.insert(1, ("SEC_INGEST", 40))
             specs.append(("MANAGEMENT_SCAN", 80))
@@ -453,6 +454,9 @@ def _stale(user_id: int) -> dict[str, Any]:
             last_sec = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="SEC_INGEST", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
             if last_sec is None or last_sec.finished_at is None or (now - last_sec.finished_at).total_seconds() > 24 * 3600:
                 specs.append(("SEC_INGEST", 40))
+        last_macro = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="MACRO_REFRESH", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
+        if last_macro is None or last_macro.finished_at is None or (now - last_macro.finished_at).total_seconds() > 24 * 3600:
+            specs.append(("MACRO_REFRESH", 55))
         last_finra = RefreshRun.query.filter_by(security_id=security.id, refresh_type="FINRA_IMPORT", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
         if last_finra is None or last_finra.finished_at is None or (now - last_finra.finished_at).total_seconds() > 24 * 3600:
             specs.append(("FINRA_IMPORT", 70))
@@ -529,6 +533,11 @@ def _execute(job: Job) -> dict[str, Any]:
         if not security or not company: raise RuntimeError("Company/security not found")
         result = refresh_company_fundamentals(company, security, job.user_id); result["recalculation"] = recalculate_company(company.id, coverage_id)
         if coverage_id: result["autofill"] = prefill_coverage(coverage_id, job.user_id)
+        return result
+    if kind == "MACRO_REFRESH":
+        if not job.company_id: raise RuntimeError("company_id is required")
+        result = refresh_macro_context(job.company_id)
+        result["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         return result
     if kind == "RECALCULATE":
         if not job.company_id: raise RuntimeError("company_id is required")

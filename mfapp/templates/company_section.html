@@ -23,23 +23,30 @@
       {% if intelligence.warnings %}<div class="notice amber"><strong>Review before relying on the read.</strong> {{ intelligence.warnings|join(' ') }}</div>{% endif %}
     </div>
 
-    <div class="decision-evidence-grid">
-      <div class="panel">
-        <div class="panel-head"><div><p class="eyebrow">EVIDENCE DIAGNOSTIC</p><h2>Weighted support / opposition</h2></div><span class="status-chip">Evidence score {{ '%+.2f'|format(intelligence.score) }}</span></div>
-        <div class="metric-grid">
-          <div><span>Positive threshold</span><strong>+{{ '%.2f'|format(intelligence.buy_threshold) }}</strong><small>Diagnostic only; the Decision Lenses remain canonical.</small></div>
-          <div><span>Negative threshold</span><strong>{{ '%.2f'|format(intelligence.sell_threshold) }}</strong><small>Diagnostic only; no score can bypass readiness or validation.</small></div>
-          <div><span>Validation</span><strong>{{ intelligence.validation_state }}</strong><small>Separate from Research completion.</small></div>
-        </div>
-        {% if intelligence.blockers %}<div class="decision-blockers">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>For / against</h2></div>
-        <div class="evidence-sides">
-          <div><h3>FOR</h3>{% for s in intelligence.supporting_evidence[:5] %}<p><strong>{{ s.label }}</strong> · {{ s.detail }}</p>{% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}</div>
-          <div><h3>AGAINST</h3>{% for s in intelligence.opposing_evidence[:5] %}<p><strong>{{ s.label }}</strong> · {{ s.detail }}</p>{% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}</div>
+    <div class="panel evidence-summary-panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">EVIDENCE</p><h2>For / against</h2></div>
+        <div class="evidence-score-compact">
+          <span>Diagnostic score</span>
+          <strong>{{ '%+.2f'|format(intelligence.score) }}</strong>
+          <small>sum of visible weights · Decision Lenses / readiness / validation remain canonical</small>
         </div>
       </div>
+      <div class="evidence-sides">
+        <div>
+          <h3>FOR</h3>
+          {% for s in intelligence.supporting_evidence[:5] %}
+          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight positive">{{ '%+.2f'|format(s.weight) }}</b></p>
+          {% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}
+        </div>
+        <div>
+          <h3>AGAINST</h3>
+          {% for s in intelligence.opposing_evidence[:5] %}
+          <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight negative">{{ '%+.2f'|format(s.weight) }}</b></p>
+          {% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}
+        </div>
+      </div>
+      {% if intelligence.blockers %}<div class="decision-blockers compact">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
     </div>
 
     <div class="panel decision-map">
@@ -85,12 +92,14 @@
   {% elif section == 'business' %}
     <div class="panel business-evidence-path">
       <div class="panel-head"><div><p class="eyebrow">EVIDENCE PATH</p><h2>MICRO / MACRO / for / against / invalidation</h2></div></div>
-      <div class="evidence-path-grid">
+      <div class="evidence-path-grid macro-evidence-grid">
         <div><h3>MICRO · FOR</h3>{% for item in synthesis.micro_for %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}</p>{% else %}<p class="muted">No positive micro signal above threshold.</p>{% endfor %}</div>
         <div><h3>MICRO · AGAINST</h3>{% for item in synthesis.micro_against %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}</p>{% else %}<p class="muted">No automatic counter-signal above threshold.</p>{% endfor %}</div>
-        <div><h3>MACRO / INDUSTRY</h3>{% for item in synthesis.macro %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}</p>{% else %}<p class="muted">No stored macro/industry evidence yet.</p>{% endfor %}</div>
+        <div><h3>MACRO · FOR</h3>{% for item in synthesis.macro_for %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}<small class="block">{{ item.source }}</small></p>{% else %}<p class="muted">No current sourced macro tailwind. Refresh macro context.</p>{% endfor %}</div>
+        <div><h3>MACRO · AGAINST</h3>{% for item in synthesis.macro_against %}<p><strong>{{ item.label }}</strong> · {{ item.detail }}<small class="block">{{ item.source }}</small></p>{% else %}<p class="muted">No current sourced macro headwind above the mapped threshold.</p>{% endfor %}</div>
         <div><h3>INVALIDATION / NEXT</h3><p>{{ synthesis.invalidation or 'No locked thesis invalidation stored.' }}</p>{% for item in synthesis.next %}<p>{{ item }}</p>{% endfor %}</div>
       </div>
+      <div class="business-macro-footer"><span class="muted">Macro source: {{ synthesis.macro_source or 'not refreshed' }}{% if synthesis.macro_as_of %} · {{ synthesis.macro_as_of }}{% endif %}. Sector sensitivity is explicit and does not override company evidence.</span><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='macro') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button micro" type="submit">Refresh macro</button></form></div>
     </div>
     <div class="panel auto-triangulation">
       <div class="panel-head">
@@ -105,6 +114,13 @@
           <thead><tr><th>Metric</th><th>{{ security.ticker }}</th><th>Peer median</th><th>Read</th></tr></thead>
           <tbody>{% for row in auto_triangulation.comparisons %}<tr><td><strong>{{ row.label }}</strong></td><td>{{ '%.2f'|format(row.target) }}</td><td>{{ '%.2f'|format(row.peer_median) }}</td><td><span class="status-chip">{{ row.state }}</span></td></tr>{% else %}<tr><td colspan="4" class="empty-cell">Peer metrics are still sparse.</td></tr>{% endfor %}</tbody>
         </table></div>
+        {% set pvc = auto_triangulation.peer_value_crosscheck or {} %}
+        <div class="peer-valuation-bridge">
+          <div><span>Peer fair-value cross-check</span><strong>{{ '$%.2f'|format(pvc.estimate) if pvc.estimate is not none else '—' }}</strong><small>{{ pvc.method_count or 0 }} methods · {{ pvc.peer_count or 0 }} peers</small></div>
+          <div><span>Intrinsic Base</span><strong>{{ '$%.2f'|format(valuation.peer_overlay.intrinsic_base) if valuation.peer_overlay and valuation.peer_overlay.intrinsic_base is not none else ('$%.2f'|format(valuation.base) if valuation.base is not none else '—') }}</strong><small>Primary valuation engine</small></div>
+          <div><span>Peer influence</span><strong>{% if valuation.peer_overlay and valuation.peer_overlay.applied %}{{ '%.0f'|format(valuation.peer_overlay.weight*100) }}%{% else %}0%{% endif %}</strong><small>Bounded; never peer-only</small></div>
+          <div><span>Forensic Base</span><strong>{{ '$%.2f'|format(valuation.base) if valuation.base is not none else '—' }}</strong><small>{% if valuation.peer_overlay and valuation.peer_overlay.applied %}Peer overlay applied, max ±10% shift{% else %}Intrinsic only{% endif %}</small></div>
+        </div>
         <details><summary><strong>Peer set</strong></summary><div class="peer-hints"><p>{% for p in auto_triangulation.peers %}<strong>{{ p.ticker or p.name }}</strong> · {{ p.match }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p></div></details>
       {% else %}
         <div class="notice amber"><strong>PEER SET NOT READY.</strong> {{ auto_triangulation.reason }}</div>
@@ -133,7 +149,16 @@
 
   {% elif section == 'fundamentals' %}
     <div class="action-bar"><div><h2>Fundamentals · FY + current TTM</h2><p>SEC filing data, current TTM when four compatible quarters exist, and internal Base-case forecasts. Display is {{ number_format }}.</p></div><div class="button-row"><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='sec') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Refresh SEC + TTM</button></form><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='recalculate') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Recalculate</button></form></div></div>
-    {% if current_financial %}<div class="current-strip"><div class="current-kpi"><span>Current basis</span><strong>{{ current_financial.period_label }}</strong><small>{{ current_financial.period_end }}</small></div><div class="current-kpi"><span>Revenue</span><strong>{{ num(current_financial.revenue) }}</strong><small>{{ pct(current_financial.metrics.revenue_growth_pct) }} growth</small></div><div class="current-kpi"><span>Gross margin</span><strong>{{ pct(current_financial.metrics.gross_margin_pct) }}</strong></div><div class="current-kpi"><span>Operating margin</span><strong>{{ pct(current_financial.metrics.operating_margin_pct) }}</strong></div><div class="current-kpi"><span>FCF margin</span><strong>{{ pct(current_financial.metrics.fcf_margin_pct) }}</strong></div><div class="current-kpi"><span>CFO / Net income</span><strong>{% if current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div><div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) }}</strong><small>Only when filing inputs are complete</small></div><div class="current-kpi"><span>Net debt / FCF</span><strong>{% if current_financial.metrics.net_debt_to_fcf is not none %}{{ '%.1f'|format(current_financial.metrics.net_debt_to_fcf) }}x{% else %}—{% endif %}</strong></div></div>{% endif %}
+    <div class="current-strip">
+      <div class="current-kpi"><span>Current basis</span><strong>{{ current_financial.period_label if current_financial else 'REFRESH' }}</strong><small>{{ current_financial.period_end if current_financial else 'Refresh fundamentals' }}</small></div>
+      <div class="current-kpi"><span>Revenue</span><strong>{{ num(current_financial.revenue) if current_financial else '—' }}</strong><small>{{ pct(current_financial.metrics.revenue_growth_pct) if current_financial else '—' }} growth</small></div>
+      <div class="current-kpi"><span>Gross margin</span><strong>{{ pct(current_financial.metrics.gross_margin_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.gross_margin_pct is none %}Gross profit input missing{% endif %}</small></div>
+      <div class="current-kpi"><span>Operating margin</span><strong>{{ pct(current_financial.metrics.operating_margin_pct) if current_financial else '—' }}</strong></div>
+      <div class="current-kpi"><span>FCF margin</span><strong>{{ pct(current_financial.metrics.fcf_margin_pct) if current_financial else '—' }}</strong></div>
+      <div class="current-kpi"><span>CFO / Net income</span><strong>{% if current_financial and current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div>
+      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.roic_pct is none %}Needs operating income, tax, debt, equity & cash{% else %}NOPAT / invested capital{% endif %}</small></div>
+      <div class="current-kpi"><span>Net debt / FCF</span><strong>{% if current_financial and current_financial.metrics.net_debt_to_fcf is not none %}{{ '%.1f'|format(current_financial.metrics.net_debt_to_fcf) }}x{% else %}—{% endif %}</strong></div>
+    </div>
     <div class="panel numbers-data-quality">
       <div class="panel-head"><div><p class="eyebrow">DATA COMPLETENESS</p><h2>What the Fundamentals page is actually built from</h2></div><span class="status-chip" data-status-value="{{ 'PASS' if numbers_completeness.ttm_ready else 'REVIEW' }}">{{ 'TTM READY' if numbers_completeness.ttm_ready else 'FY / PARTIAL' }}</span></div>
       <div class="numbers-quality-grid">
@@ -171,6 +196,15 @@
     <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='fundamentals') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><h2>Analyst notes</h2><button class="button primary">Save</button></div><textarea name="text" rows="7">{{ research.numbers|clean_auto }}</textarea></form>
 
   {% elif section == 'expectations' %}
+    <div class="current-strip expectations-basis-strip">
+      <div class="current-kpi"><span>Current basis</span><strong>{{ expectations_basis.period_label or 'REFRESH' }}</strong><small>{{ expectations_basis.period_end or 'Refresh fundamentals' }}</small></div>
+      <div class="current-kpi"><span>Revenue growth</span><strong>{{ pct(expectations_basis.revenue_growth_pct) }}</strong><small>TTM/FY observed</small></div>
+      <div class="current-kpi"><span>Gross margin</span><strong>{{ pct(expectations_basis.gross_margin_pct) }}</strong><small>Current profitability basis</small></div>
+      <div class="current-kpi"><span>Operating margin</span><strong>{{ pct(expectations_basis.operating_margin_pct) }}</strong><small>Current operating basis</small></div>
+      <div class="current-kpi"><span>FCF margin</span><strong>{{ pct(expectations_basis.fcf_margin_pct) }}</strong><small>Cash conversion basis</small></div>
+      <div class="current-kpi"><span>Cash quality</span><strong>{{ expectations_basis.cash_quality }}</strong><small>{% if expectations_basis.cfo_to_net_income is not none %}CFO / NI {{ '%.2f'|format(expectations_basis.cfo_to_net_income) }}x{% else %}CFO / NI unavailable{% endif %}</small></div>
+      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(expectations_basis.roic_pct) }}</strong><small>Current capital efficiency</small></div>
+    </div>
     <div class="panel">
       <div class="panel-head"><div><p class="eyebrow">5Y OPERATING PATH</p><h2>Bear / Base / Bull fundamentals</h2><p class="muted">Operating scenarios are kept distinct from valuation-method outputs.</p></div><span class="status-chip">Driven by Valuation assumptions</span></div>
       <div class="table-card embedded scroll"><table class="data-table numeric">

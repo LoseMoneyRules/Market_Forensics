@@ -7,12 +7,6 @@
     <form class="add-symbol" method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="ticker" placeholder="Ticker" maxlength="16" required><button class="button positive" type="submit">Add security</button></form>
   </div>
 
-  <div class="command-actions">
-    <a class="button" href="{{ url_for('web.discovery') }}">Discover</a>
-    <form method="post" action="{{ url_for('web.queue_global_job', kind='stale') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Refresh stale</button></form>
-    <form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Refresh all</button></form>
-    <a class="button" href="{{ url_for('web.portfolio') }}">Portfolio</a>
-  </div>
 
   {% set ns = namespace(ready=0, validated=0, review=0) %}
   {% for row in rows %}
@@ -29,13 +23,18 @@
   </div>
 
   {% if rows %}
+  <p class="command-table-note">Process = approved Research gates. Validate = latest point-in-time walk-forward validation status (NOT RUN / LIMITED / VALIDATED / REVIEW).</p>
+  <div class="command-actions command-refresh-actions">
+    <form method="post" action="{{ url_for('web.queue_global_job', kind='stale') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Refresh stale</button></form>
+    <form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button" type="submit">Refresh all</button></form>
+  </div>
   <div class="table-card coverage-card"><table class="data-table coverage-table">
-    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th class="coverage-number-col">Price</th><th class="coverage-number-col">Base</th><th class="coverage-number-col">Base gap</th><th>Process</th><th title="Latest point-in-time walk-forward validation status">Validate</th><th class="coverage-fresh-col">Freshness</th><th>Next action</th><th>Lens</th><th class="coverage-manage-col">Manage</th></tr></thead>
+    <thead><tr><th>Security</th><th>Research conclusion</th><th>Value / Path</th><th>Model confidence</th><th class="coverage-number-col">Price</th><th class="coverage-number-col">Base</th><th class="coverage-number-col">Base gap</th><th>Process</th><th title="Latest point-in-time walk-forward validation status">Validate</th><th class="coverage-fresh-col">Freshness</th><th class="coverage-wrap-col">Next action</th><th class="coverage-wrap-col">Lens</th><th class="coverage-manage-col">Manage</th></tr></thead>
     <tbody>
     {% for row in rows %}
       <tr>
         <td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td>
-        <td><span class="action-chip">{{ row.decision_lenses.research_conclusion }}</span></td>
+        <td><span class="research-conclusion-text">{{ row.decision_lenses.research_conclusion }}</span></td>
         <td>{{ row.decision_lenses.value }} · {{ row.decision_lenses.path }}</td>
         <td>{{ row.decision_lenses.model_confidence }}</td>
         <td class="coverage-number-col">{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
@@ -44,8 +43,8 @@
         <td><div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% if row.readiness.ready_to_validate %}<a class="micro-link" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% endif %}</td>
         <td><span class="status-chip" title="Latest point-in-time walk-forward validation status">{{ row.readiness.validation.state }}</span></td>
         <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}{{ '%.0f'|format(row.freshness_hours*60) }}m{% else %}{{ '%.1f'|format(row.freshness_hours) }}h{% endif %}</td>
-        <td>{{ row.next_action }}</td>
-        <td><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
+        <td class="coverage-wrap-col">{{ row.next_action }}</td>
+        <td class="coverage-wrap-col"><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
         <td class="coverage-manage-col">
           <form class="coverage-manage-inline" method="post" action="{{ url_for('web.manage_coverage', ticker=row.security.ticker) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

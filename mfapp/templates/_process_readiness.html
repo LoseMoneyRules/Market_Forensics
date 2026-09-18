@@ -3,11 +3,11 @@
     <div><p class="eyebrow">RESEARCH CONTROL</p><h2>Process readiness</h2><p class="muted">Evidence can be ready automatically. Approve or reopen a gate immediately; only genuinely heavy analytical work runs as a background job.</p></div>
     <strong>{{ readiness.done }}/{{ readiness.total }}</strong>
   </div>
-  {% if readiness.ready_to_validate %}<div class="notice teal ready-to-validate"><strong>READY TO VALIDATE.</strong> Research gates are current and approved. <a class="button micro primary" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>{% endif %}
+  {% if readiness.ready_to_validate %}<div class="notice teal ready-to-validate"><strong>READY TO VALIDATE.</strong> Research gates are approved; any post-approval evidence change is flagged without silently reopening the gate. <a class="button micro primary" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>{% endif %}
   {% for gate in readiness.gates %}
   <div class="gate-row" data-gate-key="{{ gate.key }}">
     <span>{{ gate.label }}</span>
-    <strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}</strong>
+    <strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}{% if gate.approved and gate.evidence_changed %} · EVIDENCE CHANGED{% endif %}</strong>
     {% if gate.approved %}
     <form class="gate-approval-form" method="post" data-gate-action="revoke" action="{{ url_for('web.approve_research_gate_action', ticker=security.ticker, gate_key=gate.key, action='revoke') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button micro" type="submit">Reopen</button>

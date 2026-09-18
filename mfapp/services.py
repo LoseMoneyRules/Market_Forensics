@@ -281,6 +281,14 @@ def create_snapshot(coverage: Coverage, user_id: int, snapshot_type: str = "DECI
             if hasattr(value, "as_tuple"):
                 row[key] = float(value)
         row["metrics"] = {k: (float(v) if hasattr(v, "as_tuple") else v) for k, v in (row.get("metrics") or {}).items()}
+    # Publications must freeze the same forensic fair value used by the private
+    # research workspace. Relative peer evidence is DB-only here (no provider
+    # call) and remains bounded/auditable by the triangulation engine.
+    intrinsic_valuation = valuation_result(coverage)
+    from .triangulation_engine import automatic_triangulation, apply_peer_valuation_overlay
+    triangulation = automatic_triangulation(company.id, user_id)
+    forensic_valuation = apply_peer_valuation_overlay(intrinsic_valuation, triangulation)
+
     payload = {
         "security": {"ticker": security.ticker, "exchange": security.exchange, "currency": security.currency},
         "company": {"name": company.display_name, "cik": company.cik, "sector": company.sector, "industry": company.industry},
@@ -291,7 +299,7 @@ def create_snapshot(coverage: Coverage, user_id: int, snapshot_type: str = "DECI
         "decision": decision_context or {},
         "expectations": expectations,
         "valuation_model": {"name": model.name if model else None, "method": model.method if model else None, "assumptions": model.assumptions if model else {}, "calculation_version": model.calculation_version if model else CALCULATION_VERSION, "scenarios": scenarios},
-        "valuation": valuation_result(coverage),
+        "valuation": forensic_valuation,
         "bear_case_items": bear_items,
         "catalysts": catalysts,
         "management": management,

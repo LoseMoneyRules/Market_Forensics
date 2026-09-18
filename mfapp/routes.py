@@ -212,7 +212,10 @@ def _ctx(ticker: str) -> dict:
         )
 
     cache_pending = active_recalc is not None
-    readiness = dict((cache or {}).get("readiness") or _fallback_readiness())
+    # Readiness is intentionally live DB state. It is lightweight and user-edited;
+    # serving a materialized copy made Monitoring / Journal and gate approvals look
+    # stale until a heavy recalculation happened.
+    readiness = research_readiness(coverage)
     intelligence = dict((cache or {}).get("intelligence") or _fallback_intelligence(readiness, updating=cache_pending))
     decision_lenses = dict((cache or {}).get("decision_lenses") or _fallback_lenses(valuation, cache_pending))
     brief = dict((cache or {}).get("brief") or _fast_brief(valuation, model, decision_lenses))
@@ -236,6 +239,11 @@ def _fallback_synthesis(ctx: dict) -> dict:
         "micro_for": [],
         "micro_against": [],
         "macro": [],
+        "macro_for": [],
+        "macro_against": [],
+        "macro_watch": [],
+        "macro_source": None,
+        "macro_as_of": None,
         "invalidation": ctx["risk"].thesis_invalidation or "",
         "next": ["Wait for the current evidence job to finish." if pending else "Queue a recalculation."],
     }
@@ -618,6 +626,28 @@ def company_section(ticker, section):
                 peer_query = peer_query.filter(db.text("1=0"))
             extra["peer_candidates"] = peer_query.order_by(Company.display_name.asc()).limit(12).all()
     if section == "expectations":
+        basis = current_row(company.id)
+        basis_metrics = dict((basis or {}).get("metrics") or {})
+        cash_conversion = basis_metrics.get("cfo_to_net_income")
+        if cash_conversion is None:
+            cash_quality = "UNAVAILABLE"
+        elif float(cash_conversion) >= 1.0:
+            cash_quality = "STRONG"
+        elif float(cash_conversion) >= 0.7:
+            cash_quality = "MIXED"
+        else:
+            cash_quality = "WEAK"
+        extra["expectations_basis"] = {
+            "period_label": (basis or {}).get("period_label"),
+            "period_end": (basis or {}).get("period_end"),
+            "revenue_growth_pct": basis_metrics.get("revenue_growth_pct"),
+            "gross_margin_pct": basis_metrics.get("gross_margin_pct"),
+            "operating_margin_pct": basis_metrics.get("operating_margin_pct"),
+            "fcf_margin_pct": basis_metrics.get("fcf_margin_pct"),
+            "cfo_to_net_income": cash_conversion,
+            "cash_quality": cash_quality,
+            "roic_pct": basis_metrics.get("roic_pct"),
+        }
         extra["expectation_rows"] = Expectation.query.filter_by(coverage_id=coverage.id).order_by(Expectation.period_label, Expectation.metric).all()
         extra["forecast_rows"] = forecast_rows(company.id, ctx["model"], 5)
         extra["scenario_forecasts"] = scenario_forecasts(company.id, ctx["model"], 5)

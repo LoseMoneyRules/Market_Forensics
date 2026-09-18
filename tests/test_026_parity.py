@@ -389,9 +389,7 @@ def test_026_reports_are_first_class_production_dependencies():
     assert "Numbers" not in reporting
 
 
-def test_026_version_and_state_are_locked():
-    assert Path("VERSION").read_text().strip() == "0.2.6"
+def test_026_release_history_remains_documented():
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert "**State-Version: 0.2.6**" in state
+    assert "0.2.6" in state
     assert "Local parity recovery" in state
-    assert "Production remains on deployed 0.2.5 until 0.2.6 passes every gate." in state
