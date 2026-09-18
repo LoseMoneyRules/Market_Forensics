@@ -145,3 +145,51 @@ def test_029_tape_v2_preserves_028_tape_surface():
     assert 'data-mf-chart="tape-short"' in template
     assert "Historical market series not stored yet" in template
     assert "<th>Settlement</th><th>Short interest</th><th>Days to cover</th>" in template
+
+
+def test_029_old_tape_cache_is_forward_compatible():
+    from mfapp.routes import _cached_tape_for_months
+
+    old = {
+        "months": 12,
+        "market": [{"date": "2026-09-12", "price": 100.0, "volume": 1_000_000}],
+        "short_interest": [],
+        "short_volume": [],
+        "positioning": {},
+        "metrics": {
+            "absorption": 55.0,
+            "price_resilience": 52.0,
+            "long_demand": 51.0,
+            "bear_pressure": 49.0,
+            "battle_intensity": 40.0,
+            "net_tape": 20.0,
+            "rank_score": 45.0,
+            "regime": "MIXED",
+            "confidence": "MEDIUM",
+        },
+    }
+    upgraded = _cached_tape_for_months(old, 12)
+    assert upgraded["metrics"]["rank"] == "—"
+    assert upgraded["metrics"]["forensic_regime"] == "LOW DATA"
+    assert upgraded["institutional_flow"] == []
+    assert upgraded["ats"] == []
+    assert upgraded["tape_daily"] == []
+
+
+def test_029_tape_v2_is_wired_to_background_evidence_not_get_navigation():
+    jobs = Path("mfapp/jobs.py").read_text()
+    positioning = Path("mfapp/positioning.py").read_text()
+    finra = Path("mfapp/finra.py").read_text()
+    routes = Path("mfapp/routes.py").read_text()
+    cache = Path("mfapp/research_cache.py").read_text()
+
+    assert 'event_type="ALPACA_POSITIONING"' in jobs
+    assert 'refresh_positioning_bundle(security.ticker, job.user_id)' in jobs
+    assert 'event_type="FINRA_ATS_SERIES"' in jobs
+    assert 'out["flow"] = refresh_institutional_flow(symbol, user_id)' in positioning
+    assert '"weekly_otc"' in finra and "weekly_otc_summary" in finra
+
+    tape_route = routes.split("elif section == \"tape\":", 1)[1].split("elif section == \"monitoring\":", 1)[0]
+    assert "_cached_tape_for_months" in tape_route
+    assert "tape_series(" not in tape_route
+    assert "tape = tape_series(security, 12)" in cache
