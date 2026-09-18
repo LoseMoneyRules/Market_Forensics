@@ -147,10 +147,11 @@ def seed_fast_cache(app, coverage_id, company_id, *, conclusion="LONG WATCH"):
 
 def test_020_health_identity_and_calculation_version(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch)
-    assert app.config["VERSION"] == "0.2.2"
+    release_version = Path("VERSION").read_text().strip()
+    assert app.config["VERSION"] == release_version
     response = app.test_client().get("/health")
     assert response.status_code == 200
-    assert response.get_json()["version"] == "0.2.2"
+    assert response.get_json()["version"] == release_version
     assert response.get_json()["architecture"] == "web-native"
     assert CALCULATION_VERSION == "0.2.0"
     metrics = financial_metrics({"revenue": 110, "fcf": 12}, {"revenue": 100, "fcf": 10})
@@ -307,6 +308,7 @@ def test_020_ui_contract_matches_clean_architecture():
     app_js = Path("mfapp/static/js/app.js").read_text()
     css = Path("mfapp/static/css/app.css").read_text()
     company = Path("mfapp/templates/company_section.html").read_text()
+    process_readiness = Path("mfapp/templates/_process_readiness.html").read_text()
     flows = Path("mfapp/templates/financial_flows.html").read_text()
 
     assert "MutationObserver" not in app_js
@@ -314,7 +316,7 @@ def test_020_ui_contract_matches_clean_architecture():
     assert "aria-expanded" in app_js and "mf-mobile-menu" in app_js and "mf-mobile-backdrop" in app_js
     assert "data-mf-chart=\"valuation\"" in Path("mfapp/templates/valuation.html").read_text()
     assert "#7f8a94" in app_js
-    assert "READY TO VALIDATE" in company
+    assert "READY TO VALIDATE" in process_readiness
     assert "EXTERNAL TRIANGULATION" in company
     assert "5Y OPERATING PATH" in company
     assert "MACHINE READ" in company
@@ -435,13 +437,14 @@ def test_020_friend_cannot_access_control_report_or_portfolio(tmp_path, monkeypa
 
 def test_020_overview_contains_local_depth_without_separate_decide_page():
     company = Path("mfapp/templates/company_section.html").read_text()
+    process_readiness = Path("mfapp/templates/_process_readiness.html").read_text()
     routes = Path("mfapp/routes.py").read_text()
     assert "DECISION MAP" in company
     assert "WHY NOW" in company
     assert "WHY NOT YET" in company
     assert "WHAT CHANGES THE DECISION" in company
     assert "WHAT KILLS THE THESIS" in company
-    assert "Process readiness" in company
+    assert "Process readiness" in process_readiness
     assert '("overview", "Overview")' in routes
     assert "decide" not in {key for key in ("decide",) if f'("{key}",' in routes}
 
