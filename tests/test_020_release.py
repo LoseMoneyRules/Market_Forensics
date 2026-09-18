@@ -655,8 +655,11 @@ def test_020_market_wide_discovery_uses_screeners_without_guessing_fair_value(tm
         assert "PRICE DISLOCATION" in aaa["lenses"]
         assert "DEEP RESEARCH REQUIRED" in aaa["lenses"]
         bbb = next(row for row in result["candidates"] if row["ticker"] == "BBB")
-        assert bbb["research_side"] == "LONG LEAD"\n        assert "DOWNSIDE DISLOCATION" in bbb["lenses"]
-        assert aaa["research_side"] == "SHORT LEAD"\n        assert aaa["target_status"] == "TARGET UNKNOWN"\n        assert not aaa.get("known_context")
+        assert bbb["research_side"] == "LONG LEAD"
+        assert "DOWNSIDE DISLOCATION" in bbb["lenses"]
+        assert aaa["research_side"] == "SHORT LEAD"
+        assert aaa["target_status"] == "TARGET UNKNOWN"
+        assert not aaa.get("known_context")
 
 
 def test_020_report_branding_is_persisted_and_rejects_non_https_logo(tmp_path, monkeypatch):
