@@ -183,6 +183,60 @@ def journal_prefill(intelligence: dict[str, Any], valuation: dict[str, Any], mod
     return {"decision": intelligence.get("action") or "WAIT", "evidence_for": evidence_for, "evidence_against": evidence_against, "bias_notes": bias}
 
 
+def tape_context_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Translate stored tape metrics into a compact context read.
+
+    This accepts an already-materialized metric payload so the UI can upgrade old
+    cache rows without forcing a provider refresh.
+    """
+    long_demand = n(metrics.get("long_demand"))
+    bear_pressure = n(metrics.get("bear_pressure"))
+    resilience = n(metrics.get("price_resilience"))
+    battle = n(metrics.get("battle_intensity"))
+    confidence = str(metrics.get("confidence") or "LOW").upper()
+    regime = str(metrics.get("regime") or "MIXED").upper()
+
+    pressure_delta = long_demand - bear_pressure if long_demand is not None and bear_pressure is not None else None
+    if pressure_delta is None:
+        pressure_direction = "LOW DATA"; pressure_tone = "watch"
+        pressure_detail = "Long and short pressure cannot be separated with the stored evidence."
+    elif pressure_delta >= 12:
+        pressure_direction = "LONG"; pressure_tone = "positive"
+        pressure_detail = f"Long-demand score leads bear pressure by {pressure_delta:.0f} pts."
+    elif pressure_delta <= -12:
+        pressure_direction = "SHORT"; pressure_tone = "negative"
+        pressure_detail = f"Bear pressure leads long-demand score by {abs(pressure_delta):.0f} pts."
+    else:
+        pressure_direction = "LATERAL"; pressure_tone = "watch"
+        pressure_detail = f"Long vs bear pressure spread is only {pressure_delta:+.0f} pts."
+
+    if confidence == "LOW":
+        posture = "WAIT FOR DATA"; posture_tone = "watch"; confirmation_state = "REFRESH"
+        next_confirmation = "Need more price history plus FINRA / positioning evidence before trusting the tape."
+    elif regime == "MIXED" or pressure_direction in {"LATERAL", "LOW DATA"} or (battle is not None and battle >= 70):
+        posture = "WAIT FOR CONFIRMATION"; posture_tone = "watch"; confirmation_state = "NO CLEAN EDGE"
+        next_confirmation = "Wait for long-demand and bear-pressure scores to separate by at least 12 pts with price resilience confirming the same direction."
+    elif pressure_direction == "LONG" and regime == "SUPPORTIVE":
+        posture = "SUPPORTIVE TAPE"; posture_tone = "positive"; confirmation_state = "LONG PRESSURE"
+        next_confirmation = "Stronger confirmation if long demand remains > bear pressure by ≥12 pts and price resilience stays at/above 55."
+    elif pressure_direction == "SHORT" and regime == "HOSTILE":
+        posture = "HOSTILE TAPE"; posture_tone = "negative"; confirmation_state = "SHORT PRESSURE"
+        next_confirmation = "Stronger confirmation if bear pressure remains > long demand by ≥12 pts and price resilience falls below 45."
+    else:
+        posture = "WAIT FOR CONFIRMATION"; posture_tone = "watch"; confirmation_state = "CONFLICTED"
+        next_confirmation = "Directional scores and regime disagree; wait for the conflict to resolve instead of forcing a tape call."
+
+    if resilience is None and confidence != "LOW":
+        next_confirmation += " Price-resilience evidence is still incomplete."
+
+    return {
+        "posture": posture, "posture_tone": posture_tone,
+        "pressure_direction": pressure_direction, "pressure_tone": pressure_tone,
+        "pressure_detail": pressure_detail, "confirmation_state": confirmation_state,
+        "next_confirmation": next_confirmation,
+    }
+
+
 def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     months = 6 if int(months) <= 6 else 12
     cutoff = date.today() - timedelta(days=31 * months)
@@ -311,6 +365,12 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         regime = "MIXED"
 
     rank_score = max(0.0, min(100.0, 50.0 + net_tape - 25.0))
+
+    tape_context = tape_context_metrics({
+        "long_demand": long_demand, "bear_pressure": bear_pressure, "price_resilience": price_resilience,
+        "battle_intensity": battle, "confidence": confidence, "regime": regime,
+    })
+
     return {
         "months": months,
         "market": weekly,
@@ -343,6 +403,7 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "rank_score": rank_score,
             "regime": regime,
             "confidence": confidence,
+            **tape_context,
         },
     }
 

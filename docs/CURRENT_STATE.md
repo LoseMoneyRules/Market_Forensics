@@ -11,19 +11,28 @@
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.7 on Namecheap  
-**Verified production baseline:** deploy run `35372729870` / deploy #38 = completed / success on main commit `564ea20a6eb0663380f88a375f80b3f109cf54e9`; candidate health + post-cleanup health passed; `reports = rich`  
-**Persistent report vendor verification:** deploy #38 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; the remote backup dry-run proved `_reporting_vendor` was excluded before transfer  
-**Main release:** 0.2.8 merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; VERSION `0.2.8`  
-**Latest verified main CI:** run `35376388768` / #838 = completed / success on merge commit `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; release tests, production-minimal startup, rich-report smoke and self-contained reporting-vendor smoke all passed  
-**0.2.8 deploy:** pending a new manual `workflow_dispatch`; no 0.2.8 Namecheap deployment has been claimed or inferred  
-**Release phase:** 0.2.8 code + CI are complete on main; production remains 0.2.7 until the dedicated Namecheap deploy succeeds  
-**Branch:** `main`
+**Production:** 0.2.8 on Namecheap  
+**Verified production baseline:** deploy run `35376698729` / deploy #39 = completed / success on main commit `09473a81999b91f2cebfdabd4c35102cef73a3a0`; candidate health + post-cleanup health passed with `version = 0.2.8`, `reports = rich`  
+**Persistent report vendor verification:** deploy #39 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
+**Main release:** 0.2.8 merged through PR #27 at `60d9dc13a622eb9f66c414eaebfed6bfb677ccf0`; CURRENT_STATE sync at `09473a81999b91f2cebfdabd4c35102cef73a3a0`; VERSION `0.2.8`  
+**Latest verified main CI:** run `35376388768` / #838 = completed / success; release tests, production-minimal startup, rich-report smoke and self-contained reporting-vendor smoke all passed  
+**Active polish:** branch `polish/0.2.8-ui-reports`; same VERSION `0.2.8`; UI/report refinement only, pending CI / merge / redeploy  
+**Release phase:** 0.2.8 is LIVE; current work is a same-version polish and must not be treated as deployed until its own merge + deploy succeed  
+**Branch:** `polish/0.2.8-ui-reports`
 
-Deploy #38 remains the authoritative production baseline and proof that ordinary releases do not retransmit the persistent reporting runtime when its dependency hash is unchanged. The 0.2.8 deploy definition additionally excludes obsolete `_vendor` paths from normal application backup/upload/rollback mirrors. Production remains 0.2.7 until a separate 0.2.8 `workflow_dispatch` run and production health checks complete successfully.
+Deploy #39 is the authoritative production baseline and confirms that unchanged reporting dependencies are preserved server-side without retransmission. The active 0.2.8 polish does not change the application release number.
 ---
 
 ## 0.2.8 release scope
+
+Current same-version polish on `polish/0.2.8-ui-reports`:
+- Research intelligence summary pills use regular weight instead of bold.
+- Evidence compact signals regain semantic positive / negative / watch color treatment and the diagnostic score is more visible.
+- Expectations no longer renders the redundant empty current KPI strip.
+- Fundamentals explains Net debt / FCF basis and falls back to the latest available annual filed ratio when the current TTM ratio is unavailable.
+- Tape Machine Read adds explicit posture, LONG/SHORT/LATERAL pressure and the next confirmation needed; old cached tape metrics are upgraded in place without forcing a provider refresh.
+- Monitoring explains proposed schedule vs committed active rules vs observations/alerts; READY TO VALIDATE is moved to the bottom immediately before Publish.
+- PDF/DOCX reports are redesigned around the accepted Local report DNA: research-intelligence strip, valuation map, current fundamentals, thesis/variant panels, FOR/AGAINST evidence and then full detail. Runtime remains web-native and uses current 0.2.8 data only.
 
 0.2.8 is a correctness and workflow consolidation release built from the verified 0.2.7 production baseline:
 - Overview has one curated Evidence block only, placed at the bottom immediately before report export. FOR, AGAINST, compact Evidence Signals, diagnostic score and blockers live together; no duplicate Evidence Signals card remains.

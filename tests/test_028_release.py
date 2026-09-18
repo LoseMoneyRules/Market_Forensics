@@ -10,6 +10,7 @@ from mfapp import create_app
 from mfapp.core_models import Company, Coverage, FinancialPeriod, NormalizedFinancial, Security
 from mfapp.extensions import db
 from mfapp.financial_flow_engine import build_income_statement_flow
+from mfapp.decision_support import tape_context_metrics
 from mfapp.models import User
 from mfapp.routes import SECTIONS
 from mfapp.secdata import _AV_BALANCE_FIELDS, _AV_CASH_FIELDS, _AV_INCOME_FIELDS, _finish_normalized
@@ -149,6 +150,53 @@ def test_028_safe_report_fallback_handles_real_fundamentals(tmp_path, monkeypatc
     docx = client.get("/company/EXM/report/docx?mode=full")
     assert pdf.status_code == 200 and pdf.data.startswith(b"%PDF")
     assert docx.status_code == 200 and docx.data.startswith(b"PK")
+
+
+def test_028_polish_contract_keeps_expectations_forward_and_ui_readable():
+    kpis = Path("mfapp/templates/_research_kpis.html").read_text()
+    template = Path("mfapp/templates/company_section.html").read_text()
+    css = Path("mfapp/static/css/app.css").read_text()
+    readiness = Path("mfapp/templates/_process_readiness.html").read_text()
+    reporting = Path("mfapp/reporting.py").read_text()
+
+    assert "{% elif section == 'expectations' %}" not in kpis
+    assert "research-strip-summary .signal-dot{font-weight:400!important}" in css
+    assert ".evidence-score-compact strong{font-size:20px" in css
+    assert "tone-{{ signal.tone }}" in template
+    assert "Tape posture" in template and "Directional pressure" in template and "Next confirmation" in template
+    assert "HOW MONITORING WORKS" in template
+    assert "Suggested cadence and triggers only" in template
+    assert "leverage_display" in template
+    assert readiness.index("READY TO VALIDATE.") < readiness.index("publish-readiness")
+    assert readiness.index("READY TO VALIDATE.") > readiness.index("{% endfor %}")
+    assert "Research intelligence" in reporting
+    assert "Valuation map" in reporting
+    assert "Thesis / variant perception" in reporting
+    assert "Current fundamentals" in reporting
+    assert Path("VERSION").read_text().strip() == "0.2.8"
+
+
+def test_028_tape_context_turns_scores_into_wait_long_short_or_lateral():
+    lateral = tape_context_metrics({
+        "long_demand": 58, "bear_pressure": 53, "price_resilience": 52,
+        "battle_intensity": 45, "confidence": "MEDIUM", "regime": "MIXED",
+    })
+    assert lateral["pressure_direction"] == "LATERAL"
+    assert lateral["posture"] == "WAIT FOR CONFIRMATION"
+
+    long = tape_context_metrics({
+        "long_demand": 75, "bear_pressure": 48, "price_resilience": 62,
+        "battle_intensity": 42, "confidence": "HIGH", "regime": "SUPPORTIVE",
+    })
+    assert long["pressure_direction"] == "LONG"
+    assert long["posture"] == "SUPPORTIVE TAPE"
+
+    short = tape_context_metrics({
+        "long_demand": 35, "bear_pressure": 66, "price_resilience": 39,
+        "battle_intensity": 50, "confidence": "HIGH", "regime": "HOSTILE",
+    })
+    assert short["pressure_direction"] == "SHORT"
+    assert short["posture"] == "HOSTILE TAPE"
 
 
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():
