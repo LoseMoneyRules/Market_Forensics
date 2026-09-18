@@ -5,20 +5,11 @@ from typing import Any
 from xml.sax.saxutils import escape
 import ipaddress
 import socket
+import textwrap
+import zipfile
 from urllib.parse import urlparse
 
 import requests
-
-from docx import Document
-from PIL import Image as PILImage, ImageDraw, ImageFont
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT
-from reportlab.lib.pagesizes import LETTER, landscape
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
 
 from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessment, Source
 from .extensions import db
@@ -26,6 +17,185 @@ from .models import UserPreference
 from .management_promises import evaluate_promises
 from .triangulation_engine import automatic_triangulation
 from .decision_support import tape_series
+
+
+
+_REPORT_LIBS_LOADED: bool | None = None
+
+
+def _load_report_libs() -> bool:
+    """Load heavyweight report dependencies only when an export is requested.
+
+    Production startup and /health must never depend on optional report packages.
+    """
+    global _REPORT_LIBS_LOADED
+    if _REPORT_LIBS_LOADED is not None:
+        return _REPORT_LIBS_LOADED
+    try:
+        from docx import Document as _Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH as _WD_ALIGN_PARAGRAPH
+        from docx.shared import Inches as _Inches, Pt as _Pt
+        from PIL import Image as _PILImage, ImageDraw as _ImageDraw, ImageFont as _ImageFont
+        from reportlab.lib import colors as _colors
+        from reportlab.lib.enums import TA_LEFT as _TA_LEFT
+        from reportlab.lib.pagesizes import LETTER as _LETTER, landscape as _landscape
+        from reportlab.lib.styles import ParagraphStyle as _ParagraphStyle, getSampleStyleSheet as _getSampleStyleSheet
+        from reportlab.lib.units import inch as _inch
+        from reportlab.platypus import (
+            SimpleDocTemplate as _SimpleDocTemplate, Paragraph as _Paragraph, Spacer as _Spacer,
+            Table as _Table, TableStyle as _TableStyle, PageBreak as _PageBreak, Image as _RLImage,
+        )
+    except Exception:
+        _REPORT_LIBS_LOADED = False
+        return False
+    globals().update({
+        "Document": _Document, "WD_ALIGN_PARAGRAPH": _WD_ALIGN_PARAGRAPH, "Inches": _Inches, "Pt": _Pt,
+        "PILImage": _PILImage, "ImageDraw": _ImageDraw, "ImageFont": _ImageFont,
+        "colors": _colors, "TA_LEFT": _TA_LEFT, "LETTER": _LETTER, "landscape": _landscape,
+        "ParagraphStyle": _ParagraphStyle, "getSampleStyleSheet": _getSampleStyleSheet, "inch": _inch,
+        "SimpleDocTemplate": _SimpleDocTemplate, "Paragraph": _Paragraph, "Spacer": _Spacer,
+        "Table": _Table, "TableStyle": _TableStyle, "PageBreak": _PageBreak, "RLImage": _RLImage,
+    })
+    _REPORT_LIBS_LOADED = True
+    return True
+
+
+def report_backend_status() -> dict[str, str]:
+    return {
+        "backend": "rich" if _load_report_libs() else "stdlib-fallback",
+        "startup_safe": "yes",
+    }
+
+
+def _plain_research_lines(data: dict[str, Any]) -> list[str]:
+    brand = data.get("branding") or {}
+    lines = [
+        str(brand.get("title") or "Market Forensics"),
+        f"{data.get('ticker') or ''} · {data.get('company') or ''}",
+        f"Research conclusion: {data.get('action') or 'DATA REVIEW'}",
+        f"Value / confidence: {data.get('stance') or '—'} · {data.get('confidence') or '—'}",
+        f"Market {_money(data.get('market_price'))} · Bear {_money(data.get('bear'))} · Base {_money(data.get('base'))} · Bull {_money(data.get('bull'))} · Base gap {_pct(data.get('base_gap_pct'))}",
+        "",
+        "RESEARCH LENSES",
+    ]
+    for row in data.get("decision_lenses") or []:
+        lines.append(f"{row.get('label') or row.get('key') or 'Lens'}: {row.get('state') or '—'}")
+    lines += [
+        "",
+        "THESIS", _txt(data.get("thesis")) or "—",
+        "",
+        "COUNTER-EVIDENCE", _txt(data.get("counter_evidence")) or "—",
+        "",
+        "MARKET VIEW", _txt(data.get("variant_market")) or "—",
+        "",
+        "OUR VARIANT", _txt(data.get("variant_us")) or "—",
+    ]
+    implied = data.get("implied_expectations") or {}
+    if implied.get("available"):
+        lines += ["", f"PRICE-IMPLIED EXPECTATIONS · {implied.get('classification') or '—'}"]
+        for row in implied.get("drivers") or []:
+            unit=row.get("unit"); mv=row.get("market_implied"); bv=row.get("base")
+            if unit=="%":
+                mv_txt=f"{float(mv)*100:.1f}%" if mv is not None else "—"; bv_txt=f"{float(bv)*100:.1f}%" if bv is not None else "—"
+            else:
+                mv_txt=f"{float(mv):.1f}x" if mv is not None else "—"; bv_txt=f"{float(bv):.1f}x" if bv is not None else "—"
+            lines.append(f"{row.get('label')}: market {mv_txt} · Base {bv_txt} · {row.get('read') or '—'}")
+    lines += ["", "EVIDENCE FOR"]
+    for row in data.get("supporting") or []:
+        lines.append(f"• {row.get('label') or 'Evidence'} — {row.get('detail') or ''}")
+    lines += ["", "EVIDENCE AGAINST"]
+    for row in data.get("opposing") or []:
+        lines.append(f"• {row.get('label') or 'Evidence'} — {row.get('detail') or ''}")
+    if data.get("mode") == "full":
+        for label,key in [
+            ("BUSINESS","business"),("NUMBERS","numbers"),("EXPECTATIONS","expectations_summary"),
+            ("VALUATION","valuation_notes"),("BEAR CASE","bear_case_summary"),("CATALYSTS","catalysts_summary"),
+            ("FINANCIAL FLOWS","flows_summary"),("MANAGEMENT","management_summary"),("TAPE / FLOWS","tape_summary"),
+            ("RESEARCH INVALIDATION","risk_summary"),
+        ]:
+            lines += ["", label, _txt(data.get(key)) or "—"]
+        tri=data.get("triangulation") or {}
+        if tri.get("available"):
+            lines += ["", "AUTOMATIC TRIANGULATION", f"{tri.get('method')} · SIC {tri.get('sic') or '—'}"]
+            for row in (tri.get("signals") or [])[:12]:
+                lines.append(f"• {row.get('state') or ''} — {row.get('detail') or ''}")
+        promises=data.get("management_promises") or []
+        if promises:
+            lines += ["", "MANAGEMENT PROMISES VS ACTUALS"]
+            for row in promises[:30]:
+                lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
+                promise=str(lo) if lo==hi else f"{lo}–{hi}"
+                lines.append(f"FY{row.get('target_year')} · {row.get('metric')} · {promise} {unit} · actual {row.get('actual') if row.get('actual') is not None else '—'} · {row.get('status') or ''}")
+        lines += ["", "SOURCES"]
+        for row in data.get("sources") or []:
+            lines.append(f"• {row.get('provider')} · {row.get('type')} · {row.get('title')} · {row.get('retrieved_at')}")
+    footer=str(brand.get("footer") or "Lose Money Rules")
+    lines += ["", footer]
+    return lines
+
+
+def _pdf_escape(text: str) -> str:
+    return str(text).replace("\\","\\\\").replace("(","\\(").replace(")","\\)")
+
+
+def _fallback_pdf(lines: list[str], *, landscape_page: bool = False) -> BytesIO:
+    width,height=(792,612) if landscape_page else (612,792)
+    margin=42; font_size=9; leading=13
+    usable=max(20,int((height-2*margin)/leading))
+    wrapped: list[str] = []
+    wrap_width=125 if landscape_page else 92
+    for line in lines:
+        chunks=textwrap.wrap(str(line or ""), width=wrap_width, replace_whitespace=False, drop_whitespace=True) or [""]
+        wrapped.extend(chunks)
+    pages=[wrapped[i:i+usable] for i in range(0,len(wrapped),usable)] or [[]]
+    objects: list[bytes]=[]
+    # IDs: 1 catalog, 2 pages, 3 font; then page/content pairs.
+    page_ids=[]
+    for idx in range(len(pages)):
+        page_ids.append(4+idx*2)
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    kids=" ".join(f"{pid} 0 R" for pid in page_ids)
+    objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>".encode())
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    for idx,page_lines in enumerate(pages):
+        page_id=4+idx*2; content_id=page_id+1
+        stream=["BT",f"/F1 {font_size} Tf",f"{margin} {height-margin} Td",f"{leading} TL"]
+        for j,line in enumerate(page_lines):
+            if j: stream.append("T*")
+            safe=_pdf_escape(str(line).encode("cp1252","replace").decode("cp1252"))
+            stream.append(f"({safe}) Tj")
+        stream.append("ET")
+        content="\n".join(stream).encode("cp1252","replace")
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>".encode())
+        objects.append(f"<< /Length {len(content)} >>\nstream\n".encode()+content+b"\nendstream")
+    out=BytesIO(); out.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets=[0]
+    for i,obj in enumerate(objects, start=1):
+        offsets.append(out.tell()); out.write(f"{i} 0 obj\n".encode()); out.write(obj); out.write(b"\nendobj\n")
+    xref=out.tell(); out.write(f"xref\n0 {len(objects)+1}\n".encode()); out.write(b"0000000000 65535 f \n")
+    for off in offsets[1:]: out.write(f"{off:010d} 00000 n \n".encode())
+    out.write(f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
+    out.seek(0); return out
+
+
+def _fallback_docx(lines: list[str]) -> BytesIO:
+    def p(text: str, bold: bool=False) -> str:
+        safe=escape(str(text or ""))
+        rpr="<w:rPr><w:b/></w:rPr>" if bold else ""
+        return f'<w:p><w:r>{rpr}<w:t xml:space="preserve">{safe}</w:t></w:r></w:p>'
+    body=[]
+    heading_words={"RESEARCH LENSES","THESIS","COUNTER-EVIDENCE","MARKET VIEW","OUR VARIANT","EVIDENCE FOR","EVIDENCE AGAINST","BUSINESS","NUMBERS","EXPECTATIONS","VALUATION","BEAR CASE","CATALYSTS","FINANCIAL FLOWS","MANAGEMENT","TAPE / FLOWS","RESEARCH INVALIDATION","AUTOMATIC TRIANGULATION","MANAGEMENT PROMISES VS ACTUALS","SOURCES"}
+    for idx,line in enumerate(lines):
+        body.append(p(line, bold=(idx<3 or str(line).upper() in heading_words)))
+    document='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+        ''.join(body)+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>'
+    content_types='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'
+    rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'
+    out=BytesIO()
+    with zipfile.ZipFile(out,"w",zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml",content_types)
+        z.writestr("_rels/.rels",rels)
+        z.writestr("word/document.xml",document)
+    out.seek(0); return out
 
 
 def _money(value: Any) -> str:
@@ -76,7 +246,7 @@ def set_report_branding(user_id: int, *, title: str, prepared_by: str, footer: s
 
 
 def _safe_logo(url: str) -> BytesIO | None:
-    if not url:
+    if not url or not _load_report_libs():
         return None
     try:
         parsed = urlparse(url)
@@ -212,6 +382,8 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
 
 
 def _valuation_chart_png(data: dict[str, Any]) -> BytesIO:
+    if not _load_report_libs():
+        raise RuntimeError("Rich report backend unavailable")
     values = [
         ("Market", data.get("market_price"), "#7f8a94"),
         ("Bear", data.get("bear"), "#a13b3b"),
@@ -261,6 +433,8 @@ def _docx_add_text(doc: Document, text: str) -> None:
 
 
 def render_docx(data: dict[str, Any]) -> BytesIO:
+    if not _load_report_libs():
+        return _fallback_docx(_plain_research_lines(data))
     doc = Document()
     sec = doc.sections[0]
     sec.top_margin = Inches(.55); sec.bottom_margin = Inches(.55); sec.left_margin = Inches(.65); sec.right_margin = Inches(.65)
@@ -388,6 +562,8 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
 
 
 def render_pdf(data: dict[str, Any]) -> BytesIO:
+    if not _load_report_libs():
+        return _fallback_pdf(_plain_research_lines(data))
     out=BytesIO()
     doc=SimpleDocTemplate(out,pagesize=LETTER,rightMargin=.55*inch,leftMargin=.55*inch,topMargin=.5*inch,bottomMargin=.5*inch)
     styles=getSampleStyleSheet()
@@ -493,6 +669,14 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
 
 def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
     branding = dict(branding or {})
+    if not _load_report_libs():
+        lines=[str(branding.get("title") or "Market Forensics")+" · Discovery",
+               "Market-wide lightweight screen · candidates require deep research before valuation or portfolio use.",""]
+        for idx,row in enumerate(list(scan.get("candidates") or [])[:60], start=1):
+            move=f"{float(row.get('move_pct')):+.1f}%" if row.get("move_pct") is not None else "—"
+            lines.append(f"{idx}. {row.get('ticker') or ''} · score {float(row.get('scan_score') or 0):.1f} · move {move} · {' · '.join(row.get('lenses') or [])}")
+        lines += ["", str(branding.get("footer") or "Lose Money Rules")]
+        return _fallback_pdf(lines, landscape_page=True)
     out = BytesIO()
     doc = SimpleDocTemplate(
         out,
@@ -538,4 +722,4 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     return out
 
 
-__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf","render_discovery_pdf"]
+__all__=["get_report_branding","set_report_branding","research_report_data","render_docx","render_pdf","render_discovery_pdf","report_backend_status"]
