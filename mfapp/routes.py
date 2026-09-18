@@ -404,6 +404,18 @@ def dashboard():
 
 
 def _normalized_market_scan(job: Job | None) -> dict:
+    def as_float(value, default=0.0):
+        try:
+            return float(value) if value is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def as_int(value, default=0):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
@@ -420,7 +432,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
             row.update({
                 "ticker": ticker,
                 "research_side": str(raw.get("research_side") or "RESEARCH"),
-                "scan_score": float(raw.get("scan_score") or 0.0),
+                "scan_score": as_float(raw.get("scan_score"), 0.0),
                 "move_pct": raw.get("move_pct"),
                 "base_gap_pct": raw.get("base_gap_pct"),
                 "target_status": str(raw.get("target_status") or "TARGET UNKNOWN"),
@@ -432,11 +444,11 @@ def _normalized_market_scan(job: Job | None) -> dict:
     errors = scan.get("errors")
     scan["candidates"] = candidates
     scan["errors"] = [str(x) for x in errors] if isinstance(errors, list) else ([] if not errors else [str(errors)])
-    scan["candidate_count"] = int(scan.get("candidate_count") or len(candidates))
-    scan["known_enriched"] = int(scan.get("known_enriched") or sum(1 for x in candidates if x.get("in_coverage")))
-    scan["long_count"] = int(scan.get("long_count") or sum(1 for x in candidates if str(x.get("research_side") or "").startswith("LONG")))
-    scan["short_count"] = int(scan.get("short_count") or sum(1 for x in candidates if str(x.get("research_side") or "").startswith("SHORT")))
-    scan["no_edge_count"] = int(scan.get("no_edge_count") or sum(1 for x in candidates if x.get("research_side") == "NO EDGE"))
+    scan["candidate_count"] = as_int(scan.get("candidate_count"), len(candidates))
+    scan["known_enriched"] = as_int(scan.get("known_enriched"), sum(1 for x in candidates if x.get("in_coverage")))
+    scan["long_count"] = as_int(scan.get("long_count"), sum(1 for x in candidates if str(x.get("research_side") or "").startswith("LONG")))
+    scan["short_count"] = as_int(scan.get("short_count"), sum(1 for x in candidates if str(x.get("research_side") or "").startswith("SHORT")))
+    scan["no_edge_count"] = as_int(scan.get("no_edge_count"), sum(1 for x in candidates if x.get("research_side") == "NO EDGE"))
     return scan
 
 
