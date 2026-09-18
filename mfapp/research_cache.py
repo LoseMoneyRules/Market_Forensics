@@ -187,19 +187,47 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     return payload
 
 
-def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) -> bool:
-    """Patch only lightweight readiness state in the latest materialized cache.
+def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) -> dict[str, Any] | None:
+    """Patch live readiness and re-evaluate lightweight Decision Lenses.
 
     Gate approve/reopen is a synchronous CONTROL action. It must not require a
-    heavy RECALCULATE job just to make the UI reflect the database mutation.
+    heavy RECALCULATE job. Decision Lenses reuse already-materialized evidence
+    and valuation, so Research conclusion can reflect the new readiness state
+    immediately without calling providers or rebuilding heavy analytics.
     """
     row = Event.query.filter_by(event_type=cache_event_type(coverage_id)).order_by(Event.event_date.desc(), Event.id.desc()).first()
     if row is None:
-        return False
+        return None
     payload = dict(row.payload or {})
     payload["readiness"] = _jsonable(readiness)
+
+    updated_lenses = None
+    coverage = db.session.get(Coverage, coverage_id)
+    security = db.session.get(Security, coverage.security_id) if coverage else None
+    company = db.session.get(Company, security.company_id) if security else None
+    research = ResearchState.query.filter_by(coverage_id=coverage_id).first() if coverage else None
+    risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first() if coverage else None
+    model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).order_by(ValuationModel.id.desc()).first() if coverage else None
+    if all((coverage, security, company, research, risk, model)):
+        market = latest_snapshot(security.id)
+        valuation = dict(payload.get("valuation") or valuation_result(coverage))
+        updated_lenses = build_decision_lenses(
+            coverage=coverage,
+            company=company,
+            research=research,
+            risk=risk,
+            model=model,
+            market=market,
+            valuation=valuation,
+            intelligence=dict(payload.get("intelligence") or {}),
+            readiness=readiness,
+            management=dict(payload.get("management") or {}),
+            tape=dict(payload.get("tape") or {}),
+        )
+        payload["decision_lenses"] = _jsonable(updated_lenses)
+
     row.payload = payload
-    return True
+    return updated_lenses
 
 
 def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: ValuationModel | None = None) -> bool:
