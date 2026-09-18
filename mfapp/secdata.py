@@ -18,7 +18,7 @@ CALCULATION_VERSION = "0.2.0"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"],
-    "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
+    "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfProductsSold", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"],
     "gross_profit": ["GrossProfit"],
     "operating_income": ["OperatingIncomeLoss"],
     "pretax_income": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
@@ -32,15 +32,74 @@ DURATION_TAGS = {
 }
 INSTANT_TAGS = {
     "cash": ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
-    "receivables": ["AccountsReceivableNetCurrent"],
-    "inventory": ["InventoryNet"],
-    "payables": ["AccountsPayableCurrent"],
+    "receivables": ["AccountsReceivableNetCurrent", "AccountsNotesAndLoansReceivableNetCurrent", "AccountsReceivableNet"],
+    "inventory": ["InventoryNet", "InventoryCurrent", "InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings"],
+    "payables": ["AccountsPayableCurrent", "AccountsPayableTradeCurrent"],
     "assets": ["Assets"],
     "liabilities": ["Liabilities"],
     "equity": ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
     "debt": ["DebtLongtermAndShorttermCombinedAmount", "LongTermDebtAndFinanceLeaseObligations", "LongTermDebt"],
     "shares_outstanding": ["CommonStockSharesOutstanding"],
 }
+
+SEMANTIC_LABEL_ALIASES = {
+    "revenue": {"revenue", "revenues", "net sales", "sales", "total revenues"},
+    "cogs": {"cost of sales", "cost of revenue", "cost of revenues", "cost of goods sold", "cost of goods and services sold"},
+    "gross_profit": {"gross profit"},
+    "operating_income": {"operating income", "income from operations", "operating income loss"},
+    "pretax_income": {"income before income taxes", "income before taxes", "earnings before income taxes"},
+    "income_tax": {"income tax expense", "provision for income taxes", "income taxes"},
+    "net_income": {"net income", "net income loss"},
+    "cfo": {"net cash provided by operating activities", "cash provided by operations", "net cash provided by used in operating activities"},
+    "capex": {"capital expenditures", "additions to property plant and equipment", "purchases of property plant and equipment"},
+    "cash": {"cash and cash equivalents", "cash and equivalents"},
+    "receivables": {"accounts receivable net", "accounts receivable"},
+    "inventory": {"inventories", "inventory", "inventories net", "total inventories"},
+    "payables": {"accounts payable", "accounts payable current"},
+    "assets": {"total assets"},
+    "liabilities": {"total liabilities"},
+    "equity": {"total shareholders equity", "total stockholders equity", "shareholders equity", "stockholders equity"},
+}
+
+DEBT_CURRENT_TAGS = [
+    "LongTermDebtCurrent", "CurrentPortionOfLongTermDebt",
+    "LongTermDebtAndFinanceLeaseObligationsCurrent",
+]
+DEBT_NONCURRENT_TAGS = [
+    "LongTermDebtNoncurrent", "LongTermDebtAndFinanceLeaseObligationsNoncurrent", "LongTermDebt",
+]
+DEBT_SHORT_TERM_TAGS = ["ShortTermBorrowings", "ShortTermDebt", "CommercialPaper"]
+DEBT_COMBINED_TAGS = {"DebtLongtermAndShorttermCombinedAmount", "LongTermDebtAndFinanceLeaseObligations"}
+
+
+def _normalize_label(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    for ch in ",.()[]{}:/_-":
+        text = text.replace(ch, " ")
+    return " ".join(text.split())
+
+
+def _semantic_tag_groups(companyfacts: dict, field: str) -> dict[str, list[str]]:
+    """Find exact statement-label concepts across standard and filer taxonomies.
+
+    This runs only as a missing-field fallback. Matching is deliberately exact
+    after punctuation/whitespace normalization so a segment or similarly named
+    disclosure is not silently treated as a consolidated statement fact.
+    """
+    aliases = {_normalize_label(x) for x in SEMANTIC_LABEL_ALIASES.get(field, set())}
+    out: dict[str, list[str]] = defaultdict(list)
+    if not aliases:
+        return out
+    for namespace, concepts in (companyfacts.get("facts") or {}).items():
+        for tag, node in (concepts or {}).items():
+            if _normalize_label((node or {}).get("label")) in aliases:
+                out[str(namespace)].append(str(tag))
+    return out
+
+
+def _merge_missing(target: dict, fallback: dict) -> None:
+    for key, value in fallback.items():
+        target.setdefault(key, value)
 
 
 class SECRefreshError(RuntimeError):
@@ -133,11 +192,11 @@ def _fiscal_year_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> int
     return end.year
 
 
-def _annual_duration(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "") -> dict[int, dict[str, Any]]:
+def _annual_duration(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "", namespace: str = "us-gaap") -> dict[int, dict[str, Any]]:
     output: dict[int, dict[str, Any]] = {}
     for tag in tags:
         candidates: dict[int, list[dict[str, Any]]] = defaultdict(list)
-        for row in _facts(companyfacts, "us-gaap", tag):
+        for row in _facts(companyfacts, namespace, tag):
             if row.get("form") not in {"10-K", "10-K/A"} or str(row.get("fp") or "") != "FY":
                 continue
             days = _duration_days(row)
@@ -174,7 +233,7 @@ def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "u
     return output
 
 
-def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "") -> tuple[dict[tuple[int, str], dict[str, Any]], dict[tuple[int, str], dict[str, Any]]]:
+def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "", namespace: str = "us-gaap") -> tuple[dict[tuple[int, str], dict[str, Any]], dict[tuple[int, str], dict[str, Any]]]:
     """Return quarter-only and YTD 10-Q facts, preserving tag priority.
 
     Income-statement facts often expose a ~90-day quarter and a YTD context. Cash-flow
@@ -185,7 +244,7 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
     for tag in tags:
         direct_candidates: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
         ytd_candidates: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
-        for row in _facts(companyfacts, "us-gaap", tag):
+        for row in _facts(companyfacts, namespace, tag):
             fp = str(row.get("fp") or "").upper()
             if row.get("form") not in {"10-Q", "10-Q/A"} or fp not in {"Q1", "Q2", "Q3"}:
                 continue
@@ -209,8 +268,8 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
     return direct, ytd
 
 
-def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: dict[int, dict[str, Any]], *, shares_metric: bool = False, fiscal_year_end: str = "") -> dict[tuple[int, str], dict[str, Any]]:
-    direct, ytd = _quarter_duration_sources(companyfacts, tags, fiscal_year_end)
+def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: dict[int, dict[str, Any]], *, shares_metric: bool = False, fiscal_year_end: str = "", namespace: str = "us-gaap") -> dict[tuple[int, str], dict[str, Any]]:
+    direct, ytd = _quarter_duration_sources(companyfacts, tags, fiscal_year_end, namespace=namespace)
     years = sorted(set(fy for fy, _ in set(direct) | set(ytd)) | set(annual))
     out: dict[tuple[int, str], dict[str, Any]] = {}
     for fy in years:
