@@ -35,7 +35,7 @@ def _queue_status(user_id: int) -> dict:
         "due": due, "queued": queued, "running": running, "failed": failed,
         "last_finished_id": finished.id if finished else None,
         "last_finished_at": finished.finished_at.isoformat() if finished and finished.finished_at else None,
-        "executor": "cron",
+        "executor": "cron+browser-fallback",
     }
 
 
@@ -49,8 +49,11 @@ def _spawn_job_runner(user_id: int) -> int:
     manage = root / "manage.py"
     if not manage.exists():
         raise RuntimeError("manage.py not found for background executor")
+    venv = str(os.environ.get("VIRTUAL_ENV") or "").strip()
+    venv_python = Path(venv) / "bin" / "python" if venv else None
+    python_executable = str(venv_python) if venv_python and venv_python.exists() else sys.executable
     command = [
-        sys.executable, str(manage), "run-jobs",
+        python_executable, str(manage), "run-jobs",
         "--limit", "1", "--user-id", str(int(user_id)),
     ]
     proc = subprocess.Popen(
