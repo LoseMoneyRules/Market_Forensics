@@ -317,6 +317,18 @@ def test_028_data_completeness_flags_historical_field_that_disappears(tmp_path, 
         assert completeness["analysis_ready"] is False
 
 
+def test_028_readiness_links_and_coverage_alpha_sort_contract():
+    readiness = Path("mfapp/templates/_process_readiness.html").read_text()
+    routes = Path("mfapp/routes.py").read_text()
+    css = Path("mfapp/static/css/app.css").read_text()
+
+    assert "class=\"gate-link\"" in readiness
+    assert "section=gate.key" in readiness
+    assert 'rows.sort(key=lambda row: str(row["security"].ticker or "").upper())' in routes
+    assert ".gate-link{color:var(--navy);font-weight:750" in css
+    assert Path("VERSION").read_text().strip() == "0.2.8"
+
+
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():
     flow = build_income_statement_flow({
         "period_label": "FY2025",
