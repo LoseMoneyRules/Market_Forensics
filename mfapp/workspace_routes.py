@@ -43,6 +43,8 @@ def approve_research_gate(ticker: str, gate_key: str):
     if gate is None:
         abort(404)
     action = str(request.form.get("action") or "approve").lower()
+    if action not in {"approve", "revoke"}:
+        return jsonify({"ok": False, "message": "Unsupported readiness action."}), 400
     existing = ResearchGateApproval.query.filter_by(coverage_id=ctx["coverage"].id, gate_key=gate_key).first()
     if action == "revoke":
         if existing:
@@ -50,6 +52,8 @@ def approve_research_gate(ticker: str, gate_key: str):
         audit("research_gate.revoke", "coverage", ctx["coverage"].id, {"gate": gate_key})
     else:
         if not gate["evidence_ready"]:
+            if "application/json" in str(request.headers.get("Accept") or ""):
+                return jsonify({"ok": False, "message": "Evidence is not ready for approval."}), 409
             return redirect(url_for("web.company_section", ticker=ticker.upper(), section="overview"))
         if existing is None:
             existing = ResearchGateApproval(coverage_id=ctx["coverage"].id, gate_key=gate_key, approved_by=g.user.id)
