@@ -97,7 +97,12 @@ Hosting choice: Discovery scans the broad tradable market through lightweight pr
 - [x] Quote cascade is web-native: Alpaca → Tiingo → Alpha Vantage → public cross-check, with disagreement protection and last-good preservation.
 - [x] Global Refresh All includes market, SEC, recalculation, FINRA, options/borrow positioning and management-guidance evidence where configured.
 - [x] Refresh Stale runs the same evidence layers on bounded freshness windows rather than re-fetching everything.
-- [x] The browser worker/cPanel cron architecture remains bounded for shared hosting; no IBKR Gateway or desktop daemon is required.
+- [x] Heavy analytics run only in background jobs/cPanel cron; normal page navigation never executes SEC/FINRA/Tape/triangulation/portfolio-correlation workloads.
+- [x] Research/Decision/valuation synthesis is materialized into a per-Coverage cache by RECALCULATE jobs.
+- [x] Portfolio correlation analytics are materialized separately in a background cache.
+- [x] The browser is a lightweight job observer only; it never auto-pumps heavy jobs through a web request.
+- [x] When a job finishes, data pages auto-refresh if the user is not editing a form; dirty forms show a safe refresh prompt instead.
+- [x] Shared-hosting execution remains bounded and requires no IBKR Gateway or desktop daemon.
 - [x] Automatic research never fabricates missing consensus, borrow fees, peer fundamentals or fair values.
 
 ## Runtime / UX
@@ -113,6 +118,12 @@ Hosting choice: Discovery scans the broad tradable market through lightweight pr
 - [x] Footer/brand remains Lose Money Rules.
 - [x] Pre-0.2.0 test suites retired; 0.2.0 is the active runtime contract.
 - [x] V3 code/archive is reference-only and has no runtime import.
+- [x] FAST UI is a release requirement: cached Research/Discovery/Portfolio GET routes are protected by tests that fail if heavy analytical engines execute during normal navigation.
+- [x] Dashboard SQL query count is bounded under cached operation.
+- [x] First load with no cache renders immediately with an UPDATING state and queues cache construction instead of blocking.
+- [x] Rich PDF/Word dependencies are optional at application startup; missing report packages cannot take down /health or the site.
+- [x] A production-minimal smoke test starts 0.2.0 with only core Namecheap requirements and verifies /health plus fallback PDF/Word export.
+- [x] Deployment captures HTTP status/body and attempts Passenger/runtime log collection before automatic rollback.
 
 ## Intentional non-blockers / data availability
 - SMTP credentials are not configured by this release.
@@ -126,6 +137,12 @@ Hosting choice: Discovery scans the broad tradable market through lightweight pr
 The release may merge only after:
 1. branch Python syntax check passes;
 2. branch JavaScript syntax check passes;
-3. 0.2.0 release suite passes;
-4. PR checks pass;
-5. main post-merge CI passes.
+3. workflow YAML validation passes;
+4. full 0.2.0 release/parity suite passes;
+5. production-minimal startup/report fallback smoke passes;
+6. cached-navigation performance contract passes;
+7. end-to-end RECALCULATE → research-cache test passes;
+8. PR checks pass;
+9. main post-merge CI passes.
+
+Production is not considered released until the manual Namecheap candidate health check returns HTTP 200 with status=ok, version=0.2.0 and architecture=web-native. A failed candidate must roll back automatically and does not count as a release.
