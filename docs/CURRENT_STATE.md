@@ -6,6 +6,10 @@
 > Update it in the SAME PR whenever VERSION, architecture, deployment state, release gates,
 > job execution, provider/data logic, SEC normalization, Discovery, Fundamentals, analytical
 > engines, reports/publication, security, Portfolio/Risk, or a material product workflow changes.
+>
+> `docs/HOW_MARKET_FORENSICS_WORKS.md` is the canonical product/decision-system contract.
+> Any material change to workflow, rules, thresholds, data policy, valuation, validation,
+> Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
 **State-Version: 0.2.8**  
 **Product:** Market Forensics  
@@ -24,6 +28,13 @@ Deploy #42 is the authoritative production baseline. PR #31 does not change VERS
 ---
 
 ## 0.2.8 release scope
+
+Operating-model documentation candidate:
+- adds `docs/HOW_MARKET_FORENSICS_WORKS.md` as the canonical end-to-end explanation of how Market Forensics works;
+- consolidates permanent rules previously scattered across release notes, Local parity, security, data-source and product specs;
+- distinguishes intended rules from current implementation gaps rather than preserving inconsistencies as policy;
+- records known weaknesses including validation-threshold divergence, provisional valuation labeling, activity-biased Discovery, database-limited peers, missing consensus/borrow/options/ownership depth and qualitative Business gaps;
+- VERSION remains `0.2.8`.
 
 Business partial-peer hotfix merged through PR #31:
 - `/company/<ticker>/business` must render when automatic triangulation has peers but the relative-value overlay is not yet eligible.
@@ -520,6 +531,10 @@ Every future release PR MUST update this file in the same PR whenever VERSION, a
 deployment state, workflow, jobs, provider/data logic, SEC normalization, Discovery, Fundamentals,
 analytical engines, Portfolio/Risk, report/publication, security, visible-version policy, release gates,
 or product workflow changes.
+
+Every future PR that materially changes how the product thinks or operates MUST also update
+`docs/HOW_MARKET_FORENSICS_WORKS.md`. CURRENT_STATE records release truth; the operating-model
+document records product logic, permanent rules, known weaknesses and decision-system behavior.
 
 If VERSION and State-Version differ, CI must fail.
 
