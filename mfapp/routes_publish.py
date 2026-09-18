@@ -173,6 +173,8 @@ def research_report(ticker, fmt):
 def portfolio():
     require_control_view()
     rows, totals = portfolio_rows(g.user.id)
+    if rows and not totals.get("analytics_ready"):
+        enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
     return render_template("portfolio.html", rows=rows, totals=totals)
 
 
@@ -182,6 +184,8 @@ def portfolio_security(ticker):
     require_control_view()
     ctx = _ctx(ticker)
     rows, totals = portfolio_rows(g.user.id)
+    if rows and not totals.get("analytics_ready"):
+        enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
     row = next((item for item in rows if item["security"].id == ctx["security"].id), None)
     portfolio_value = totals.get("market_value") or 0
     position_value = (row or {}).get("market_value") if row else None
