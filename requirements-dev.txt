@@ -1,4 +1,2 @@
 -r requirements.txt
--r requirements-reporting.txt
-pytest>=8,<9
-PyYAML>=6,<7
+pytest>=8.3,<9
