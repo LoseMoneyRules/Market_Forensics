@@ -11,8 +11,8 @@
     <div class="panel-head">
       <div>
         <p class="eyebrow">MARKET-WIDE RADAR</p>
-        <h2>Prioritized Long / Short research</h2>
-        <p class="muted">Known Research Base gaps rank first. Unknown names must pass price/liquidity guardrails and remain target-unknown research leads until intrinsic work exists.</p>
+        <h2>Fair-value forensic radar</h2>
+        <p class="muted">The broad screen only decides where to investigate. Final names require a calculable Market Forensics Base fair value plus operating evidence that confirms the Long or Short divergence.</p>
       </div>
       <div class="button-row">
         <form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Run market scan</button></form>
@@ -37,10 +37,11 @@
         <strong>Guardrails</strong>
         <span>Unknown Long ≥ ${{ '%.0f'|format(market_scan.guardrails.get('min_long_price',5)) }}</span>
         <span>Unknown Short ≥ ${{ '%.0f'|format(market_scan.guardrails.get('min_short_price',10)) }}</span>
-        <span>Dollar volume ≥ ${{ '%.0f'|format((market_scan.guardrails.get('min_dollar_volume',50000000)|float)/1000000) }}M</span>
-        <span>Major US exchange + active/tradable</span>
-        <span>Short must be shortable</span>
-        <span>No quota · no fake targets</span>
+        <span>Dollar volume ≥ ${{ '%.0f'|format((market_scan.guardrails.get('min_dollar_volume',50000000)|float)/1000000) }}M for new names</span>
+        <span>Base edge ≥ {{ '%.0f'|format(market_scan.guardrails.get('fair_value_edge_pct',20)) }}%</span>
+        <span>Fair value + operating confirmation required</span>
+        <span>Major US exchange · Short must be shortable</span>
+        <span>No quota · weak evidence = no candidate</span>
       </div>
 
       <div class="discovery-side-grid">
@@ -55,15 +56,17 @@
                   <span>{{ item.exchange }}</span>
                   <span>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
                   <span>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}% day{% else %}move —{% endif %}</span>
-                  <span>{% if item.base_gap_pct is not none %}Base {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Base unknown{% endif %}</span>
+                  <span>{% if item.fair_value is not none %}Base ${{ '%.2f'|format(item.fair_value) }}{% else %}Base —{% endif %}</span>
+                  <span>{% if item.base_gap_pct is not none %}Gap {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Gap —{% endif %}</span>
                 </div>
-                <div class="discovery-list-reason"><strong>{{ item.priority_reason }}</strong><span>{{ item.radar_label }} · {{ item.target_status }}</span></div>
+                <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.fair_value_quality }} · forensic score {{ item.forensic_score }}</span></div>
+                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span><b>{{ signal.label }}</b> · {{ signal.detail }}</span>{% endfor %}</div>
               </div>
               <div class="discovery-list-action">
                 {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
               </div>
             </div>
-            {% else %}<div class="empty-state compact"><h3>No qualified Long lead</h3><p>The engine does not fill the list with weak names.</p></div>{% endfor %}
+            {% else %}<div class="empty-state compact"><h3>No qualified Long lead</h3><p>No screened name currently has both enough upside to our Base and confirming operating improvement. The engine does not fill the list.</p></div>{% endfor %}
           </div>
         </section>
 
@@ -78,15 +81,17 @@
                   <span>{{ item.exchange }}</span>
                   <span>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
                   <span>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}% day{% else %}move —{% endif %}</span>
-                  <span>{% if item.base_gap_pct is not none %}Base {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Base unknown{% endif %}</span>
+                  <span>{% if item.fair_value is not none %}Base ${{ '%.2f'|format(item.fair_value) }}{% else %}Base —{% endif %}</span>
+                  <span>{% if item.base_gap_pct is not none %}Gap {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Gap —{% endif %}</span>
                 </div>
-                <div class="discovery-list-reason"><strong>{{ item.priority_reason }}</strong><span>{{ item.radar_label }} · {{ item.target_status }}</span></div>
+                <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.fair_value_quality }} · forensic score {{ item.forensic_score }}</span></div>
+                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span><b>{{ signal.label }}</b> · {{ signal.detail }}</span>{% endfor %}</div>
               </div>
               <div class="discovery-list-action">
                 {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
               </div>
             </div>
-            {% else %}<div class="empty-state compact"><h3>No qualified Short lead</h3><p>Inactive, non-shortable, penny and weak-liquidity names are filtered rather than displayed.</p></div>{% endfor %}
+            {% else %}<div class="empty-state compact"><h3>No qualified Short lead</h3><p>No screened name currently has both enough downside to our Base and confirming operating deterioration. Penny, invalid and weak-liquidity names are filtered first.</p></div>{% endfor %}
           </div>
         </section>
       </div>
@@ -96,7 +101,7 @@
       {% endif %}
       {% if market_scan.errors %}<div class="notice amber"><strong>PARTIAL SCAN.</strong> {{ market_scan.errors|join(' ') }}</div>{% endif %}
     {% else %}
-      <div class="empty-state"><h2>No qualified radar stored yet</h2><p>Run the scan. Penny/low-liquidity names are filtered before Long/Short prioritization, and unknown targets remain explicitly unknown.</p></div>
+      <div class="empty-state"><h2>No forensic edge found yet</h2><p>Run the scan. A blank radar is valid: names are shown only after security validation, liquidity checks, intrinsic Base calculation and operating confirmation.</p></div>
     {% endif %}
   </div>
 
