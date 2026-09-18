@@ -64,6 +64,10 @@ Management, Tape / Flows, Monitoring, Decision Journal and Sources / Audit.
 Portfolio owns:
 real positions, LONG/SHORT side, cost basis, exposure, money risk and position sizing.
 
+Capital Risk / Position controls must exist only under Portfolio. Research and Validate must never expose
+shares, average cost, loss budget, sizing reference, liquidity/event haircut or max-position controls.
+Research may keep thesis invalidation under Monitoring because that is a research falsification rule, not money-risk sizing.
+
 Validation is separate, point-in-time and walk-forward.
 
 Mandatory buy-side process:
@@ -272,6 +276,8 @@ CONTROL reports remain:
 
 The rich PDF/Word stack is now a first-class production dependency:
 - `requirements.txt` includes `requirements-reporting.txt`;
+- the deploy payload vendors the report runtime into `mfapp/_reporting_vendor`, so Namecheap does not depend on a forgotten manual cPanel pip step;
+- `app.py` loads that private report runtime before importing the application;
 - the production-minimal smoke must report `reports = rich`;
 - candidate production `/health` must also report `reports = rich`;
 - a deployment without the rich report backend is a failed candidate and must not be declared LIVE.
@@ -375,6 +381,7 @@ Workflow health assertions read VERSION dynamically; do not hardcode a 0.2.x rel
 Permanent UI rules:
 - never purple;
 - institutional blue;
+- readable typography is a release gate: normal UI 13–14 px, forms 14 px, micro-metadata no smaller than 12 px, chart labels 12–14 px;
 - real dark mode;
 - real light mode;
 - centralized semantic colors;
