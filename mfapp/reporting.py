@@ -15,8 +15,6 @@ from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessme
 from .extensions import db
 from .models import UserPreference
 from .management_promises import evaluate_promises
-from .triangulation_engine import automatic_triangulation
-from .decision_support import tape_series
 
 
 
@@ -294,9 +292,17 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
     catalysts = Catalyst.query.filter_by(coverage_id=coverage.id).order_by(Catalyst.expected_date.asc(), Catalyst.id.asc()).all()
     management = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
     sources = Source.query.filter_by(company_id=company.id).order_by(Source.retrieved_at.desc()).limit(40).all()
-    management_promises = evaluate_promises(company.id)
-    triangulation = automatic_triangulation(company.id, coverage.user_id)
-    tape = tape_series(security, 12)
+    cache = dict(ctx.get("research_cache") or {})
+    cached_promises = cache.get("management_promises")
+    if isinstance(cached_promises, list):
+        management_promises = cached_promises
+    else:
+        try:
+            management_promises = evaluate_promises(company.id)
+        except Exception:
+            management_promises = []
+    triangulation = dict(cache.get("triangulation") or {})
+    tape = dict(cache.get("tape") or {})
     implied = dict((decision_lenses.get("implied_expectations") or {}))
 
     branding = dict(branding or {})
@@ -447,7 +453,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = title.add_run(f"{data['ticker']} · {data['company']}")
     run.bold = True; run.font.size = Pt(20)
-    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.3 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    subtitle = f"{brand.get('title') or 'Market Forensics'} · {data['action']} · {data['stance']} · {data['confidence']} confidence"
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     p = doc.add_paragraph(subtitle)
@@ -555,7 +561,7 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
             doc.add_paragraph(f"{row['provider']} · {row['type']} · {row['title']} · {row['retrieved_at']}", style="List Bullet")
 
     footer=doc.sections[0].footer.paragraphs[0]
-    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'} 0.2.3"
+    footer.text=f"{brand.get('footer') or 'Lose Money Rules'} · {brand.get('title') or 'Market Forensics'}"
     footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
 
     out=BytesIO(); doc.save(out); out.seek(0); return out
@@ -575,7 +581,7 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
     logo = _safe_logo(str(brand.get("logo_url") or ""))
     if logo:
         story += [RLImage(logo, width=1.1*inch, height=.38*inch), Spacer(1,4)]
-    subtitle = f"{brand.get('title') or 'Market Forensics'} 0.2.3 · {data['action']} · {data['stance']} · {data['confidence']} confidence"
+    subtitle = f"{brand.get('title') or 'Market Forensics'} · {data['action']} · {data['stance']} · {data['confidence']} confidence"
     if brand.get("prepared_by"):
         subtitle += f" · Prepared by {brand['prepared_by']}"
     story += [Paragraph(f"{data['ticker']} · {data['company']}",styles["MFTitle"]),
@@ -665,6 +671,21 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
 
     doc.build(story)
     out.seek(0); return out
+
+
+def render_docx_safe(data: dict[str, Any]) -> BytesIO:
+    try:
+        return render_docx(data)
+    except Exception:
+        return _fallback_docx(_plain_research_lines(data))
+
+
+def render_pdf_safe(data: dict[str, Any]) -> BytesIO:
+    try:
+        return render_pdf(data)
+    except Exception:
+        return _fallback_pdf(_plain_research_lines(data))
+
 
 
 def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
