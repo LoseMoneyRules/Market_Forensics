@@ -4,10 +4,9 @@
 <section class="page-head">
   <div>
     <div class="eyebrow">CONTROL · DIAGNOSTICS</div>
-    <h1>0.0.4 Trace</h1>
+    <h1>Trace</h1>
     <p>Request timing and unhandled exceptions only. Cookies, headers, form values and query strings are not recorded.</p>
   </div>
-  <div class="version-chip">{{ trace_build }}</div>
 </section>
 
 <section class="panel compact-panel">
@@ -38,7 +37,7 @@
             <td><strong>{{ e.get('method','') }}</strong> {{ e.get('path','') }}<small>{{ e.get('endpoint') or '' }}</small></td>
             <td>{% if e.get('status') is not none %}{{ e.get('status') }}{% else %}—{% endif %}<small>{% if e.get('elapsed_ms') is not none %}{{ e.get('elapsed_ms') }} ms{% endif %}</small></td>
             <td>
-              {% if e.get('exception_type') %}<strong>{{ e.get('exception_type') }}</strong>: {{ e.get('message','') }}{% elif e.get('build') %}{{ e.get('build') }}{% elif e.get('role') %}role={{ e.get('role') }}{% elif e.get('message') %}{{ e.get('message') }}{% else %}—{% endif %}
+              {% if e.get('exception_type') %}<strong>{{ e.get('exception_type') }}</strong>: {{ e.get('message','') }}{% elif e.get('build') %}application event{% elif e.get('role') %}role={{ e.get('role') }}{% elif e.get('message') %}{{ e.get('message') }}{% else %}—{% endif %}
               {% if e.get('traceback') %}<details><summary>Traceback</summary><pre style="white-space:pre-wrap;overflow:auto;max-width:900px">{{ e.get('traceback') }}</pre></details>{% endif %}
             </td>
           </tr>
