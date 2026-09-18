@@ -112,12 +112,15 @@ def test_022_discovery_is_two_sided_transparent_and_target_aware(monkeypatch):
                 {"symbol": "SHORTX", "volume": 9_000_000},
                 {"symbol": "NEARX", "volume": 8_000_000},
             ]})
-        return FakeResponse({"gainers": [{"symbol": "SHORTX", "percent_change": 11.0}],
-                             "losers": [{"symbol": "LONGX", "percent_change": -10.0},
-                                        {"symbol": "NEARX", "percent_change": -8.5}]})
+        if "movers" in url:
+            return FakeResponse({"gainers": [{"symbol": "SHORTX", "percent_change": 11.0}],
+                                 "losers": [{"symbol": "LONGX", "percent_change": -10.0},
+                                            {"symbol": "NEARX", "percent_change": -8.5}]})
+        return FakeResponse({})
 
     monkeypatch.setattr(md, "_headers", lambda user_id: {"x": "y"})
     monkeypatch.setattr(md.requests, "get", fake_get)
+    monkeypatch.setattr(md, "_snapshot_map", lambda symbols, headers, errors: {})
     monkeypatch.setattr(md, "_coverage_context_map", lambda user_id, symbols: {
         "LONGX": {"cache_ready": True, "base_gap_pct": 30.0, "discovery_labels": [], "known": True},
         "SHORTX": {"cache_ready": True, "base_gap_pct": -25.0, "discovery_labels": [], "known": True},
@@ -127,10 +130,10 @@ def test_022_discovery_is_two_sided_transparent_and_target_aware(monkeypatch):
     rows = {row["ticker"]: row for row in result["candidates"]}
     assert rows["LONGX"]["research_side"] == "LONG"
     assert rows["SHORTX"]["research_side"] == "SHORT"
-    assert rows["NEARX"]["research_side"] == "NO EDGE"
-    assert rows["NEARX"]["target_status"] == "AT / NEAR BASE"
+    assert "NEARX" not in rows
+    assert result["excluded_breakdown"]["AT / NEAR BASE"] == 1
     assert any("Stored Base gap" in reason for reason in rows["LONGX"]["why_found"])
-    assert result["long_count"] >= 1 and result["short_count"] >= 1 and result["no_edge_count"] >= 1
+    assert result["long_count"] >= 1 and result["short_count"] >= 1
 
 
 def test_022_command_center_dark_valuation_flow_and_tape_contracts():
@@ -152,7 +155,7 @@ def test_022_command_center_dark_valuation_flow_and_tape_contracts():
     assert "instead of rendering blank" in valuation
     assert "optionalNumber" in app_js
 
-    assert "visualScale" in flows and "requestAnimationFrame(()=>render(root))" in flows
+    assert "requestAnimationFrame(()=>render(root))" in flows and "calculation_version" not in flows
     assert "Price + FINRA Short Interest" in company
     assert 'data-mf-chart="tape-price-short"' in company
     assert "FINRA Daily Short Volume %" in company
