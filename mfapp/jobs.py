@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import signal
 import requests
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -467,6 +468,33 @@ def _execute(job: Job) -> dict[str, Any]:
     raise RuntimeError(f"Unknown job type: {kind}")
 
 
+class JobDeadlineExceeded(TimeoutError):
+    pass
+
+
+def _job_deadline_seconds(job_type: str) -> int | None:
+    # Discovery is intentionally a lightweight radar. If it exceeds this bound,
+    # something is wrong with provider/DB execution and the job must fail fast.
+    return 90 if str(job_type).upper() == "DISCOVERY_SCAN" else None
+
+
+def _execute_with_deadline(job: Job):
+    seconds = _job_deadline_seconds(job.job_type)
+    if not seconds or not hasattr(signal, "SIGALRM"):
+        return _execute(job)
+
+    def _timeout_handler(signum, frame):
+        raise JobDeadlineExceeded(f"{job.job_type} exceeded {seconds}s hard deadline")
+
+    previous = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(seconds)
+    try:
+        return _execute(job)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]:
     recover_stale_running_jobs(user_id=user_id); compact_queue(user_id=user_id); results = []
     for _ in range(max(1, min(int(limit), 50))):
@@ -483,13 +511,16 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
                               inputs={"job_id": job.id, "payload": job.payload or {}}, status="RUNNING", started_at=job.started_at)
         db.session.add_all([refresh, calc]); db.session.commit(); started = time.perf_counter()
         try:
-            payload = _execute(job); finished = utcnow(); job.status = "DONE"; job.result = payload; job.error_message = ""; job.finished_at = finished
+            payload = _execute_with_deadline(job); finished = utcnow(); job.status = "DONE"; job.result = payload; job.error_message = ""; job.finished_at = finished
             refresh.status = "DONE"; refresh.summary = payload; refresh.finished_at = finished; calc.status = "DONE"; calc.outputs = payload; calc.finished_at = finished
         except Exception as exc:
             error_id = uuid.uuid4().hex[:12]; finished = utcnow(); job.error_message = f"{type(exc).__name__}: {exc}"[:4000]; job.finished_at = finished
-            if job.attempts < job.max_attempts:
+            if isinstance(exc, JobDeadlineExceeded):
+                job.status = "FAILED"; job.locked_at = None
+            elif job.attempts < job.max_attempts:
                 job.status = "QUEUED"; job.run_after = utcnow() + timedelta(minutes=min(60, 5 * job.attempts)); job.locked_at = None
-            else: job.status = "FAILED"
+            else:
+                job.status = "FAILED"
             refresh.status = "FAILED"; refresh.error_id = error_id; refresh.summary = {"error": job.error_message}; refresh.finished_at = finished
             calc.status = "FAILED"; calc.error_id = error_id; calc.outputs = {"error": job.error_message}; calc.finished_at = finished
         elapsed = (time.perf_counter() - started) * 1000; calc.elapsed_ms = Decimal(str(round(elapsed, 3))); db.session.commit()
