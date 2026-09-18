@@ -183,6 +183,21 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     return payload
 
 
+def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) -> bool:
+    """Patch only lightweight readiness state in the latest materialized cache.
+
+    Gate approve/reopen is a synchronous CONTROL action. It must not require a
+    heavy RECALCULATE job just to make the UI reflect the database mutation.
+    """
+    row = Event.query.filter_by(event_type=cache_event_type(coverage_id)).order_by(Event.event_date.desc(), Event.id.desc()).first()
+    if row is None:
+        return False
+    payload = dict(row.payload or {})
+    payload["readiness"] = _jsonable(readiness)
+    row.payload = payload
+    return True
+
+
 def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: ValuationModel | None = None) -> bool:
     if not cache:
         return True
@@ -202,5 +217,5 @@ def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: Valu
 
 __all__ = [
     "cache_event_type", "latest_research_cache", "latest_cache_map",
-    "refresh_research_cache", "cache_is_stale",
+    "refresh_research_cache", "patch_research_cache_readiness", "cache_is_stale",
 ]
