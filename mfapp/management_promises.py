@@ -421,36 +421,73 @@ def _source_fields(source: Source | None) -> dict[str, Any]:
 
 
 def store_promises(company_id: int, promises: list[dict[str, Any]], *, source_id: int | None = None) -> int:
-    stored = 0
+    changed = 0
     source = db.session.get(Source, source_id) if source_id else None
-    event_date = (source.published_at if source and source.published_at else None) or (source.retrieved_at if source and source.retrieved_at else None) or utcnow()
+    event_date = (
+        (source.published_at if source and source.published_at else None)
+        or (source.retrieved_at if source and source.retrieved_at else None)
+        or utcnow()
+    )
     source_fields = _source_fields(source)
-    existing_fingerprints = {
-        str((event.payload or {}).get("fingerprint") or "")
-        for event in Event.query.filter_by(company_id=company_id, event_type="MANAGEMENT_PROMISE").all()
+    existing_events = Event.query.filter_by(
+        company_id=company_id,
+        event_type="MANAGEMENT_PROMISE",
+    ).all()
+    by_fingerprint = {
+        str((event.payload or {}).get("fingerprint") or ""): event
+        for event in existing_events
+        if (event.payload or {}).get("fingerprint")
     }
+
     for row in promises:
-        fp = str(row.get("fingerprint") or "")
-        if fp in existing_fingerprints:
-            continue
         payload = dict(row)
         payload["source_id"] = source_id or row.get("source_id")
         payload.update(source_fields)
         payload["status"] = "EVIDENCE_ONLY" if payload.get("comparability") == "NON_COMPARABLE" else "PENDING"
-        db.session.add(Event(
+        payload["parser_version"] = str(payload.get("parser_version") or MANAGEMENT_SCAN_VERSION)
+        fp = str(payload.get("fingerprint") or "")
+        event = by_fingerprint.get(fp)
+
+        if event is None and str(payload.get("origin") or "").upper() == "AUTO_FILING":
+            # Parser upgrades may intentionally change the fingerprint (for
+            # example fixing the sign of "revenue decline 8-10%"). Reuse the
+            # semantic event instead of showing old and corrected rows together.
+            event = next(
+                (
+                    candidate for candidate in existing_events
+                    if int(candidate.source_id or 0) == int(payload.get("source_id") or 0)
+                    and str((candidate.payload or {}).get("origin") or "").upper() == "AUTO_FILING"
+                    and str((candidate.payload or {}).get("metric") or "") == str(payload.get("metric") or "")
+                    and str((candidate.payload or {}).get("statement") or "") == str(payload.get("statement") or "")
+                ),
+                None,
+            )
+
+        if event is not None:
+            if dict(event.payload or {}) != payload:
+                event.payload = payload
+                event.title = f"{row.get('metric')} guidance for {row.get('target_period') or row.get('target_year') or 'UNRESOLVED'}"
+                changed += 1
+            if fp:
+                by_fingerprint[fp] = event
+            continue
+
+        event = Event(
             company_id=company_id,
             source_id=source_id or row.get("source_id"),
             event_type="MANAGEMENT_PROMISE",
-            title=f"{row.get('metric')} guidance for {row.get('target_period') or row.get('target_year')}",
+            title=f"{row.get('metric')} guidance for {row.get('target_period') or row.get('target_year') or 'UNRESOLVED'}",
             event_date=event_date,
             payload=payload,
-        ))
-        existing_fingerprints.add(fp)
-        stored += 1
-    if stored:
+        )
+        db.session.add(event)
+        existing_events.append(event)
+        if fp:
+            by_fingerprint[fp] = event
+        changed += 1
+    if changed:
         db.session.commit()
-    return stored
-
+    return changed
 
 def _duration_days(row: dict[str, Any]) -> int | None:
     try:
