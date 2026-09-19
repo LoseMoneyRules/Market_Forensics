@@ -72,18 +72,21 @@ def _iso_day(value: Any) -> str | None:
 def _target_period(sentence: str) -> tuple[int | None, str, str, str | None]:
     """Return target year/type/label and any ambiguity reason.
 
-    Multiple years are never resolved by simply taking the first year. An explicit
-    FY/full-year marker or a year attached to the forward-looking clause wins.
+    Multiple years are never resolved by simply taking the first year. Any interim
+    marker in the evidence wins over an FY token: conservative false negatives are
+    preferable to comparing a quarter/half-year target with a full-year actual.
     """
+    interim = bool(INTERIM_WORDS.search(sentence))
     for pattern in FULL_YEAR_PATTERNS:
         match = pattern.search(sentence)
         if match:
             year = int(match.group(1))
+            if interim:
+                return year, "INTERIM", f"INTERIM FY{year}", "INTERIM_GUIDANCE"
             return year, "FY", f"FY{year}", None
 
     years = [int(value) for value in re.findall(r"\b(20[2-4]\d)\b", sentence)]
     unique_years = list(dict.fromkeys(years))
-    interim = bool(INTERIM_WORDS.search(sentence))
 
     forward_year = None
     match = re.search(GUIDANCE_WORDS + r"[^.;]{0,120}?\b(20[2-4]\d)\b", sentence, re.I)
@@ -95,21 +98,15 @@ def _target_period(sentence: str) -> tuple[int | None, str, str, str | None]:
             forward_year = int(match.group(1))
 
     if forward_year is not None:
-        return (
-            forward_year,
-            "INTERIM" if interim else "FY",
-            f"INTERIM FY{forward_year}" if interim else f"FY{forward_year}",
-            "INTERIM_GUIDANCE" if interim else None,
-        )
+        if interim:
+            return forward_year, "INTERIM", f"INTERIM FY{forward_year}", "INTERIM_GUIDANCE"
+        return forward_year, "UNRESOLVED", f"YEAR {forward_year}", "TARGET_PERIOD_NOT_EXPLICIT"
 
     if len(unique_years) == 1:
         year = unique_years[0]
-        return (
-            year,
-            "INTERIM" if interim else "FY",
-            f"INTERIM FY{year}" if interim else f"FY{year}",
-            "INTERIM_GUIDANCE" if interim else None,
-        )
+        if interim:
+            return year, "INTERIM", f"INTERIM FY{year}", "INTERIM_GUIDANCE"
+        return year, "UNRESOLVED", f"YEAR {year}", "TARGET_PERIOD_NOT_EXPLICIT"
     if len(unique_years) > 1:
         return None, "UNRESOLVED", "", "AMBIGUOUS_TARGET_YEAR_VS_COMPARATOR"
     return None, "UNRESOLVED", "", "TARGET_YEAR_NOT_EXPLICIT"
