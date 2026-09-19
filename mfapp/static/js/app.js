@@ -43,6 +43,18 @@
     if (!window.confirm(trigger.dataset.confirm || 'Continue?')) event.preventDefault();
   });
 
+  document.addEventListener('submit', (event) => {
+    const form = event.target.closest?.('form[data-confirm]');
+    if (!form) return;
+    if (!window.confirm(form.dataset.confirm || 'Continue?')) event.preventDefault();
+  });
+
+  document.addEventListener('change', (event) => {
+    const control = event.target.closest?.('[data-submit-on-change]');
+    if (!control?.form) return;
+    control.form.requestSubmit();
+  });
+
   // One mobile-navigation controller. No later script is allowed to rebind it.
   const menuButton = document.getElementById('mf-mobile-menu');
   const toolsButton = document.getElementById('mf-mobile-tools');
