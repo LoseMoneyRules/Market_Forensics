@@ -85,6 +85,7 @@ def test_0213_mobile_keeps_quote_metadata_and_contains_wide_diagnostics():
     assert ".full-table{min-width:900px}" in css
     assert ".trace-event" not in css
     assert ".number-format-form" not in css
+    assert css.count(".mobile-backdrop{display:none}") == 1
 
 
 def test_0213_narrow_phone_layout_stacks_dense_controls_without_hiding_information():
