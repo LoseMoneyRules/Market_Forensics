@@ -72,6 +72,7 @@ def validation_payload(run: Any | None) -> dict[str, Any]:
             "state": "NOT RUN",
             "run_id": None,
             "status": "NOT RUN",
+            "execution_status": None,
             "samples": 0,
             "reliability": None,
             "policy": {
@@ -86,6 +87,7 @@ def validation_payload(run: Any | None) -> dict[str, Any]:
         "state": state,
         "run_id": getattr(run, "id", None),
         "status": state,
+        "execution_status": str(getattr(run, "status", "") or "") or None,
         "samples": int(getattr(run, "sample_size", 0) or 0),
         "reliability": score,
         "policy": {
