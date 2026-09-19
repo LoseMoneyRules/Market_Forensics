@@ -15,7 +15,7 @@
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.11 on Namecheap; production has NOT been advanced to 0.2.12  
+**Production:** 0.2.12 on Namecheap from manual deploy run `35460975736` / deploy #50 at main `6656a7941c1e2d40a87f5318303b28527de859f8`; deployment and health checks succeeded, but the first real post-scan Discovery render exposed a fail-safe 500 in sparse rejection diagnostics (trace ID `8b47d56f69b6`), now isolated to presentation normalization rather than the Discovery engine  
 **Verified production baseline:** manual deploy run `35448890411` / deploy #49 = completed / success on main event SHA `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; candidate and final production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.11"}`; persistent reporting-vendor rebuild/stage steps were skipped because dependencies were unchanged  
 **Accepted pre-0.2.12 main baseline:** `ff4eb1e96a92610bc3ddd2c21c6e32840a016452` (accepted 0.2.11 runtime `ba5a16783763f8032e3341b2e08eae8566457fbd` plus final 0.2.11 documentation sync)  
 **Latest verified 0.2.11 runtime main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`  
@@ -46,7 +46,8 @@
 **Accepted 0.2.12 runtime merge:** `1e309fa77b864ed5ccd9831478a54fcdefe05419`.  
 **Verified final post-merge main CI:** run `35459124021` / #1095 = completed / success on `1e309fa77b864ed5ccd9831478a54fcdefe05419`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed.  
 **Main:** VERSION `0.2.12`; accepted runtime merge `1e309fa77b864ed5ccd9831478a54fcdefe05419`; final post-merge CI is green.  
-**Release phase:** 0.2.12 including same-version Discovery hardening is complete in main. Production remains independently verified at 0.2.11; no 0.2.12 Namecheap deploy has been triggered.  
+**0.2.12 production render-fix branch:** `fix/0.2.12-discovery-rejection-render`, created directly from main `6656a7941c1e2d40a87f5318303b28527de859f8`; same VERSION, Discovery-only rendering/normalization fix plus regression test.  
+**Release phase:** 0.2.12 is deployed in production. A same-version hotfix is under verification for the post-scan sparse-rejection rendering error; no analytical threshold/provider/valuation behavior is being changed.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
@@ -77,7 +78,7 @@ Production and main are separately verified states. A merge to main does not imp
 - Scan cadence is explicit: retry in ~1 day after unhealthy/partial runs, ~3 days while recent broad-universe coverage is still thin, then weekly once breadth is established.
 - No dependency or deploy-workflow change is required.
 - Dedicated regressions live in `tests/test_0212_discovery.py`; `docs/LOCAL_WEB_PARITY_0_2_12.md` records Local/Web parity and the remaining incremental-breadth limitation.
-- Production remains 0.2.11 until an explicit post-merge deploy.
+- Production was advanced to 0.2.12 by manual deploy #50. The deploy itself passed health checks. A first real Discovery scan then exposed a sparse rejection-row rendering defect: Stage-2 enrichment rejections may legitimately omit Base-gap fields, while the template attempted numeric formatting of an undefined value. The same-version fix normalizes optional rejection fields and renders the gap only when a numeric value is present.
 
 ---
 

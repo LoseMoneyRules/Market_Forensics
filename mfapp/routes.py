@@ -622,7 +622,22 @@ def _normalized_market_scan(job: Job | None) -> dict:
     scan["coverage_progress"] = dict(scan.get("coverage_progress") or {}) if isinstance(scan.get("coverage_progress") or {}, dict) else {}
     scan["universe_health"] = dict(scan.get("universe_health") or {}) if isinstance(scan.get("universe_health") or {}, dict) else {}
     scan["scan_cadence"] = dict(scan.get("scan_cadence") or {}) if isinstance(scan.get("scan_cadence") or {}, dict) else {}
-    scan["rejection_log"] = list(scan.get("rejection_log") or []) if isinstance(scan.get("rejection_log") or [], list) else []
+    raw_rejections = list(scan.get("rejection_log") or []) if isinstance(scan.get("rejection_log") or [], list) else []
+    rejection_log = []
+    for raw in raw_rejections:
+        if not isinstance(raw, dict):
+            continue
+        rejection_log.append({
+            "ticker": str(raw.get("ticker") or "").upper(),
+            "stage": str(raw.get("stage") or ""),
+            "reason": str(raw.get("reason") or ""),
+            "detail": str(raw.get("detail") or ""),
+            "base": as_float(raw.get("base")),
+            "base_gap_pct": as_float(raw.get("base_gap_pct")),
+            "quality": str(raw.get("quality") or ""),
+            "valuation_methods": as_int(raw.get("valuation_methods"), 0),
+        })
+    scan["rejection_log"] = rejection_log
     return scan
 
 

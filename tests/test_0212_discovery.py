@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 from mfapp import create_app
 from mfapp.extensions import db
 from mfapp.models import User
+from mfapp.core_models import Job
 from mfapp.security import encrypt_secret, hash_password
 
 
@@ -479,3 +480,54 @@ def test_0212_discovery_ui_exposes_health_rejections_freshness_and_provenance():
         assert text in template
     assert "_discovery_promotion_provenance" in routes
     assert '"discovery_provenance"' in routes
+
+
+
+def test_0212_discovery_page_renders_sparse_stage2_rejection(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    user_id = _seed_control(app)
+    with app.app_context():
+        job = Job(
+            job_type="DISCOVERY_SCAN",
+            status="DONE",
+            priority=70,
+            user_id=user_id,
+            payload={},
+            result={
+                "market_scan": {
+                    "contract_version": "BROAD_FORENSIC_DISCOVERY_V2",
+                    "configured": True,
+                    "candidates": [],
+                    "errors": [],
+                    "stage0_count": 4000,
+                    "stage1_scanned_count": 240,
+                    "stage1_qualified_count": 100,
+                    "stage2_selected_count": 8,
+                    "stage2_enriched_count": 0,
+                    "provider_calls": {},
+                    "provider_call_total": 0,
+                    "guardrails": {},
+                    "coverage_progress": {},
+                    "universe_health": {"status": "OK", "flags": []},
+                    "scan_cadence": {},
+                    "rejection_log": [{
+                        "ticker": "ABC",
+                        "stage": "STAGE2 ENRICHMENT",
+                        "reason": "SEC TICKER UNRESOLVED",
+                        "detail": "",
+                    }],
+                }
+            },
+            finished_at=datetime(2026, 9, 19, 18, 45, 0),
+        )
+        db.session.add(job)
+        db.session.commit()
+
+    client = app.test_client()
+    _login(client, user_id)
+    response = client.get("/discovery")
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Investigated but rejected" in body
+    assert "SEC TICKER UNRESOLVED" in body
+    assert "Something went wrong" not in body
