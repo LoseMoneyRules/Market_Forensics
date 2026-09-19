@@ -14,7 +14,7 @@ STAGE0_CACHE_KEY = "discovery_stage0_v2"
 STAGE0_CURSOR_KEY = "discovery_stage0_cursor_v2"
 STAGE1_SEEN_KEY = "discovery_stage1_seen_v1"
 STAGE0_CACHE_HOURS = 24
-STAGE1_BATCH_SIZE = 240
+STAGE1_BATCH_SIZE = 360
 STAGE1_ACTIVITY_LIMIT = 160
 STAGE1_COVERAGE_LIMIT = 80
 SNAPSHOT_CHUNK_SIZE = 60
@@ -367,8 +367,8 @@ def stage1_screen(
     *,
     known_tickers: set[str] | None = None,
     min_price: float = 5.0,
-    min_daily_volume: float = 500_000.0,
-    min_dollar_volume: float = 50_000_000.0,
+    min_daily_volume: float = 200_000.0,
+    min_dollar_volume: float = 15_000_000.0,
 ) -> dict[str, Any]:
     """Cheap, rotating screen over the cached broad universe.
 

@@ -375,12 +375,12 @@ It advances through the cached Stage-0 universe in a bounded rotating batch and 
 
 Current bounded controls:
 
-- one rotating broad-universe slice of at most 240 names per run;
+- one rotating broad-universe slice of at most 360 names per run;
 - Most Active and Movers are retained only as a secondary activity lane capped at 160 names;
 - stored Coverage context is capped at 80 names per run;
 - snapshot requests are chunked sequentially in groups of 60;
 - liquidity qualification uses the previous completed daily bar when available, so an early-session run does not become activity-biased merely because the current day's volume is incomplete;
-- new external names must satisfy the configured price, daily-volume and dollar-liquidity floors before deep enrichment;
+- new external names must satisfy the configured price, daily-volume and dollar-liquidity floors before deep enrichment; the 0.2.12 opportunity-funnel tuning uses $5 minimum price, 200k completed-day shares and $15M completed-day dollar volume so investable mid-caps are not discarded merely for lacking mega-cap liquidity;
 - already-materialized intrinsic Coverage gaps may be used as a cheap prioritization clue;
 - Stage 1 never calls SEC Companyfacts.
 
@@ -390,7 +390,7 @@ The Stage-1 cursor is checkpointed. Repeated scans therefore advance through the
 
 ### Stage 2 — bounded forensic enrichment
 
-Only a small Stage-1 finalist set may spend SEC/filed-data budget.
+Only a small Stage-1 finalist set may spend SEC/filed-data budget. The 0.2.12 opportunity-funnel tuning caps deep enrichment at 10 finalists per run, up from 8, while keeping SEC work sequential and bounded.
 
 For external finalists:
 
@@ -402,20 +402,20 @@ For external finalists:
 - the **canonical valuation engine** is reused; Discovery does not own a duplicate valuation model;
 - reference-price fallback is disabled.
 
-A Discovery Base is accepted only if:
+Discovery and Validation are deliberately separated. Discovery is allowed to preserve a research lead before all decision-grade checks are complete; Research/Validation remains the stricter decision layer.
 
-- Base quality is INTRINSIC;
-- at least two canonical valuation methods are usable;
-- Bear/Base/Bull remain auditable where available.
+Opportunity tiers are:
 
-Final direction requires:
+- **P1 · Strong Opportunity** — decision-grade INTRINSIC Base, at least two usable valuation methods, absolute Base gap of at least 25%, and aligned filed TTM operating confirmation.
+- **P2 · Valuation Opportunity** — decision-grade INTRINSIC Base, at least two usable valuation methods, absolute Base gap of at least 20%, and no material filed operating contradiction. A company does not need a dramatic operating acceleration merely to deserve Research.
+- **WATCH · Emerging / Verification Needed** — either a 12–20% Base gap with aligned operating confirmation, or a gap of at least 20% where valuation quality/method count, operating alignment or short actionability still needs verification.
+- **Rejected** — evidence integrity prevents a useful research lead: Base/gap cannot be constructed, coherent filed TTM is unavailable, corporate-action/share basis is unresolved, ticker/SEC enrichment fails, or there is no minimum Discovery edge.
 
-- Long: intrinsic Base gap at least +20% plus confirming filed TTM operating evidence;
-- Short: intrinsic Base gap at most −20% plus confirming filed deterioration and current short actionability.
+P1/P2 Short leads must also be currently actionability-compatible (minimum short price and shortable flag). A compelling downside setup that is not currently short-actionable is preserved as WATCH rather than silently disappearing.
 
-A raw price move, Most Active rank or generic score can never create a final Long/Short candidate.
+A raw price move, Most Active rank or generic score can never create P1/P2/WATCH by itself.
 
-Final ranking is lexicographic and visible rather than a hidden composite: priority tier, absolute intrinsic Base gap, valuation-method count, operating-confirmation strength, then ticker.
+Final ranking is lexicographic and visible rather than a hidden composite: opportunity tier, absolute Base gap, valuation quality/method count, operating confirmation/contradiction, then ticker.
 
 Candidate output must expose at least:
 
@@ -424,7 +424,7 @@ Candidate output must expose at least:
 - Base fair-value gap;
 - valuation quality and method count;
 - operating confirmation;
-- direction;
+- direction and opportunity tier (P1 / P2 / WATCH);
 - why the name entered;
 - what would invalidate the Discovery setup;
 - data freshness;
@@ -432,7 +432,7 @@ Candidate output must expose at least:
 
 Evidence-grounded family labels may include Valuation Dislocation, Quality at Discount, Fundamental Inflection, Forensic Divergence and Deterioration / Short Setup. Labels are derived from the underlying gap/operating signals; they are not marketing categories.
 
-There is no final filler quota. Zero candidates is a valid successful run.
+There is no filler quota. Zero leads remains a valid successful run, but the funnel no longer requires final-validation-level operating confirmation for every valuation opportunity.
 
 ### Discovery hosting / provider discipline
 
@@ -442,7 +442,7 @@ Discovery is designed for shared hosting:
 - execution happens in the existing background job system;
 - Stage 0 is cached;
 - Stage 1 is chunked, checkpointed and incremental;
-- Stage 2 has a hard finalist cap and runs SEC work sequentially;
+- Stage 2 has a hard 10-finalist cap and runs SEC work sequentially;
 - provider-call counts, Stage-0/1/2 counts, exclusions and job status are visible in the stored result/UI;
 - a stale prior successful result remains readable while a new scan is queued/running;
 - no deploy workflow change or new dependency is required by 0.2.12.
@@ -483,7 +483,7 @@ This is guidance, not an automatic trade or research action.
 
 ### Discovery limitation to remember
 
-Broad coverage is **incremental**, not a synchronous full-market deep valuation pass. A single run deeply enriches only a bounded finalist set. Repeated runs advance the Stage-1 cursor through the cached operating-equity universe.
+Broad coverage is **incremental**, not a synchronous full-market deep valuation pass. A single run deeply enriches only a bounded 10-name finalist set. Repeated runs advance the Stage-1 cursor through the cached operating-equity universe.
 
 This is deliberate: it trades scan latency for provider discipline and shared-hosting reliability. Stage 1 still has no licensed whole-market fundamental/consensus dataset, so unknown names without stored evidence are prefiltered mainly by security validity, liquidity, broad rotation and current market metadata before Stage 2 performs the real forensic test.
 

@@ -52,7 +52,9 @@
 **Verified render-fix PR CI:** run `35462722236` / #1101 = completed / success on `c85157460f7cbc4258760816f68ac3ddfe456f0e`.  
 **Accepted render-fix merge:** `28f262da51f768c801d540d4b4d772964cfd7630`.  
 **Verified post-merge render-fix main CI:** run `35462772554` / #1102 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
-**Release phase:** 0.2.12 render fix is complete in main. Production is still running deploy #50 at pre-fix main `6656a7941c1e2d40a87f5318303b28527de859f8`, so one explicit redeploy is required to put `28f262da51f768c801d540d4b4d772964cfd7630` into production.  
+**0.2.12 opportunity-funnel branch:** `fix/0.2.12-discovery-opportunity-funnel`, created directly from current main `e5732676ae70937a622a3a73acb95ed3cc53b9a1`; VERSION remains `0.2.12`; scope remains Discovery-only.  
+**0.2.12 opportunity-funnel scope:** separate Discovery from final Validation: P1 strong opportunities, P2 valuation opportunities, WATCH emerging/verification-needed leads; Stage-1 liquidity rebalanced to 200k shares / $15M completed-day dollar volume; broad rotation 360 names/run; Stage-2 cap 10; no Research/Valuation/Portfolio/Tape/Auth/Settings/deploy redesign.  
+**Release phase:** same-version 0.2.12 Discovery opportunity-funnel rebalance is under branch verification. Production is still deploy #50 at pre-render-fix main `6656a7941c1e2d40a87f5318303b28527de859f8`; do not treat branch/main as production until an explicit later deploy.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
@@ -63,15 +65,15 @@ Production and main are separately verified states. A merge to main does not imp
 - Discovery now follows Stage 0 → Stage 1 → Stage 2 rather than treating Most Active / Movers as the effective market universe.
 - Stage 0 caches the Alpaca active US-equity catalog and fail-closes on active/tradable status, major US exchanges, ticker syntax and non-operating security patterns.
 - Stage 0 is CONTROL-private and does not create Coverage, Research or Portfolio records.
-- Stage 1 advances through a bounded 240-name rotating universe slice, caps the secondary Most Active / Movers lane at 160 and stored Coverage context at 80, chunks snapshot work in groups of 60 and checkpoints the next cursor only after snapshot work succeeds.
+- Stage 1 advances through a bounded 360-name rotating universe slice, caps the secondary Most Active / Movers lane at 160 and stored Coverage context at 80, chunks snapshot work in groups of 60 and checkpoints the next cursor only after snapshot work succeeds.
 - Stage 1 performs no SEC Companyfacts work.
-- Stage 2 has a hard 8-finalist deep-enrichment cap. It gives meaningful budget to quiet broad-rotation names, then performs sequential SEC/filed enrichment only on those finalists.
+- Stage 2 has a hard 10-finalist deep-enrichment cap. It gives most budget to quiet broad-rotation names while preserving near-edge stored names and a smaller activity lane, then performs sequential SEC/filed enrichment only on those finalists.
 - Stage 2 reuses the canonical valuation engine with reference-price fallback disabled; Discovery has no duplicate valuation model.
-- Final qualification requires INTRINSIC Base quality, at least 2 usable valuation methods, valid current and prior filed TTM evidence, and aligned operating confirmation.
-- Long requires Base gap >= +20%; Short requires Base gap <= -20% plus current short actionability.
-- Zero candidates remains a valid successful result; thresholds are not relaxed to fill the screen.
-- Final ranking is auditable/lexicographic rather than a hidden composite score.
-- Candidate UI shows Price, Bear/Base/Bull, Base gap, quality, method count, operating confirmation, direction, why found, invalidation, filed/market freshness, warning and explicit Promote; the Discovery-only landscape PDF is aligned to the same fields without reintroducing scan_score.
+- Discovery no longer requires final-validation-level confirmation merely to preserve a research lead. P1 requires an INTRINSIC Base, at least 2 methods, absolute gap >=25% and aligned operating confirmation; P2 requires the same decision-grade Base with absolute gap >=20% and no material operating contradiction.
+- WATCH preserves a 12–20% gap with aligned operating confirmation, or an absolute gap >=20% where valuation quality/method count, operating alignment or Short actionability still needs verification. P1/P2 Shorts remain actionability-gated.
+- Zero leads remains a valid successful result; thresholds are not relaxed to fill the screen.
+- Ranking is auditable/lexicographic rather than a hidden composite score: P1 / P2 / WATCH, absolute Base gap, valuation quality/method count, operating state, ticker.
+- Candidate UI shows P1/P2 Long/Short plus a dedicated WATCH section with Price, Bear/Base/Bull where available, Base gap, quality, method count, operating state, direction, why found, invalidation, filed/market freshness, warning and explicit Promote; the Discovery-only landscape PDF carries the same tier without reintroducing scan_score.
 - Normal Discovery GET remains provider-free. Job status, Stage-0/1/2 counts, exclusions and provider-call counts are stored/displayed.
 - Promotion remains explicit and ticker validation runs again before persistence.
 - Discovery promotion now writes the originating scan/candidate evidence into the permanent audit meta: scan job, direction/family, price, Bear/Base/Bull, Base gap, valuation quality/methods, operating confirmation, why found, invalidation and freshness.
@@ -80,6 +82,7 @@ Production and main are separately verified states. A merge to main does not imp
 - Stage-2 rejection diagnostics are bounded and ticker-specific, so investigated-but-rejected names show the actual failed gate instead of disappearing into aggregate counts.
 - Candidate freshness is split into market, filed fundamentals, valuation materialization and universe eligibility timestamps.
 - Share-count discontinuities, short filing histories and recent S-1/F-1/10-12 registration patterns are conservative pre-candidate basis-review guards; flagged names cannot become final Discovery candidates until the basis is reviewed.
+- Stage-1 investability floors are $5 price, 200k completed-day shares and $15M completed-day dollar volume for external names; this intentionally admits more investable mid-caps than the prior $50M/day gate.
 - Scan cadence is explicit: retry in ~1 day after unhealthy/partial runs, ~3 days while recent broad-universe coverage is still thin, then weekly once breadth is established.
 - No dependency or deploy-workflow change is required.
 - Dedicated regressions live in `tests/test_0212_discovery.py`; `docs/LOCAL_WEB_PARITY_0_2_12.md` records Local/Web parity and the remaining incremental-breadth limitation.

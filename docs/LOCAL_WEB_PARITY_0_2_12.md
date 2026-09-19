@@ -14,12 +14,12 @@ The objective is to recover the **broad liquid-universe / dislocation-search con
 | Most Active / Movers | PRESERVED AS SECONDARY | Activity feeds remain one investigation lane but no longer define the universe or Stage-2 shortlist. |
 | Broad liquid-universe concept | RECOVERED | Stage 1 applies validity, price, volume and dollar-liquidity filters to a bounded rotating slice and checkpoints the next cursor. |
 | Quiet liquid company can be investigated | RECOVERED | Stage-2 budget explicitly includes quiet broad-rotation names that are absent from Most Active / Movers. |
-| Generic screener score | NOT COPIED | Final qualification remains forensic and fail-closed; no generic composite score can create a candidate. |
-| Fair value central to Discovery | PRESERVED / HARDENED | Canonical valuation engine is reused with reference-price fallback disabled. Base must be INTRINSIC and supported by at least two usable methods. |
+| Generic screener score | NOT COPIED | Discovery uses explicit P1 / P2 / WATCH evidence tiers; no generic composite score can create a research lead. |
+| Fair value central to Discovery | PRESERVED / IMPROVED | Canonical valuation engine is reused with reference-price fallback disabled. INTRINSIC + 2 methods is required for P1/P2; a mathematically usable but not yet decision-grade Base may remain visible only as WATCH with an explicit verification warning. |
 | Bear / Base / Bull | PRESERVED | Stage 2 carries canonical scenario fair values into the Discovery candidate when mathematically available. |
-| Operating confirmation | HARDENED | Four coherent filed quarters are required for current TTM and a comparable prior TTM is required for the operating comparison. Annual fallback does not qualify a final Discovery candidate. |
-| Long dislocation | HARDENED | Base gap >= +20% plus confirming filed TTM operating evidence. |
-| Short dislocation | HARDENED | Base gap <= -20% plus confirming deterioration, price/actionability floor and current Alpaca shortable flag. Borrow depth/fee remains outside Discovery and is warned when unverified. |
+| Operating confirmation | HARDENED / REBALANCED | Four coherent filed quarters and comparable prior TTM remain required. P1 requires aligned operating confirmation; P2 accepts stable/not-materially-contradicting operations; WATCH preserves emerging or conflicting setups for Research. |
+| Long dislocation | REBALANCED | P1: >= +25% + aligned operations. P2: >= +20% decision-grade Base without material operating contradiction. WATCH: +12–20% with confirmation, or >= +20% with verification still needed. |
+| Short dislocation | REBALANCED | P1/P2 use the same valuation tiers and require current short actionability; a compelling but non-actionable downside case is WATCH instead of disappearing. Borrow depth/fee remains outside Discovery and is warned when unverified. |
 | Value-trap / divergence idea | PARTIALLY RECOVERED | Evidence-backed labels derive from actual working-capital/cash/operating signals. A label cannot substitute for final Long/Short qualification. |
 | No filler list | PRESERVED | Zero candidates is a successful run. |
 | Promotion into research | PRESERVED / SAFER | Discovery does not create Coverage, full Research, Portfolio or thesis state. Promote remains an explicit CONTROL action and ticker validation runs again before persistence. |
@@ -32,7 +32,7 @@ The objective is to recover the **broad liquid-universe / dislocation-search con
 | Freshness | IMPROVED | Market, filed fundamentals, valuation materialization and universe eligibility timestamps are separated. |
 | Corporate-action / basis guard | IMPROVED | Large share-count discontinuities, short filed history and recent registration/listing filings force review before final candidacy. |
 | Discovery → Research provenance | IMPROVED | Explicit Promote stores originating scan evidence in permanent audit metadata without auto-creating thesis/Portfolio state. |
-| Decision-list UI | IMPROVED | Compact two-column Long/Short list shows Price, Bear/Base/Bull, gap, quality, method count, operating evidence, invalidation, four-part freshness, warnings and Promote. |
+| Decision-list UI | IMPROVED | P1/P2 Long and Short lists remain compact; a dedicated WATCH section preserves emerging / verification-needed leads with Price/Base/gap, quality, methods, operating state, invalidation, freshness, warnings and Promote. |
 
 ## Stage 0 source and effective universe
 
@@ -59,12 +59,12 @@ The documentation deliberately does not hard-code a fake market-size number.
 
 Per run:
 
-- rotate through up to 240 Stage-0 members;
+- rotate through up to 360 Stage-0 members;
 - add at most 160 valid Most Active / Movers names as a secondary lane;
 - include at most 80 active Coverage names for cheap stored-context triage;
 - request snapshots sequentially in chunks of 60;
 - use the previous completed daily bar for liquidity when available, avoiding an early-session volume bias;
-- filter new names below $5, below 500k daily volume, or below $50M daily dollar volume;
+- filter new names below $5, below 200k completed-day shares, or below $15M completed-day dollar volume;
 - never call SEC Companyfacts;
 - checkpoint the next universe cursor.
 
@@ -72,12 +72,12 @@ The Stage-1 result is materialized inside the completed Discovery job result. Th
 
 ## Stage 2
 
-Deep-enrichment cap: 8 finalists per run.
+Deep-enrichment cap: 10 finalists per run.
 
 Budget order is intentionally breadth-first:
 
-1. up to 2 already-materialized intrinsic near-edge names;
-2. up to 4 quiet broad-rotation names;
+1. up to 3 already-materialized names whose stored Base gap is at least the 12% WATCH edge;
+2. up to 5 quiet broad-rotation names;
 3. up to 2 activity-lane names;
 4. any remaining capacity is filled from those same Stage-1 lanes.
 
@@ -90,7 +90,7 @@ Unknown finalists use:
 - SEC Companyfacts;
 - canonical Market Forensics valuation.
 
-Provider work is sequential and bounded. A normal run therefore has a hard upper bound of 480 Stage-1 snapshot symbols (8 snapshot batches) and 8 Stage-2 finalists. Stage 2 does not re-rank finalists by movers/activity.
+Provider work is sequential and bounded. A normal run has a hard upper bound of 600 Stage-1 snapshot symbols (10 snapshot batches) and 10 Stage-2 finalists. The cold-run provider envelope remains bounded at 34 calls. Stage 2 does not re-rank finalists by movers/activity.
 
 ## Final ranking
 
@@ -98,10 +98,10 @@ No opaque composite score.
 
 Ordering is:
 
-1. P1/P2 forensic priority tier;
-2. absolute intrinsic Base gap;
-3. number of usable valuation methods;
-4. operating-confirmation strength;
+1. P1 / P2 / WATCH opportunity tier;
+2. absolute Base gap;
+3. valuation quality / usable method count;
+4. operating confirmation or contradiction;
 5. ticker.
 
 The UI does not display the old generic scan-score dump.
@@ -137,3 +137,18 @@ No purple is introduced. Existing typography/design system remains the source of
 The final 0.2.12 hardening intentionally does not create a 0.2.13 contract. It adds observability and guardrails around the accepted 0.2.12 funnel without changing canonical valuation, Research, Tape, Portfolio, Authentication, Settings, Financial Flows or deployment architecture.
 
 Recommended operating cadence is adaptive but manual: retry the next day after a critical universe/provider anomaly, retry in roughly three days for warning-level health or while recent broad-universe coverage is still thin, and settle to weekly once coverage is established. Normal Discovery GET remains provider-free.
+
+
+## Same-version 0.2.12 opportunity-funnel rebalance
+
+The final 0.2.12 Discovery tuning separates **finding something worth researching** from **proving an investment case**. It does not lower Research/Validation standards and does not create BUY/SELL outputs.
+
+Key bounded changes:
+
+- Stage 1 broad rotation: 240 → 360 names/run.
+- External liquidity floor: 500k shares / $50M dollar volume → 200k shares / $15M dollar volume on the completed-day basis.
+- Stage 2 deep-enrichment cap: 8 → 10.
+- P1 requires >=25% absolute intrinsic edge plus aligned operating confirmation.
+- P2 requires >=20% absolute intrinsic edge with at least two methods and no material operating contradiction.
+- WATCH preserves 12–20% edges with confirmation and >=20% dislocations that still need valuation/operating/actionability verification.
+- Corporate-action/share-basis guards, coherent filed TTM requirements, provider discipline, explicit Promote, privacy boundaries and no-filler behavior remain intact.

@@ -531,8 +531,8 @@ def _normalized_market_scan(job: Job | None) -> dict:
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
     if scan and scan.get("contract_version") != "BROAD_FORENSIC_DISCOVERY_V2":
         return {
-            "candidates": [], "long_candidates": [], "short_candidates": [],
-            "candidate_count": 0, "long_count": 0, "short_count": 0,
+            "candidates": [], "long_candidates": [], "short_candidates": [], "watch_candidates": [],
+            "candidate_count": 0, "long_count": 0, "short_count": 0, "watch_count": 0,
             "p1_count": 0, "p2_count": 0, "known_enriched": 0,
             "excluded_count": 0, "excluded_breakdown": {}, "guardrails": {},
             "errors": [], "stale_contract": True,
@@ -573,6 +573,8 @@ def _normalized_market_scan(job: Job | None) -> dict:
                 "priority": str(raw.get("priority") or "P2"),
                 "priority_rank": as_int(raw.get("priority_rank"), 2),
                 "priority_reason": str(raw.get("priority_reason") or ""),
+                "opportunity_tier": str(raw.get("opportunity_tier") or raw.get("priority") or "P2").upper(),
+                "operating_state": str(raw.get("operating_state") or ""),
                 "why_found": list(raw.get("why_found") or []) if isinstance(raw.get("why_found") or [], list) else [],
                 "what_invalidates": str(raw.get("what_invalidates") or ""),
                 "data_freshness": raw.get("data_freshness"),
@@ -597,13 +599,15 @@ def _normalized_market_scan(job: Job | None) -> dict:
     ))
     errors = scan.get("errors")
     scan["candidates"] = candidates
-    scan["long_candidates"] = [row for row in candidates if row["research_side"] == "LONG"]
-    scan["short_candidates"] = [row for row in candidates if row["research_side"] == "SHORT"]
+    scan["long_candidates"] = [row for row in candidates if row["research_side"] == "LONG" and row.get("priority") != "WATCH"]
+    scan["short_candidates"] = [row for row in candidates if row["research_side"] == "SHORT" and row.get("priority") != "WATCH"]
+    scan["watch_candidates"] = [row for row in candidates if row.get("priority") == "WATCH"]
     scan["errors"] = [str(x) for x in errors] if isinstance(errors, list) else ([] if not errors else [str(errors)])
     scan["candidate_count"] = len(candidates)
     scan["known_enriched"] = as_int(scan.get("known_enriched"), sum(1 for x in candidates if x.get("in_coverage")))
     scan["long_count"] = len(scan["long_candidates"])
     scan["short_count"] = len(scan["short_candidates"])
+    scan["watch_count"] = len(scan["watch_candidates"])
     scan["p1_count"] = sum(1 for x in candidates if x.get("priority") == "P1")
     scan["p2_count"] = sum(1 for x in candidates if x.get("priority") == "P2")
     for key in (
@@ -663,6 +667,8 @@ def _discovery_promotion_provenance(user_id: int, ticker: str) -> dict:
         "base_gap_pct": row.get("base_gap_pct"),
         "fair_value_quality": row.get("fair_value_quality"),
         "valuation_methods": row.get("valuation_methods"),
+        "opportunity_tier": row.get("opportunity_tier") or row.get("priority"),
+        "operating_state": row.get("operating_state"),
         "operating_confirmation": list(row.get("operating_confirmation") or []),
         "why_found": list(row.get("why_found") or []),
         "what_invalidates": row.get("what_invalidates"),

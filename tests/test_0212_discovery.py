@@ -206,31 +206,48 @@ def test_0212_stage2_reuses_canonical_valuation_engine(monkeypatch):
     assert out["valuation_methods"] == 3
 
 
-def test_0212_provisional_reference_valuation_cannot_qualify(monkeypatch):
+def test_0212_provisional_reference_valuation_is_watch_not_qualified(monkeypatch):
     result = _run_scan(monkeypatch, _evidence(quality="PROVISIONAL_REFERENCE_FALLBACK"))
-    assert result["candidates"] == []
-    assert result["excluded_breakdown"]["BASE QUALITY NOT INTRINSIC"] >= 1
+    assert result["long_count"] == 0
+    assert result["watch_count"] == 1
+    assert result["watch_candidates"][0]["priority"] == "WATCH"
+    assert "needs verification" in result["watch_candidates"][0]["priority_reason"].lower()
 
 
-def test_0212_less_than_two_valuation_methods_cannot_qualify(monkeypatch):
+def test_0212_less_than_two_valuation_methods_is_watch_not_qualified(monkeypatch):
     result = _run_scan(monkeypatch, _evidence(methods=1))
-    assert result["candidates"] == []
-    assert result["excluded_breakdown"]["LESS THAN 2 VALUATION METHODS"] >= 1
+    assert result["long_count"] == 0
+    assert result["watch_count"] == 1
+    assert result["watch_candidates"][0]["valuation_methods"] == 1
 
 
-def test_0212_long_requires_20pct_gap_and_operating_confirmation(monkeypatch):
-    assert _run_scan(monkeypatch, _evidence(gap=19.9))["candidates"] == []
-    assert _run_scan(monkeypatch, _evidence(gap=25.0, signals=False))["candidates"] == []
-    good = _run_scan(monkeypatch, _evidence(gap=25.0))
-    assert [row["direction"] for row in good["candidates"]] == ["LONG"]
+def test_0212_long_funnel_distinguishes_p1_p2_and_watch(monkeypatch):
+    emerging = _run_scan(monkeypatch, _evidence(gap=19.9))
+    assert emerging["watch_count"] == 1
+    assert emerging["watch_candidates"][0]["priority"] == "WATCH"
+
+    no_signal_below_edge = _run_scan(monkeypatch, _evidence(gap=19.9, signals=False))
+    assert no_signal_below_edge["candidates"] == []
+
+    valuation_lead = _run_scan(monkeypatch, _evidence(gap=25.0, signals=False))
+    assert valuation_lead["long_count"] == 1
+    assert valuation_lead["long_candidates"][0]["priority"] == "P2"
+
+    strong = _run_scan(monkeypatch, _evidence(gap=25.0))
+    assert strong["long_count"] == 1
+    assert strong["long_candidates"][0]["priority"] == "P1"
 
 
-def test_0212_short_requires_minus20_deterioration_and_actionability(monkeypatch):
+def test_0212_short_actionability_downgrades_to_watch_instead_of_disappearing(monkeypatch):
     short = _evidence(gap=-25.0, side="SHORT")
     not_shortable = _run_scan(monkeypatch, short, row=_stage1_row("SHORTX", shortable=False))
-    assert not_shortable["candidates"] == []
+    assert not_shortable["short_count"] == 0
+    assert not_shortable["watch_count"] == 1
+    assert not_shortable["watch_candidates"][0]["direction"] == "SHORT"
+
     good = _run_scan(monkeypatch, short, row=_stage1_row("SHORTY", shortable=True))
-    assert [row["direction"] for row in good["candidates"]] == ["SHORT"]
+    assert good["short_count"] == 1
+    assert good["short_candidates"][0]["priority"] == "P1"
 
 
 def test_0212_zero_candidates_is_valid_run(monkeypatch):
@@ -302,7 +319,7 @@ def test_0212_stage1_all_lanes_are_hard_bounded(tmp_path, monkeypatch):
 
     assert len(captured["symbols"]) == 480
     assert result["scanned_count"] == 480
-    assert result["batch_size"] == 240
+    assert result["batch_size"] == 360
     assert result["activity_limit"] == 160
     assert result["coverage_limit"] == 80
 
@@ -334,17 +351,19 @@ def test_0212_stage2_and_snapshot_work_are_hard_bounded():
     import mfapp.discovery_universe as du
     import mfapp.market_discovery as md
 
-    assert df.FORENSIC_ENRICH_LIMIT == 8
-    assert du.STAGE1_BATCH_SIZE == 240
+    assert df.FORENSIC_ENRICH_LIMIT == 10
+    assert du.STAGE1_BATCH_SIZE == 360
     assert du.STAGE1_ACTIVITY_LIMIT == 160
     assert du.STAGE1_COVERAGE_LIMIT == 80
     assert du.SNAPSHOT_CHUNK_SIZE == 60
     rows = [_stage1_row(f"Q{i:03d}") for i in range(100)]
     selected = md._select_stage2_finalists(rows, {}, limit=df.FORENSIC_ENRICH_LIMIT)
-    assert len(selected) == 8
-    # Max normal run: 1 asset refresh + 2 screeners + ceil((240+160+80)/60)
-    # snapshots + 1 SEC map + 2 calls per 8 unknown finalists.
-    assert 1 + 2 + 8 + 1 + (2 * df.FORENSIC_ENRICH_LIMIT) <= 28
+    assert len(selected) == 10
+    # Max normal run: 1 asset refresh + 2 screeners + ceil((360+160+80)/60)
+    # snapshots + 1 SEC map + 2 calls per 10 unknown finalists.
+    assert 1 + 2 + 10 + 1 + (2 * df.FORENSIC_ENRICH_LIMIT) <= 34
+    assert md.MIN_DOLLAR_VOLUME == 15_000_000.0
+    assert md.MIN_DAILY_VOLUME == 200_000.0
 
 
 def test_0212_ttm_requires_four_coherent_fiscal_quarters():
@@ -383,7 +402,7 @@ def test_0212_tracks_recent_broad_universe_coverage(tmp_path, monkeypatch):
     user_id = _seed_control(app)
     members = [
         {"ticker": f"U{idx:03d}", "name": f"Universe {idx}", "exchange": "NYSE", "shortable": True}
-        for idx in range(300)
+        for idx in range(600)
     ]
     monkeypatch.setattr(du, "_activity_pool", lambda *args, **kwargs: {})
     monkeypatch.setattr(
@@ -410,9 +429,9 @@ def test_0212_tracks_recent_broad_universe_coverage(tmp_path, monkeypatch):
             [], Counter(), known_tickers=set(),
         )
 
-    assert first["coverage_progress"]["seen_7d"] == 240
-    assert first["coverage_progress"]["pct_7d"] == 80.0
-    assert second["coverage_progress"]["seen_7d"] == 300
+    assert first["coverage_progress"]["seen_7d"] == 360
+    assert first["coverage_progress"]["pct_7d"] == 60.0
+    assert second["coverage_progress"]["seen_7d"] == 600
     assert second["coverage_progress"]["pct_7d"] == 100.0
     assert second["coverage_progress"]["estimated_full_rotation_runs"] == 2
 
@@ -475,6 +494,7 @@ def test_0212_discovery_ui_exposes_health_rejections_freshness_and_provenance():
     routes = Path("mfapp/routes.py").read_text()
     for text in (
         "Universe health", "7d breadth", "30d breadth", "Investigated but rejected",
+        "Emerging / verification-needed leads", "Discovery finds research leads; Validation remains stricter",
         "Freshness · Market:", 'name="origin" value="discovery"',
     ):
         assert text in template

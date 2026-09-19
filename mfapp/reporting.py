@@ -1123,12 +1123,12 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     if not _load_report_libs():
         lines = [
             str(branding.get("title") or "Market Forensics") + " · Discovery",
-            "Broad-universe staged forensic screen · final names require intrinsic Base plus filed operating confirmation.",
+            "Broad-universe staged forensic screen · P1/P2 are stronger research leads; WATCH preserves emerging or verification-needed dislocations.",
             "",
         ]
         for idx, row in enumerate(candidates, start=1):
             lines.append(
-                f"{idx}. {row.get('ticker') or ''} · {row.get('research_side') or 'RESEARCH'} · "
+                f"{idx}. {row.get('ticker') or ''} · {row.get('priority') or 'WATCH'} · {row.get('research_side') or 'RESEARCH'} · "
                 f"price {_number(row.get('price'))} · Base {_number(row.get('base') if row.get('base') is not None else row.get('fair_value'))} · "
                 f"gap {_gap(row.get('base_gap_pct'))} · {int(row.get('valuation_methods') or 0)} methods · "
                 f"{row.get('radar_label') or ''}"
@@ -1151,13 +1151,14 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
         story += [RLImage(logo, width=1.0*inch, height=.34*inch), Spacer(1,3)]
     story += [
         Paragraph(escape(str(branding.get("title") or "Market Forensics")) + " · Discovery", styles["MFDiscTitle"]),
-        Paragraph("Broad-universe staged forensic screen · intrinsic Base and filed operating confirmation required.", styles["MFDiscBody"]),
+        Paragraph("Broad-universe staged forensic screen · P1/P2 are stronger research leads; WATCH preserves emerging or verification-needed dislocations.", styles["MFDiscBody"]),
     ]
-    rows = [["#","Ticker","Side","Price","Bear","Base","Bull","Gap","Methods","Forensic reason"]]
+    rows = [["#","Ticker","Tier","Side","Price","Bear","Base","Bull","Gap","Methods","Research reason"]]
     for idx, row in enumerate(candidates, start=1):
         rows.append([
             str(idx),
             str(row.get("ticker") or ""),
+            str(row.get("priority") or "WATCH"),
             str(row.get("research_side") or ""),
             _number(row.get("price")),
             _number(row.get("bear")),
@@ -1169,7 +1170,7 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
         ])
     table = Table(
         rows,
-        colWidths=[.28*inch,.55*inch,.52*inch,.62*inch,.60*inch,.60*inch,.60*inch,.62*inch,.55*inch,4.1*inch],
+        colWidths=[.25*inch,.48*inch,.48*inch,.48*inch,.58*inch,.56*inch,.56*inch,.56*inch,.58*inch,.50*inch,3.85*inch],
         repeatRows=1,
     )
     table.setStyle(TableStyle([
@@ -1204,7 +1205,7 @@ def render_discovery_pdf_safe(scan: dict[str, Any], branding: dict[str, str] | N
             except (TypeError, ValueError, ArithmeticError):
                 gap = "—"
             lines.append(
-                f"{idx}. {row.get('ticker') or ''} · {row.get('research_side') or 'RESEARCH'} · "
+                f"{idx}. {row.get('ticker') or ''} · {row.get('priority') or 'WATCH'} · {row.get('research_side') or 'RESEARCH'} · "
                 f"Base gap {gap} · {int(row.get('valuation_methods') or 0)} methods"
             )
         lines += ["", str(branding.get("footer") or "Lose Money Rules")]
