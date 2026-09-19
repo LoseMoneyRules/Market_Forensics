@@ -61,15 +61,7 @@
   {% endif %}
   {% block content %}{% endblock %}
 </main>
-{% if g.user %}
-<nav class="mobile-nav" aria-label="Primary mobile navigation">
-  {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}
-  <a href="{{ url_for('web.discovery') }}">Discover</a><a href="{{ url_for('web.dashboard') }}">Research</a><a href="{{ url_for('web.portfolio') }}">Portfolio</a><a href="{{ url_for('web.settings') }}">Data</a>
-  {% else %}<a href="{{ url_for('web.dashboard') }}">Research</a>{% if real_role == 'CONTROL' %}<a href="{{ url_for('preview.control_mode') }}">CONTROL</a>{% endif %}{% endif %}
-</nav>
-{% endif %}
 <script src="{{ url_for('static', filename='js/app.js', v=mf_version) }}" defer></script>
-<script src="{{ url_for('static', filename='js/theme.js', v=mf_version) }}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
