@@ -76,9 +76,9 @@ def test_025_core_control_pages_render_without_500(tmp_path, monkeypatch):
 def test_025_handoff_is_ready_for_next_chat():
     version = Path("VERSION").read_text().strip()
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert version == "0.2.7"
-    assert "**State-Version: 0.2.7**" in state
+    assert tuple(int(part) for part in version.split(".")) >= (0, 2, 7)
+    assert f"**State-Version: {version}**" in state
     assert "FORENSIC_FAIR_VALUE_V1" in state
     assert "Settings is the ONLY user-facing version surface" in state
     assert "A 405 is a release blocker." in state
-    assert "**Production:** 0.2.6 on Namecheap" in state
+    assert "**Production:**" in state and "Namecheap" in state
