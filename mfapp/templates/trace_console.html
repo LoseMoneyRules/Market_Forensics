@@ -38,7 +38,7 @@
             <td>{% if e.get('status') is not none %}{{ e.get('status') }}{% else %}—{% endif %}<small>{% if e.get('elapsed_ms') is not none %}{{ e.get('elapsed_ms') }} ms{% endif %}</small></td>
             <td>
               {% if e.get('exception_type') %}<strong>{{ e.get('exception_type') }}</strong>: {{ e.get('message','') }}{% elif e.get('role') %}role={{ e.get('role') }}{% elif e.get('message') %}{{ e.get('message') }}{% else %}—{% endif %}
-              {% if e.get('traceback') %}<details><summary>Traceback</summary><pre style="white-space:pre-wrap;overflow:auto;max-width:900px">{{ e.get('traceback') }}</pre></details>{% endif %}
+              {% if e.get('traceback') %}<details><summary>Traceback</summary><pre class="traceback-pre">{{ e.get('traceback') }}</pre></details>{% endif %}
             </td>
           </tr>
         {% endfor %}
