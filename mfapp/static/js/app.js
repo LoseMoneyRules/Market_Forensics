@@ -140,7 +140,21 @@
         return null;
       }
       const q = await response.json();
-      if (priceNode && Number.isFinite(Number(q.price))) priceNode.textContent = '  async function requestQuote() {
+      if (priceNode && Number.isFinite(Number(q.price))) priceNode.textContent = '$' + Number(q.price).toFixed(2);
+      if (priceMeta) {
+        priceMeta.textContent = '';
+        delete priceMeta.dataset.semantic;
+        const dot = document.createElement('i');
+        dot.className = 'live-dot' + (q.fresh ? '' : ' stale');
+        priceMeta.append(dot, document.createTextNode((q.provider || 'quote') + ' · ' + fmtTime(q.as_of)));
+      }
+      return q;
+    } catch (_) {
+      showQuoteUnavailable();
+      return null;
+    }
+  }
+  async function requestQuote() {
     if (!ticker || !csrf || !location.pathname.includes('/company/')) return;
     const current = await readQuote();
     if (current?.fresh) return;
@@ -150,13 +164,16 @@
       if (response.ok) {
         const state = await response.json();
         if (state?.status === 'COOLDOWN') marketBox?.classList.remove('refreshing');
+      } else {
+        showQuoteUnavailable('Live quote refresh unavailable');
       }
       window.setTimeout(readQuote, 2500);
       window.setTimeout(readQuote, 9000);
     } catch (_) {
       showQuoteUnavailable('Live quote refresh unavailable');
+    } finally {
+      window.setTimeout(() => marketBox?.classList.remove('refreshing'), 3000);
     }
-    finally { window.setTimeout(() => marketBox?.classList.remove('refreshing'), 3000); }
   }
   if (ticker && location.pathname.includes('/company/')) {
     window.setTimeout(requestQuote, 1600);
