@@ -51,31 +51,31 @@
         <div><p class="eyebrow">EVIDENCE</p><h2>For / against / signals</h2><p class="muted">One evidence view. Weighted items show direction and strength; supporting signals add context without bypassing readiness or validation.</p></div>
         <div class="evidence-score-compact">
           <span>Diagnostic score</span>
-          <strong>{{ '%+.2f'|format(intelligence.score) }}</strong>
+          <strong>{% if intelligence.get('score') is not none %}{{ '%+.2f'|format(intelligence.get('score')) }}{% else %}—{% endif %}</strong>
           <small>diagnostic only · Decision Lenses, readiness and validation remain canonical</small>
         </div>
       </div>
       <div class="evidence-consolidated-grid">
         <div class="evidence-column evidence-for">
           <h3>FOR</h3>
-          {% for s in intelligence.supporting_evidence[:6] %}
+          {% for s in intelligence.get('supporting_evidence', [])[:6] %}
           <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight positive">{{ '%+.2f'|format(s.weight) }}</b></p>
           {% else %}<p class="muted">No weighted supporting evidence yet.</p>{% endfor %}
         </div>
         <div class="evidence-column evidence-against">
           <h3>AGAINST</h3>
-          {% for s in intelligence.opposing_evidence[:6] %}
+          {% for s in intelligence.get('opposing_evidence', [])[:6] %}
           <p class="weighted-evidence-row"><span><strong>{{ s.label }}</strong> · {{ s.detail }}</span><b class="evidence-weight negative">{{ '%+.2f'|format(s.weight) }}</b></p>
           {% else %}<p class="muted">No weighted opposing evidence yet.</p>{% endfor %}
         </div>
         <div class="evidence-column evidence-signals">
           <h3>SIGNALS</h3>
-          {% for signal in intelligence.signals[:8] %}
+          {% for signal in intelligence.get('signals', [])[:8] %}
           <div class="evidence-signal-compact tone-{{ signal.tone }}" data-status-value="{{ signal.tone }}"><span><strong>{{ signal.label }}</strong> · {{ signal.detail }}</span><small>{{ signal.tone|upper }}</small></div>
           {% else %}<p class="muted">Refresh SEC and market evidence to populate signals.</p>{% endfor %}
         </div>
       </div>
-      {% if intelligence.blockers %}<div class="decision-blockers compact">{% for blocker in intelligence.blockers %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
+      {% if intelligence.get('blockers', []) %}<div class="decision-blockers compact">{% for blocker in intelligence.get('blockers', []) %}<p><strong>BLOCKER</strong> · {{ blocker }}</p>{% endfor %}</div>{% endif %}
     </div>
 
     <section class="panel export-research" aria-label="Export Research">
@@ -145,7 +145,7 @@
       </form>
     </div>
 
-    <div class="two-col"><form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='business') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><div><p class="eyebrow">BUSINESS</p><h2>Business quality & model</h2></div><button class="button primary">Save</button></div><label>Evidence-backed business read<textarea name="text" rows="15">{{ research.business|clean_auto }}</textarea></label><p class="muted">Automatic classification is only the starting point. Add moat, customer concentration, pricing power, cyclicality and competitive evidence when known.</p></form><div class="panel"><div class="panel-head"><h2>Automatic numeric clues</h2></div>{% for s in intelligence.signals if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No numeric clue stored yet.</p>{% endfor %}</div></div>
+    <div class="two-col"><form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='business') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><div><p class="eyebrow">BUSINESS</p><h2>Business quality & model</h2></div><button class="button primary">Save</button></div><label>Evidence-backed business read<textarea name="text" rows="15">{{ research.business|clean_auto }}</textarea></label><p class="muted">Automatic classification is only the starting point. Add moat, customer concentration, pricing power, cyclicality and competitive evidence when known.</p></form><div class="panel"><div class="panel-head"><h2>Automatic numeric clues</h2></div>{% for s in intelligence.get('signals', []) if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No numeric clue stored yet.</p>{% endfor %}</div></div>
 
   {% elif section == 'fundamentals' %}
     <div class="action-bar"><div><h2>Fundamentals · FY + current TTM</h2><p>SEC filing data, current TTM when four compatible quarters exist, and internal Base-case forecasts. Display is {{ number_format }}.</p></div><div class="button-row"><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='sec') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Refresh SEC + TTM</button></form><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='recalculate') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Recalculate</button></form></div></div>
@@ -163,7 +163,7 @@
       <div class="panel chart-card"><div class="panel-head"><div><h2>Revenue & free cash flow</h2><p class="muted">Revenue is shown as columns; free cash flow is the line. Current TTM is included only when four consecutive stored quarters reconcile.</p></div></div><canvas data-mf-chart="numbers-scale" data-series='{{ numbers_scale_series|tojson|forceescape }}'></canvas></div>
       <div class="panel chart-card"><div class="panel-head"><div><h2>Operating & FCF margin</h2><p class="muted">Profitability quality and forward Base assumptions.</p></div></div><canvas data-mf-chart="numbers-margin" data-series='[{% for r in financials|reverse %}{"label":"FY{{ r.fiscal_year }}","op_margin":{{ r.metrics.operating_margin_pct if r.metrics.operating_margin_pct is not none else "null" }},"fcf_margin":{{ r.metrics.fcf_margin_pct if r.metrics.fcf_margin_pct is not none else "null" }}}{% if not loop.last or forecast_rows %},{% endif %}{% endfor %}{% for f in forecast_rows %}{"label":"{{ f.period_label }}","forecast_op_margin":{{ (f.operating_margin*100) if f.operating_margin is not none else "null" }}}{% if not loop.last %},{% endif %}{% endfor %}]'></canvas></div>
       <div class="panel chart-card"><div class="panel-head"><div><h2>Working capital</h2><p class="muted">Inventory and receivables can reveal pressure before earnings do.</p></div></div><canvas data-mf-chart="working-capital" data-series='[{% for r in financials|reverse %}{"label":"FY{{ r.fiscal_year }}","inventory":{{ r.inventory|float if r.inventory is not none else "null" }},"receivables":{{ r.receivables|float if r.receivables is not none else "null" }}}{% if not loop.last %},{% endif %}{% endfor %}]'></canvas></div>
-      <div class="panel"><div class="panel-head"><h2>What stands out</h2></div>{% for s in intelligence.signals if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No material automatic signal yet.</p>{% endfor %}</div>
+      <div class="panel"><div class="panel-head"><h2>What stands out</h2></div>{% for s in intelligence.get('signals', []) if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No material automatic signal yet.</p>{% endfor %}</div>
     </div>
     <div class="table-card scroll"><table class="data-table numeric"><thead><tr><th>Period</th><th>Revenue</th><th>Growth</th><th>Gross Margin</th><th>Op Margin</th><th>Net Income</th><th>FCF</th><th>FCF Margin</th><th>Inventory</th><th>Receivables</th><th>DSO</th><th>DIO</th><th>CCC</th></tr></thead><tbody>{% if current_financial and current_financial.period_type == 'TTM' %}<tr class="ttm-row"><td><span class="period-chip">TTM</span> {{ current_financial.period_end }}</td><td>{{ num(current_financial.revenue) }}</td><td>{{ pct(current_financial.metrics.revenue_growth_pct) }}</td><td>{{ pct(current_financial.metrics.gross_margin_pct) }}</td><td>{{ pct(current_financial.metrics.operating_margin_pct) }}</td><td>{{ num(current_financial.net_income) }}</td><td>{{ num(current_financial.fcf) }}</td><td>{{ pct(current_financial.metrics.fcf_margin_pct) }}</td><td>{{ num(current_financial.inventory) }}</td><td>{{ num(current_financial.receivables) }}</td><td>{{ '%.1f'|format(current_financial.metrics.dso) if current_financial.metrics.dso is not none else '—' }}</td><td>{{ '%.1f'|format(current_financial.metrics.dio) if current_financial.metrics.dio is not none else '—' }}</td><td>{{ '%.1f'|format(current_financial.metrics.cash_conversion_days) if current_financial.metrics.cash_conversion_days is not none else '—' }}</td></tr>{% endif %}{% for r in financials %}<tr><td><strong>FY{{ r.fiscal_year }}</strong></td><td>{{ num(r.revenue) }}</td><td>{{ pct(r.metrics.revenue_growth_pct) }}</td><td>{{ pct(r.metrics.gross_margin_pct) }}</td><td>{{ pct(r.metrics.operating_margin_pct) }}</td><td>{{ num(r.net_income) }}</td><td>{{ num(r.fcf) }}</td><td>{{ pct(r.metrics.fcf_margin_pct) }}</td><td>{{ num(r.inventory) }}</td><td>{{ num(r.receivables) }}</td><td>{{ '%.1f'|format(r.metrics.dso) if r.metrics.dso is not none else '—' }}</td><td>{{ '%.1f'|format(r.metrics.dio) if r.metrics.dio is not none else '—' }}</td><td>{{ '%.1f'|format(r.metrics.cash_conversion_days) if r.metrics.cash_conversion_days is not none else '—' }}</td></tr>{% else %}<tr><td colspan="13" class="empty-cell">No normalized financials stored yet.</td></tr>{% endfor %}{% for f in forecast_rows %}<tr class="forecast-row"><td><strong>{{ f.period_label }}</strong></td><td>{{ num(f.revenue) }}</td><td>{{ pct(f.growth*100 if f.growth is not none else none) }}</td><td>—</td><td>{{ pct(f.operating_margin*100 if f.operating_margin is not none else none) }}</td><td>{{ num(f.net_income) }}</td><td>{{ num(f.fcf) }}</td><td>{{ pct(f.fcf_margin*100 if f.fcf_margin is not none else none) }}</td><td colspan="5">Base-case model forecast</td></tr>{% endfor %}</tbody></table></div>
     <div class="panel working-capital-forensics">
