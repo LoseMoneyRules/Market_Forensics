@@ -30,7 +30,7 @@ from .decision_lenses import build_decision_lenses
 from .expectations_engine import price_implied_expectations
 from .discovery_engine import classify_coverage, search_universe
 from .research_synthesis import build_synthesis
-from .research_cache import latest_research_cache, latest_cache_map
+from .research_cache import cache_is_stale, latest_research_cache, latest_cache_map
 from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
@@ -240,8 +240,16 @@ def _ctx(ticker: str) -> dict:
     market = latest_snapshot(security.id)
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     cache = latest_research_cache(coverage.id, company.id)
+    stale_cache = cache_is_stale(cache, coverage, model)
     valuation = dict((cache or {}).get("valuation") or valuation_result(coverage))
-    if not valuation.get("base_quality"):
+    if stale_cache and cache:
+        # Preserve the last visible Bear/Base/Bull while refusing to combine an
+        # old target with newly-saved model state. The background recalculation
+        # will replace this materialized snapshot.
+        valuation["base_quality"] = "DATA_WARNING"
+        valuation["quality"] = "DATA_WARNING"
+        valuation["decision_grade"] = False
+    elif not valuation.get("base_quality"):
         base_quality = stored_model_base_quality(model)
         valuation["base_quality"] = base_quality
         valuation["quality"] = valuation.get("quality") or base_quality
@@ -253,7 +261,7 @@ def _ctx(ticker: str) -> dict:
         Job.job_type == "RECALCULATE",
         Job.status.in_(["QUEUED", "RUNNING"]),
     ).first()
-    if cache is None and active_recalc is None:
+    if stale_cache and active_recalc is None:
         active_recalc = enqueue_job(
             "RECALCULATE",
             user_id=g.user.id,
@@ -396,7 +404,16 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
     for row in snapshot_rows:
         snapshots.setdefault(row.security_id, row)
 
-    caches = latest_cache_map([row.id for row in coverages])
+    coverage_ids = [row.id for row in coverages]
+    caches = latest_cache_map(coverage_ids)
+    model_rows = ValuationModel.query.filter(
+        ValuationModel.coverage_id.in_(coverage_ids),
+        ValuationModel.is_active.is_(True),
+    ).order_by(ValuationModel.id.desc()).all()
+    models: dict[int, ValuationModel] = {}
+    for model_row in model_rows:
+        models.setdefault(model_row.coverage_id, model_row)
+
     missing = [row.id for row in coverages if row.id not in caches]
     if missing:
         active_prime = Job.query.filter(
@@ -416,12 +433,25 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
         company = companies.get(security.company_id)
         cache = dict(caches.get(coverage.id) or {})
         market = snapshots.get(security.id)
+        model = models.get(coverage.id)
+        stale_cache = cache_is_stale(cache, coverage, model)
         valuation = dict(cache.get("valuation") or {
             "current_price": float(market.price) if market and market.price is not None else None,
             "bear": None, "base": None, "bull": None, "expected_value": None,
         })
-        if not valuation.get("base_quality"):
-            model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+        if stale_cache and cache:
+            valuation["base_quality"] = "DATA_WARNING"
+            valuation["quality"] = "DATA_WARNING"
+            valuation["decision_grade"] = False
+            enqueue_job(
+                "RECALCULATE",
+                user_id=user_id,
+                company_id=company.id,
+                security_id=security.id,
+                payload={"coverage_id": coverage.id},
+                priority=95,
+            )
+        elif not valuation.get("base_quality"):
             base_quality = stored_model_base_quality(model)
             valuation["base_quality"] = base_quality
             valuation["quality"] = valuation.get("quality") or base_quality
