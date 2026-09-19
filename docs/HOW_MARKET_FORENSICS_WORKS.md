@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.2.9  
+**Current product line:** 0.2.10  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -904,6 +904,14 @@ The market price is comparison-only for a true intrinsic valuation.
 
 A reference-price fallback is a visibility mechanism, not evidence of intrinsic value.
 
+Decision-grade Base quality is fail-closed:
+
+- INTRINSIC and MANUAL_OVERRIDE may feed the VALUE lens, ATTRACTIVE / FAIR / EXPENSIVE, Variant edge and Research Conclusion;
+- PROVISIONAL_STORED_FALLBACK, PROVISIONAL_REFERENCE_FALLBACK, MIXED / DATA WARNING remain visible but cannot create valuation edge or LONG / SHORT readiness/watch states;
+- the displayed Bear / Base / Bull values are preserved even when valuation quality is under review;
+- current market price is never evidence that an intrinsic fair value is correct;
+- cached 0.2.9 research is re-read against stored Base-quality provenance before a user-facing edge is allowed.
+
 ### 12.9 Discovery is stricter than Research display
 
 Discovery disables reference-price fallback.
@@ -1011,6 +1019,8 @@ Current label logic:
 - INSUFFICIENT EVIDENCE: no usable score.
 
 Management guidance/promises can be extracted from filings and compared with realized filed outcomes.
+
+Promise scoring is comparability-first. Every stored promise preserves source/date, metric, target period, basis/definition, comparability and status. PENDING may become MET or MISS only when the target and actual are economically comparable. Interim/quarterly targets, incompatible fiscal periods, adjusted/non-GAAP basis, management-defined FCF, retrospective guidance, later restatements, ambiguous comparator years, incompatible units/ranges or other unresolved definitions remain EVIDENCE_ONLY / non-comparable rather than receiving a false MET/MISS.
 
 This is accountability evidence, not an integrity/personality judgment.
 
@@ -1321,24 +1331,15 @@ Current Process/Decision Lens state:
 - LIMITED: insufficient sample / incomplete reliability / middling result;
 - VALIDATED: strong enough reliability with enough samples.
 
-Current readiness implementation requires approximately:
+The canonical validation policy is defined once and used by historical-run status, Validate, Process Readiness, Decision Lenses, Research Conclusion, report/export and cached/API-facing readiness:
 
-- reliability ≥ 65;
-- at least 5 completed samples;
+- VALIDATED requires at least 5 valid scored samples;
+- VALIDATED requires reliability ≥ 65;
+- fewer than 5 valid samples is LIMITED regardless of a high reliability score;
+- failed/error execution or very weak reliability is REVIEW;
+- no run is NOT RUN.
 
-for VALIDATED.
-
-### 19.4 Known validation inconsistency
-
-The underlying historical run currently marks its own run.status as VALIDATED at reliability ≥ 60 once sample size is at least 3.
-
-The user-facing readiness layer uses the stricter ≥65 + at least 5 sample rule.
-
-This inconsistency should be removed.
-
-There should be one canonical validation threshold policy.
-
-Until corrected, Decision Lenses follow the readiness-layer state.
+No user-facing surface may independently reinterpret these thresholds.
 
 ---
 
@@ -1491,22 +1492,7 @@ CURRENT_STATE must be updated after material main/deploy transitions.
 
 This section is deliberately candid. A tool becomes stronger when the limits are explicit.
 
-### 24.1 Validation has two threshold policies
-
-As described above:
-
-- historical run status uses one threshold;
-- readiness/Decision Lenses use a stricter threshold.
-
-**Improvement:** create one validation policy object/function used everywhere.
-
-### 24.2 Research can display provisional reference-price valuation
-
-This protects target-price visibility, but a market-derived provisional case can be confused with intrinsic value if labeling is weak.
-
-**Improvement:** make valuation quality impossible to miss and prevent provisional/reference targets from contributing to any “edge” conclusion that is supposed to be intrinsic.
-
-### 24.3 Model priors can hide weak source coverage
+### 24.1 Model priors can hide weak source coverage
 
 When growth or margins are unavailable, the valuation policy may use default priors.
 
@@ -1514,7 +1500,7 @@ That is acceptable only as an explicit model assumption.
 
 **Improvement:** surface assumption provenance per driver: FILED / HISTORICAL CALIBRATION / TYPE PRIOR / MANUAL.
 
-### 24.4 Readiness approval is monotonic even if evidence deteriorates
+### 24.2 Readiness approval is monotonic even if evidence deteriorates
 
 APPROVED · EVIDENCE CHANGED is useful and preserves human agency.
 
@@ -1522,25 +1508,25 @@ However a critical disappearance of evidence can theoretically remain approved u
 
 **Improvement:** distinguish ordinary evidence change from a critical evidence-invalid state without silently erasing human approval.
 
-### 24.5 Discovery is activity-biased
+### 24.3 Discovery is activity-biased
 
 Most Active / Movers is efficient but not a true broad valuation universe.
 
 **Improvement:** add a broad scheduled operating-equity universe scan, with Stage 1 designed around business/valuation dislocation rather than only current market activity.
 
-### 24.6 Peer triangulation is database-limited
+### 24.4 Peer triangulation is database-limited
 
 Sparse stored-company coverage creates sparse peers.
 
 **Improvement:** build a provider-backed peer universe by SIC/industry first, then enrich a bounded peer set without requiring those names to already be in Coverage.
 
-### 24.7 Expectations lack licensed consensus
+### 24.5 Expectations lack licensed consensus
 
 Current price-implied expectations are useful, and structured analyst expectations are supported, but they are not Street consensus.
 
 **Improvement:** add a licensed consensus/revisions provider when storage/display rights are clear.
 
-### 24.8 Borrow/options/ownership are incomplete
+### 24.6 Borrow/options/ownership are incomplete
 
 Borrow fee may be manual; options depth and ownership flows are not yet institutional-grade.
 
@@ -1554,13 +1540,13 @@ Potential future lanes:
 
 These must remain sourced and timestamped.
 
-### 24.9 SEC taxonomy coverage can still miss issuer-specific facts
+### 24.7 SEC taxonomy coverage can still miss issuer-specific facts
 
 Exact-label extension fallback improves recovery but cannot guarantee every issuer taxonomy maps cleanly.
 
 **Improvement:** add filing-instance/iXBRL-level fallback where Companyfacts remains insufficient, with strict provenance.
 
-### 24.10 Business qualitative evidence is still underdeveloped
+### 24.8 Business qualitative evidence is still underdeveloped
 
 Numbers, valuation and source audit are becoming stronger than:
 
@@ -1574,19 +1560,19 @@ Numbers, valuation and source audit are becoming stronger than:
 
 **Improvement:** create structured qualitative evidence objects rather than relying mainly on free text.
 
-### 24.11 Tape is heuristic
+### 24.9 Tape is heuristic
 
 Tape combines useful context, but it is not an institutional market-microstructure feed.
 
 **Improvement:** improve options/borrow/liquidity evidence and validate Tape heuristics historically before increasing their influence.
 
-### 24.12 Financial / REIT valuation is simplified
+### 24.10 Financial / REIT valuation is simplified
 
 The default Financial / REIT policy is currently P/E-centric.
 
 **Improvement:** add sector-specific valuation frameworks where economically appropriate.
 
-### 24.13 Research Conclusion thresholds need empirical calibration
+### 24.11 Research Conclusion thresholds need empirical calibration
 
 ATTRACTIVE +20%, EXPENSIVE −15%, catalyst/path thresholds and Tape thresholds are currently explicit and deterministic, which is better than hidden logic, but they still need validation.
 
