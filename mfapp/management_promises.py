@@ -733,7 +733,11 @@ def _actual_for_year(company_id: int, metric: str, year: int) -> dict[str, Any] 
     return _original_actual_for_year(company_id, metric, year) or _current_actual_for_year(company_id, metric, year)
 
 def _expected_unit(metric: str) -> str:
-    return "%" if metric.endswith("_pct") else "USD"
+    if metric.endswith("_pct"):
+        return "%"
+    if metric == "eps":
+        return "USD/SHARE"
+    return "USD"
 
 
 def _comparability(payload: dict[str, Any], actual: dict[str, Any] | None) -> tuple[str, str]:
@@ -743,6 +747,8 @@ def _comparability(payload: dict[str, Any], actual: dict[str, Any] | None) -> tu
     metric = str(payload.get("metric") or "")
     unit = str(payload.get("unit") or "").upper()
 
+    if str(payload.get("operator") or "").upper() == "QUALITATIVE":
+        return "NON_COMPARABLE", str(payload.get("comparability_reason") or "QUALITATIVE_GUIDANCE")
     if period_type != "FY":
         return "NON_COMPARABLE", "TARGET_PERIOD_NOT_FULL_YEAR"
     if unit != _expected_unit(metric).upper():
@@ -756,6 +762,8 @@ def _comparability(payload: dict[str, Any], actual: dict[str, Any] | None) -> tu
         return "COMPARABLE", ""
     if str(actual.get("period_type") or "").upper() != "FY":
         return "NON_COMPARABLE", "ACTUAL_PERIOD_NOT_FULL_YEAR"
+    if not actual.get("point_in_time_original"):
+        return "NON_COMPARABLE", "ORIGINAL_ACTUAL_NOT_VERIFIED"
     if actual.get("is_restated"):
         return "NON_COMPARABLE", "ACTUAL_IS_LATER_RESTATEMENT"
 
@@ -796,7 +804,13 @@ def evaluate_promises(company_id: int) -> list[dict[str, Any]]:
         if status == "PENDING" and actual is not None and low is not None and high is not None:
             low_f, high_f = float(low), float(high)
             if low_f == high_f:
-                tolerance = max(abs(low_f) * .05, 0.5 if str(payload.get("unit")) == "%" else 1.0)
+                unit = str(payload.get("unit") or "").upper()
+                if unit == "%":
+                    tolerance = max(abs(low_f) * .05, 0.5)
+                elif unit == "USD/SHARE":
+                    tolerance = max(abs(low_f) * .05, 0.01)
+                else:
+                    tolerance = max(abs(low_f) * .05, 1.0)
                 status = "MET" if abs(actual - low_f) <= tolerance else "MISS"
             else:
                 status = "MET" if low_f <= actual <= high_f else "MISS"
@@ -821,7 +835,9 @@ def evaluate_promises(company_id: int) -> list[dict[str, Any]]:
             "target_period_type": payload.get("target_period_type") or ("FY" if str(payload.get("origin") or "").upper() == "MANUAL" else "UNRESOLVED"),
             "low": low,
             "high": high,
+            "target_text": payload.get("target_text") or "",
             "unit": payload.get("unit") or "",
+            "operator": payload.get("operator") or "",
             "basis": payload.get("basis") or ("CONTROL_CONFIRMED" if str(payload.get("origin") or "").upper() == "MANUAL" else "UNRESOLVED"),
             "definition": payload.get("definition") or "",
             "comparability": comparability,
@@ -834,6 +850,8 @@ def evaluate_promises(company_id: int) -> list[dict[str, Any]]:
             "source_accession": payload.get("source_accession") or "",
             "source_form": payload.get("source_form") or "",
             "source_date": payload.get("source_date"),
+            "document_name": payload.get("document_name") or "",
+            "document_url": payload.get("document_url") or "",
             "actual": actual,
             "actual_provenance": actual_meta or {},
             "status": status,
@@ -879,7 +897,9 @@ def add_manual_promise(
             "target_period_type": "FY",
             "low": float(low),
             "high": float(high),
+            "target_text": "",
             "unit": unit,
+            "operator": "RANGE" if float(low) != float(high) else "TARGET",
             "basis": "CONTROL_CONFIRMED",
             "definition": "CONTROL-confirmed canonical Market Forensics metric.",
             "comparability": "COMPARABLE",
@@ -897,4 +917,9 @@ def add_manual_promise(
     return event
 
 
-__all__ = ["html_to_text", "extract_promises", "store_promises", "evaluate_promises", "add_manual_promise"]
+__all__ = [
+    "MANAGEMENT_SCAN_VERSION", "ORIGINAL_ACTUAL_VERSION",
+    "html_to_text", "extract_promises", "store_promises",
+    "original_actuals_from_companyfacts", "store_original_actuals",
+    "evaluate_promises", "add_manual_promise",
+]
