@@ -259,6 +259,12 @@
 
   {% elif section == 'management' %}
     <div class="action-bar"><div><h2>Management accountability</h2><p>Execution, capital allocation and promises vs filed actuals. No personality scoring.</p></div><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='management') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Scan SEC guidance</button></form></div>
+    {% set ms = management_scan.summary or {} %}
+    <div class="panel compact-panel">
+      <div class="panel-head"><div><p class="eyebrow">SEC GUIDANCE SCAN</p><h2>{{ management_scan.status }}</h2></div><span class="status-chip">Parser {{ ms.scan_version or '—' }}</span></div>
+      <p class="muted">{% if management_scan.finished_at %}Last finished {{ management_scan.finished_at }} · {% endif %}{{ ms.guidance_filings_scanned or 0 }} filings read · {{ ms.documents_scanned or 0 }} documents · {{ ms.promises_found or 0 }} promises/evidence found · {{ ms.promises_stored or 0 }} stored/updated · {{ ms.original_actuals_found or 0 }} original FY actuals verified{% if ms.scan_errors %} · {{ ms.scan_errors }} scan errors{% endif %}.</p>
+      <p class="muted">Automatic scope: SEC-filed/furnished material, including relevant 8-K exhibits. Conference-call-only guidance is not fabricated; add a sourced promise manually if it was not furnished to the SEC.</p>
+    </div>
     <div class="panel"><div class="panel-head"><div><p class="eyebrow">MANAGEMENT ENGINE</p><h2>Execution confidence from evidence</h2></div><span class="status-chip">{{ management_engine.coverage_pct }}% evidence coverage</span></div><div class="management-score"><div class="management-score-main"><strong>{{ '%.0f'|format(management_engine.score) if management_engine.score is not none else '—' }}</strong><span>{{ management_engine.label }}</span><small>Not a personality/integrity judgment</small></div><div>{% for c in management_engine.components %}<div class="management-component"><strong>{{ c.label }}</strong><b>{{ '%.0f'|format(c.score) if c.score is not none else '—' }}</b><span>{{ c.detail }}</span></div>{% endfor %}</div></div></div>
     <div class="two-col management-promises">
       <div class="panel">
