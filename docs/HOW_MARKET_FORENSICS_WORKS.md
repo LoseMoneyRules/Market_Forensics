@@ -512,12 +512,18 @@ They are descriptive, not Portfolio sizing instructions.
 
 ### 8.2 VALUE
 
-Uses Base fair-value gap vs current market price.
+Uses Base fair-value gap vs current market price only when the Base is decision-grade.
 
-- UNVERIFIED: gap unavailable.
-- ATTRACTIVE: Base gap ≥ +20%.
-- EXPENSIVE: Base gap ≤ −15%.
-- FAIR: between −15% and +20%.
+Decision-grade Research Base quality:
+- INTRINSIC;
+- MANUAL_OVERRIDE.
+
+- UNVERIFIED: gap unavailable **or** Base quality is provisional/reference/mixed/data-warning.
+- ATTRACTIVE: decision-grade Base gap ≥ +20%.
+- EXPENSIVE: decision-grade Base gap ≤ −15%.
+- FAIR: decision-grade Base gap between −15% and +20%.
+
+Bear / Base / Bull may remain visible while VALUE is UNVERIFIED. Visible target does not mean verified intrinsic target.
 
 These thresholds describe the current Research Lens. They do not by themselves produce a Long/Short conclusion.
 
@@ -543,10 +549,12 @@ Classification:
 ### 8.4 VARIANT
 
 - UNPROVEN: market view or our view is missing.
-- DEFINED · UNPROVEN: views exist but no variant evidence / structured expectations.
-- POSITIVE EDGE: Value ATTRACTIVE + Expectations FAVORABLE/BALANCED + variant evidence.
-- NEGATIVE EDGE: Value EXPENSIVE + Expectations DEMANDING/BALANCED + variant evidence.
-- POSSIBLE: defined but does not meet the stronger edge state.
+- DEFINED · UNPROVEN: views exist but Base is not decision-grade, or there is no variant evidence / structured expectations.
+- POSITIVE EDGE: decision-grade Value ATTRACTIVE + Expectations FAVORABLE/BALANCED + variant evidence.
+- NEGATIVE EDGE: decision-grade Value EXPENSIVE + Expectations DEMANDING/BALANCED + variant evidence.
+- POSSIBLE: defined with decision-grade valuation but does not meet the stronger edge state.
+
+A provisional/reference Base can never create POSITIVE EDGE or NEGATIVE EDGE.
 
 ### 8.5 PATH
 
@@ -593,13 +601,14 @@ Research invalidation is separate from Portfolio money risk.
 Research Conclusion follows a precedence order.
 
 1. Any Research gate not approved → **RESEARCH INCOMPLETE**
-2. All gates approved, Validate not run → **READY TO VALIDATE**
-3. Value ATTRACTIVE + Variant POSITIVE EDGE + Path SUPPORTIVE + Model Confidence STRONG/MODERATE → **LONG READY**
-4. Value ATTRACTIVE + Variant POSITIVE EDGE/POSSIBLE → **LONG WATCH**
-5. Value EXPENSIVE + Variant NEGATIVE EDGE + Path HOSTILE + Model Confidence STRONG/MODERATE → **SHORT READY**
-6. Value EXPENSIVE + Variant NEGATIVE EDGE/POSSIBLE → **SHORT WATCH**
-7. Model Confidence LIMITED → **DATA REVIEW**
-8. Otherwise → **NO EDGE · WAIT**
+2. All gates approved but Base is not decision-grade → **DATA REVIEW**
+3. All gates approved, decision-grade Base, Validate not run → **READY TO VALIDATE**
+4. Value ATTRACTIVE + Variant POSITIVE EDGE + Path SUPPORTIVE + Model Confidence STRONG/MODERATE → **LONG READY**
+5. Value ATTRACTIVE + Variant POSITIVE EDGE/POSSIBLE → **LONG WATCH**
+6. Value EXPENSIVE + Variant NEGATIVE EDGE + Path HOSTILE + Model Confidence STRONG/MODERATE → **SHORT READY**
+7. Value EXPENSIVE + Variant NEGATIVE EDGE/POSSIBLE → **SHORT WATCH**
+8. Model Confidence LIMITED → **DATA REVIEW**
+9. Otherwise → **NO EDGE · WAIT**
 
 Important:
 
