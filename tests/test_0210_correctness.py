@@ -576,6 +576,16 @@ def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_
         assert row["decision_lenses"]["value"] == "UNVERIFIED"
         assert row["decision_lenses"]["variant"] == "DEFINED · UNPROVEN"
         assert row["decision_lenses"]["research_conclusion"] == "DATA REVIEW"
+        assert "LONG DISLOCATION" not in row["discovery_labels"]
+        assert "QUALITY AT DISCOUNT" not in row["discovery_labels"]
+
+        from mfapp.market_discovery import _coverage_context_map
+        discovery_context = _coverage_context_map(user_id, {"STALE"})["STALE"]
+        assert discovery_context["valuation"]["base"] == 140.0
+        assert discovery_context["valuation"]["base_quality"] == "DATA_WARNING"
+        assert discovery_context["valuation"]["decision_grade"] is False
+        assert "LONG DISLOCATION" not in discovery_context["discovery_labels"]
+        assert "QUALITY AT DISCOUNT" not in discovery_context["discovery_labels"]
         assert Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").count() == 1
 
     client = app.test_client()
