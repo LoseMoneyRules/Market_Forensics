@@ -41,6 +41,15 @@
     <p class="muted">Research judges the security. Portfolio decides what the existing position allows you to do. ADD ON EVIDENCE, NOT ON PRICE.</p>
   </div>
 
+  <div class="kpi-grid compact">
+    <div class="kpi"><span>Current weight</span><strong>{{ '%.1f'|format(portfolio_weight_pct) }}%</strong></div>
+    <div class="kpi"><span>Suggested weight</span><strong>{% if capacity.target_weight_pct is not none %}{{ '%.1f'|format(capacity.target_weight_pct) }}%{% else %}—{% endif %}</strong></div>
+    <div class="kpi"><span>Headroom</span><strong>{% if capacity.headroom_pp is not none %}{{ '%+.1f'|format(capacity.headroom_pp) }} pp{% else %}—{% endif %}</strong><small>Descriptive sizing delta</small></div>
+    <div class="kpi"><span>Reference shares</span><strong>{% if capacity.target_shares is not none %}{{ '{:,.1f}'.format(capacity.target_shares) }}{% else %}—{% endif %}</strong><small>{% if capacity.delta_shares is not none %}{{ '+' if capacity.delta_shares >= 0 else '' }}{{ '{:,.1f}'.format(capacity.delta_shares) }} vs current{% else %}No share translation{% endif %}</small></div>
+    <div class="kpi"><span>Risk budget used</span><strong>{% if portfolio_row and portfolio_row.risk_budget_used_pct is not none %}{{ '%.2f'|format(portfolio_row.risk_budget_used_pct) }}%{% else %}—{% endif %}</strong><small>Current weight × adjusted downside</small></div>
+  </div>
+  <p class="muted">The weight/share map is a reference at the latest stored price and current gross portfolio value, not an order and not a Position Action input.</p>
+
   {% if not research_attached %}
   <div class="notice amber"><strong>PORTFOLIO ONLY.</strong> This is a real holding without a Research file. Capital tracking remains available; fair value, validation and thesis controls remain intentionally blank until Research is started.</div>
   {% elif readiness.validation.state != 'VALIDATED' %}
@@ -81,6 +90,66 @@
         <div class="kpi"><span>Adjusted loss</span><strong>{% if sizing.adjusted_loss_pct is not none %}{{ '%.1f'|format(sizing.adjusted_loss_pct) }}%{% else %}—{% endif %}</strong></div>
         <div class="kpi accent"><span>Suggested position</span><strong>{% if sizing.suggested_position_pct is not none %}{{ '%.1f'|format(sizing.suggested_position_pct) }}%{% else %}—{% endif %}</strong></div>
       </div>
+
+      <div class="panel embedded">
+        <div class="panel-head">
+          <div><p class="eyebrow">EVIDENCE CONFIRMATION</p><h3>Link Portfolio conditions to Monitoring</h3></div>
+        </div>
+        <p class="muted">Optional. The condition text stays Portfolio-owned. A linked Research → Monitoring rule provides machine-verifiable confirmation; it does not create a second monitoring engine.</p>
+
+        <div class="form-grid two">
+          <label>ADD confirmation rule
+            <select name="add_rule_id">
+              <option value="">Not linked</option>
+              {% for rule in condition_state.available_rules %}
+              <option value="{{ rule.id }}" {% if condition_state.conditions.ADD.rule_id == rule.id %}selected{% endif %}>{{ rule.name }} · {{ rule.latest_status }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>ADD confirms when
+            <select name="add_confirm_on">
+              <option value="OK" {% if condition_state.conditions.ADD.confirm_on == 'OK' %}selected{% endif %}>Rule is OK</option>
+              <option value="TRIGGERED" {% if condition_state.conditions.ADD.confirm_on == 'TRIGGERED' %}selected{% endif %}>Threshold triggers</option>
+            </select>
+          </label>
+
+          <label>TRIM confirmation rule
+            <select name="trim_rule_id">
+              <option value="">Not linked</option>
+              {% for rule in condition_state.available_rules %}
+              <option value="{{ rule.id }}" {% if condition_state.conditions.TRIM.rule_id == rule.id %}selected{% endif %}>{{ rule.name }} · {{ rule.latest_status }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>TRIM confirms when
+            <select name="trim_confirm_on">
+              <option value="OK" {% if condition_state.conditions.TRIM.confirm_on == 'OK' %}selected{% endif %}>Rule is OK</option>
+              <option value="TRIGGERED" {% if condition_state.conditions.TRIM.confirm_on == 'TRIGGERED' %}selected{% endif %}>Threshold triggers</option>
+            </select>
+          </label>
+
+          <label>EXIT confirmation rule
+            <select name="exit_rule_id">
+              <option value="">Not linked</option>
+              {% for rule in condition_state.available_rules %}
+              <option value="{{ rule.id }}" {% if condition_state.conditions.EXIT.rule_id == rule.id %}selected{% endif %}>{{ rule.name }} · {{ rule.latest_status }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>EXIT confirms when
+            <select name="exit_confirm_on">
+              <option value="OK" {% if condition_state.conditions.EXIT.confirm_on == 'OK' %}selected{% endif %}>Rule is OK</option>
+              <option value="TRIGGERED" {% if condition_state.conditions.EXIT.confirm_on == 'TRIGGERED' %}selected{% endif %}>Threshold triggers</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="kpi-grid compact">
+          <div class="kpi"><span>ADD evidence</span><strong>{{ 'CONFIRMED' if condition_state.conditions.ADD.confirmed else condition_state.conditions.ADD.latest_status }}</strong><small>{{ condition_state.conditions.ADD.rule_name or 'Not linked' }}</small></div>
+          <div class="kpi"><span>TRIM evidence</span><strong>{{ 'CONFIRMED' if condition_state.conditions.TRIM.confirmed else condition_state.conditions.TRIM.latest_status }}</strong><small>{{ condition_state.conditions.TRIM.rule_name or 'Not linked' }}</small></div>
+          <div class="kpi"><span>EXIT evidence</span><strong>{{ 'CONFIRMED' if condition_state.conditions.EXIT.confirmed else condition_state.conditions.EXIT.latest_status }}</strong><small>{{ condition_state.conditions.EXIT.rule_name or 'Not linked' }}</small></div>
+        </div>
+      </div>
       <label>Correlation / factor concentration notes<textarea name="correlation_notes" rows="3">{{ money_risk.correlation_notes if money_risk else '' }}</textarea></label>
       <label>Portfolio / thesis kill-switch<textarea name="kill_switch" rows="3">{{ money_risk.kill_switch if money_risk else '' }}</textarea></label>
       <label>Entry conditions<textarea name="entry_conditions" rows="3">{{ money_risk.entry_conditions if money_risk else '' }}</textarea></label>
@@ -97,6 +166,32 @@
       <span class="status-chip">{{ 'LOCKED' if research_risk and research_risk.invalidation_locked_at else 'UNLOCKED' }}</span>
     </div>
     <p>{% if research_risk %}{{ research_risk.thesis_invalidation or 'No thesis invalidation committed in Research yet.' }}{% else %}No Research file is attached yet.{% endif %}</p>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div><p class="eyebrow">ACTION HISTORY</p><h2>What changed</h2><p class="muted">Materialized by Portfolio recalculation only when Action, rule or Research Conclusion changes.</p></div>
+    </div>
+    {% if action_history %}
+    <div class="table-card embedded scroll">
+      <table class="data-table">
+        <thead><tr><th>When</th><th>From</th><th>To</th><th>Research</th><th>Trigger</th></tr></thead>
+        <tbody>
+          {% for event in action_history %}
+          <tr>
+            <td>{{ event.changed_at[:16]|replace('T', ' ') }}</td>
+            <td>{{ event.from_action or '—' }}</td>
+            <td>{{ event.to_action }}</td>
+            <td>{{ event.from_research or '—' }} → {{ event.to_research or '—' }}</td>
+            <td>{{ event.trigger }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted">No Position Action transition has been materialized yet.</p>
+    {% endif %}
   </div>
 
   {% if position %}

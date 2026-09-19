@@ -49,8 +49,12 @@ Production and main are separately verified states. A merge to main does not imp
 - Position Action is CONTROL-private and never crosses publication/member payload boundaries.
 - Normal GET reads only stored/materialized data and performs no provider call.
 - Dedicated regression coverage lives in `tests/test_0211_position_action.py`.
+- Same-release Portfolio command closure adds descriptive current→suggested sizing/headroom, optional ADD/TRIM/EXIT Monitoring confirmation links, background-materialized Needs Attention, deterministic Action transition history and aggregate descriptive downside-budget usage.
+- Research edits/Monitoring changes queue the existing deduplicated `PORTFOLIO_RECALCULATE` job after Research recalculation so Portfolio command state is materialized from the latest stored Research cache.
+- The extension adds no provider work to normal GET, no new public/member payload fields and no deploy-workflow change.
+- Additional regression coverage lives in `tests/test_0211_portfolio_command.py`.
 - `docs/LOCAL_WEB_PARITY_0_2_11.md` records the Local → Web recovery without re-coupling Research and Portfolio.
-- VERSION is 0.2.11. Production remains 0.2.10 until a later explicit deploy.
+- VERSION remains 0.2.11. Production remains 0.2.10 until a later explicit deploy.
 
 ---
 

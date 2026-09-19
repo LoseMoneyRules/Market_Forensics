@@ -14,8 +14,8 @@ from .extensions import db
 from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
-from .portfolio_engine import portfolio_rows, position_sizing
-from .position_action import build_position_action, monitoring_invalidation_state
+from .portfolio_engine import portfolio_rows, position_capacity, position_sizing
+from .position_action import build_position_action, monitoring_condition_state, monitoring_invalidation_state
 from .reporting import emergency_discovery_report_stream, emergency_research_report_stream, get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
@@ -335,6 +335,11 @@ def portfolio_security(ticker):
         ("SHORT" if investment and "SHORT" in str(investment.state or "").upper() else "LONG")
     ).upper()
     invalidation_state = monitoring_invalidation_state(coverage.id if coverage else None, research_risk)
+    condition_state = monitoring_condition_state(
+        user_id=g.user.id,
+        security_id=security.id,
+        coverage_id=coverage.id if coverage else None,
+    )
     position_action = build_position_action(
         position=position,
         side=side,
@@ -346,7 +351,19 @@ def portfolio_security(ticker):
         portfolio_weight_pct=weight_pct,
         sizing=sizing,
         monitoring_state=invalidation_state,
+        condition_state=condition_state,
     )
+    capacity = position_capacity(
+        current_price=market.price if market else None,
+        shares=position.shares if position else 0,
+        portfolio_value=portfolio_value,
+        current_weight_pct=weight_pct,
+        sizing=sizing,
+    )
+    history = [
+        item for item in list(totals.get("action_history") or [])
+        if int(item.get("security_id") or 0) == int(security.id)
+    ][:10]
 
     return render_template(
         "portfolio_security.html",
@@ -368,6 +385,9 @@ def portfolio_security(ticker):
         research_attached=coverage is not None,
         position_action=position_action,
         invalidation_state=invalidation_state,
+        condition_state=condition_state,
+        capacity=capacity,
+        action_history=history,
     )
 
 

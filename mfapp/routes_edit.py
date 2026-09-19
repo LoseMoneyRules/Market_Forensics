@@ -15,6 +15,7 @@ from .extensions import db
 from .jobs import enqueue_job
 from .management_promises import add_manual_promise
 from .portfolio_engine import ensure_portfolio_profile, ensure_portfolio_risk
+from .position_action import save_position_condition_links
 from .routes import RESEARCH_FIELDS, SECTION_KEYS, _ctx, _research_version, bp, dec, parse_date, utcnow
 from .security import role_required
 from .services import create_snapshot, ensure_security_from_validation
@@ -30,6 +31,9 @@ def _queue_recalc(ctx) -> None:
         payload={"coverage_id": ctx["coverage"].id},
         priority=95,
     )
+    # Position Action is materialized after Research cache work. The job is
+    # deduplicated, background-only and provider-free.
+    enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
 
 def _portfolio_security(ticker: str) -> Security | None:
     return (
@@ -434,10 +438,31 @@ def save_risk(ticker):
     risk.exit_conditions = str(request.form.get("exit_conditions") or "").strip()
     risk.notes = str(request.form.get("notes") or "").strip()
     risk.updated_by = g.user.id
+    coverage = Coverage.query.filter_by(user_id=g.user.id, security_id=security.id).first()
+    condition_links = save_position_condition_links(
+        user_id=g.user.id,
+        security_id=security.id,
+        coverage_id=coverage.id if coverage else None,
+        conditions={
+            "ADD": {
+                "rule_id": request.form.get("add_rule_id"),
+                "confirm_on": request.form.get("add_confirm_on"),
+            },
+            "TRIM": {
+                "rule_id": request.form.get("trim_rule_id"),
+                "confirm_on": request.form.get("trim_confirm_on"),
+            },
+            "EXIT": {
+                "rule_id": request.form.get("exit_rule_id"),
+                "confirm_on": request.form.get("exit_confirm_on"),
+            },
+        },
+    )
     audit("portfolio.risk.save", "security", security.id, {
         "ticker": security.ticker,
         "risk_budget_pct": float(risk.risk_budget_pct) if risk.risk_budget_pct is not None else None,
         "max_position_pct": float(risk.max_position_pct) if risk.max_position_pct is not None else None,
+        "condition_links": condition_links,
     })
     db.session.commit()
     enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)

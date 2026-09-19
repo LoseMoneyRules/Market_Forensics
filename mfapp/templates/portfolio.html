@@ -35,6 +35,37 @@
     <div class="kpi"><span>Top position</span><strong>{{ '%.1f'|format(totals['top_weight_pct']) }}%</strong><small>Gross portfolio weight</small></div>
   </div>
 
+  <div class="kpi-grid compact">
+    <div class="kpi"><span>Configured downside budget</span><strong>{{ '%.2f'|format(totals.risk_budget_configured_pct or 0) }}%</strong><small>Sum of per-position loss budgets</small></div>
+    <div class="kpi"><span>Budget used</span><strong>{{ '%.2f'|format(totals.risk_budget_used_pct or 0) }}%</strong><small>Current weights × adjusted downside</small></div>
+    <div class="kpi"><span>Unused configured budget</span><strong>{{ '%.2f'|format(totals.risk_budget_available_pct or 0) }}%</strong><small>Descriptive, not VaR</small></div>
+    <div class="kpi"><span>Risk unresolved</span><strong>{{ totals.risk_budget_unresolved or 0 }}</strong><small>Positions missing sizing reference</small></div>
+  </div>
+
+  {% if totals.needs_action %}
+  <div class="panel">
+    <div class="panel-head">
+      <div><p class="eyebrow">NEEDS ATTENTION</p><h2>Portfolio command</h2><p class="muted">Materialized after Portfolio recalculation. Highest-risk actions appear first.</p></div>
+      {% if totals.analytics_generated_at %}<span class="status-chip">{{ totals.analytics_generated_at[:16]|replace('T', ' ') }}</span>{% endif %}
+    </div>
+    <div class="table-card embedded scroll">
+      <table class="data-table">
+        <thead><tr><th>Security</th><th>Action</th><th>Research</th><th>Why now / blocker</th></tr></thead>
+        <tbody>
+          {% for item in totals.needs_action %}
+          <tr>
+            <td><a class="ticker-link" href="{{ url_for('web.portfolio_security', ticker=item.ticker) }}">{{ item.ticker }}</a></td>
+            <td><span class="status-chip">{{ item.action }}</span></td>
+            <td>{{ item.research_conclusion }}</td>
+            <td>{{ item.why_now }}{% if item.blocker %}<small class="block muted">{{ item.blocker }}</small>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
   {% if totals.risk_breaches %}
   <div class="notice amber"><strong>POSITION LIMIT BREACH.</strong> {% for b in totals.risk_breaches %}{{ b.ticker }} {{ '%.1f'|format(b.weight_pct) }}% vs max {{ '%.1f'|format(b.max_position_pct) }}%{% if not loop.last %} · {% endif %}{% endfor %}</div>
   {% endif %}
@@ -42,7 +73,7 @@
   <div class="table-card scroll">
     <table class="data-table numeric">
       <thead>
-        <tr><th>Security</th><th>Side</th><th>Research</th><th>Validation</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>Weight</th><th>P/L</th><th>Base</th><th>Risk / Position</th><th>Manage</th></tr>
+        <tr><th>Security</th><th>Side</th><th>Research</th><th>Validation</th><th>Action</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Market value</th><th>Weight</th><th>P/L</th><th>Base</th><th>Risk / Position</th><th>Manage</th></tr>
       </thead>
       <tbody>
       {% for row in rows %}
@@ -51,6 +82,7 @@
         <td>{{ row.side }}</td>
         <td>{{ row.coverage.status if row.coverage else 'NOT STARTED' }}</td>
         <td><span class="status-chip">{{ row.readiness.validation.state }}</span></td>
+        <td>{% if row.position_action %}<span class="status-chip">{{ row.position_action.action }}</span><small class="block muted">{{ row.position_action.research_conclusion }}</small>{% else %}<span class="muted">updating</span>{% endif %}</td>
         <td>{{ '{:,.3f}'.format(row.position.shares|float) }}</td>
         <td>&#36;{{ '{:,.2f}'.format(row.position.avg_cost|float) }}</td>
         <td>{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
@@ -75,7 +107,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="13" class="empty-cell">No positions recorded. Add a real holding above — no thesis is required first.</td></tr>
+      <tr><td colspan="14" class="empty-cell">No positions recorded. Add a real holding above — no thesis is required first.</td></tr>
       {% endfor %}
       </tbody>
     </table>
