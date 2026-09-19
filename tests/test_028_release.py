@@ -179,7 +179,7 @@ def test_028_polish_contract_keeps_expectations_forward_and_ui_readable():
     assert "Valuation map" in reporting
     assert "Thesis / variant perception" in reporting
     assert "Current fundamentals" in reporting
-    assert tuple(int(part) for part in Path("VERSION").read_text().strip().split(".")) >= (0, 2, 8)
+    assert Path("VERSION").read_text().strip() == "0.2.8"
 
 
 def test_028_tape_context_turns_scores_into_wait_long_short_or_lateral():
@@ -221,7 +221,7 @@ def test_028_second_polish_layout_contract():
     assert "ANALYSIS READY" in fundamentals and "missing_derived_metrics" in fundamentals
     assert ".tape-context-card{border-top:" not in css
     assert ".tape-context-card{padding:10px 12px!important" in css
-    assert tuple(int(part) for part in Path("VERSION").read_text().strip().split(".")) >= (0, 2, 8)
+    assert Path("VERSION").read_text().strip() == "0.2.8"
 
 
 def test_028_debt_components_recover_nike_style_total_debt():
@@ -336,7 +336,7 @@ def test_028_readiness_links_and_coverage_alpha_sort_contract():
     assert "data-research-conclusion" in template
     assert "payload?.research_conclusion" in js
     assert '"research_conclusion": (updated_lenses or {}).get("research_conclusion")' in workspace
-    assert tuple(int(part) for part in Path("VERSION").read_text().strip().split(".")) >= (0, 2, 8)
+    assert Path("VERSION").read_text().strip() == "0.2.8"
 
 
 def test_028_business_renders_with_partial_peer_overlay_cache(tmp_path, monkeypatch):
@@ -464,7 +464,7 @@ def test_028_canonical_operating_model_contract():
 
     assert "HOW_MARKET_FORENSICS_WORKS.md" in state
     assert "canonical product/decision-system contract" in state
-    assert tuple(int(part) for part in Path("VERSION").read_text().strip().split(".")) >= (0, 2, 8)
+    assert Path("VERSION").read_text().strip() == "0.2.8"
 
 
 def test_028_income_statement_is_sequential_revenue_to_net_waterfall():
