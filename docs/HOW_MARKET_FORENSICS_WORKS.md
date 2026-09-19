@@ -1440,17 +1440,19 @@ Canonical flow:
 
 Research remains position-agnostic and can conclude only with the canonical Research states such as RESEARCH INCOMPLETE, READY TO VALIDATE, LONG READY/WATCH, SHORT READY/WATCH, DATA REVIEW or NO EDGE · WAIT. It does not know shares, cost basis, Portfolio weight or sizing.
 
-Portfolio Position Action may combine that Research Conclusion with the user's stored position side, Validate state, Value / Variant / Path / Model Confidence, thesis control, latest stored locked-monitoring status, PortfolioRiskPlan, current gross exposure, downside-based suggested position and max-position cap.
+Portfolio Position Action may combine that Research Conclusion with the user's stored position side, Validate state, Value / Variant / Path / Model Confidence, thesis control, latest stored locked-monitoring status, PortfolioRiskPlan, current gross exposure, downside-based suggested position, max-position cap and optional explicit links from Portfolio conditions to existing Research Monitoring rules.
 
 Precedence is conservative:
 
 1. A triggered **locked pre-investment thesis invalidation** overrides valuation and forces EXIT / SELL for a Long or COVER for a Short.
-2. A Portfolio money-risk breach overrides directional Research and requires REDUCE / REDUCE SHORT.
-3. PORTFOLIO ONLY, RESEARCH INCOMPLETE, DATA REVIEW and READY TO VALIDATE fail closed and cannot create BUY / ADD / new SHORT exposure.
-4. Strong opposite-direction READY Research may require REDUCE, but does not by itself rewrite the locked invalidation or force a full exit.
-5. No-position LONG READY / SHORT READY may produce BUY CANDIDATE / SHORT CANDIDATE. Candidate is not an order.
-6. Existing same-direction READY may produce **ADD ON EVIDENCE / ADD SHORT ON EVIDENCE** only when Validate is VALIDATED, thesis control is CONTROLLED, Path is directionally supportive/hostile, Portfolio risk has headroom and an explicit stored evidence-to-add condition exists.
-7. LONG WATCH, SHORT WATCH and NO EDGE · WAIT cannot authorize an add.
+2. A confirmed explicit Portfolio EXIT condition may force EXIT / SELL or COVER without rewriting the thesis invalidation.
+3. A Portfolio money-risk breach overrides directional Research and requires REDUCE / REDUCE SHORT.
+4. A confirmed explicit Portfolio TRIM condition may require REDUCE / REDUCE SHORT.
+5. PORTFOLIO ONLY, RESEARCH INCOMPLETE, DATA REVIEW and READY TO VALIDATE fail closed and cannot create BUY / ADD / new SHORT exposure.
+6. Strong opposite-direction READY Research may require REDUCE, but does not by itself rewrite the locked invalidation or force a full exit.
+7. No-position LONG READY / SHORT READY may produce BUY CANDIDATE / SHORT CANDIDATE. Candidate is not an order.
+8. Existing same-direction READY may produce **ADD ON EVIDENCE / ADD SHORT ON EVIDENCE** only when Validate is VALIDATED, thesis control is CONTROLLED, Path is directionally supportive/hostile, Portfolio risk has headroom and an explicit stored evidence-to-add condition exists. If that condition is linked to Monitoring, the linked rule must also be confirmed.
+9. LONG WATCH, SHORT WATCH and NO EDGE · WAIT cannot authorize an add.
 
 Permanent rule:
 
@@ -1468,6 +1470,27 @@ The Position Action output is deliberately compact and auditable:
 - an internal deterministic rule/audit trace, not a user-facing score.
 
 Position Action is calculated from stored/materialized state on normal GET. It performs no provider calls.
+
+Portfolio condition confirmation is optional and reuses existing Research → Monitoring rules. Each ADD / TRIM / EXIT link explicitly defines whether confirmation means the rule is currently **OK** or its threshold has **TRIGGERED**. Portfolio does not reinterpret a Monitoring status implicitly.
+
+The background `PORTFOLIO_RECALCULATE` job materializes:
+
+- the latest deterministic Position Action for each live position;
+- a bounded action-transition history when Action, deterministic rule or Research Conclusion changes;
+- a Needs Attention command list ordered by exit/reduce/data-review urgency;
+- the existing correlation analytics.
+
+The Portfolio also exposes a descriptive sizing map:
+
+- current weight;
+- suggested weight;
+- percentage-point headroom;
+- reference target value/shares at the latest stored price and current gross portfolio value;
+- per-position downside budget used = current gross weight × adjusted downside.
+
+Reference dollars/shares are never an order and never feed back into Research Conclusion or Position Action.
+
+Portfolio-level downside-budget totals are simple sums of the configured per-position loss budgets and their currently used amounts. They are intentionally descriptive and are not presented as VaR or diversification-adjusted risk.
 
 Position Action and personalized sizing are CONTROL-private Portfolio data. They do not enter FRIEND/INSIDER publications or member-facing research artifacts.
 

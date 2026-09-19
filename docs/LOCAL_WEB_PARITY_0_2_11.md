@@ -23,6 +23,11 @@ The Web keeps the stronger separation:
 | Money-risk / max size | PortfolioRiskPlan + current gross weight + suggested position |
 | Thesis invalidation precedence | Locked Research invalidation + latest stored locked Monitoring status |
 | Add discipline | ADD ON EVIDENCE / ADD SHORT ON EVIDENCE are conditional; price is never confirmation |
+| Evidence confirmation | Optional Portfolio ADD / TRIM / EXIT links reuse existing Monitoring rules with explicit OK-vs-triggered semantics |
+| Position sizing translation | Current → suggested weight, headroom and reference dollars/shares; descriptive only, never an order |
+| Portfolio command | Background-materialized Needs Attention list from deterministic Position Action |
+| Action history | Bounded transition history records changes in Action/rule/Research Conclusion |
+| Portfolio downside budget | Sum of configured per-position loss budgets vs currently used adjusted-downside amount; descriptive, not VaR |
 | No-position action | BUY CANDIDATE / SHORT CANDIDATE / WAIT / DATA REVIEW |
 | Existing Long | HOLD / ADD ON EVIDENCE / HOLD-WAIT / REDUCE / EXIT-SELL / DATA REVIEW |
 | Existing Short | HOLD SHORT / ADD SHORT ON EVIDENCE / HOLD-WAIT / REDUCE SHORT / COVER / DATA REVIEW |
@@ -38,12 +43,14 @@ It does not move Risk into Research, does not change Tape, Discovery or Valuatio
 ## Fail-closed precedence
 
 1. locked thesis invalidation triggered;
-2. Portfolio risk-limit breach;
-3. Portfolio-only / incomplete / data-review / unvalidated Research;
-4. opposite-direction READY evidence;
-5. no-position candidate state;
-6. same-direction READY conditional add only with VALIDATED + CONTROLLED thesis + coherent Path + risk headroom + explicit evidence-to-add condition;
-7. WATCH / NO EDGE holds or waits.
+2. confirmed explicit Portfolio EXIT condition;
+3. Portfolio risk-limit breach;
+4. confirmed explicit Portfolio TRIM condition;
+5. Portfolio-only / incomplete / data-review / unvalidated Research;
+6. opposite-direction READY evidence;
+7. no-position candidate state;
+8. same-direction READY conditional add only with VALIDATED + CONTROLLED thesis + coherent Path + risk headroom + explicit evidence-to-add condition; a linked Monitoring confirmation must also be satisfied;
+9. WATCH / NO EDGE holds or waits.
 
 ## UI
 

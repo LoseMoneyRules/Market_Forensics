@@ -8,7 +8,7 @@ from sqlalchemy import and_
 
 from .core_models import (
     Company, Coverage, HistoricalPrice, InvestmentState, MarketSnapshot,
-    PortfolioRiskPlan, Position, PositionProfile, Security,
+    PortfolioRiskPlan, Position, PositionProfile, RiskPlan, Security,
 )
 from .extensions import db
 from .models import UserPreference
@@ -122,6 +122,123 @@ def position_sizing(current_price, risk: PortfolioRiskPlan | None) -> dict[str, 
     }
 
 
+def position_capacity(
+    *,
+    current_price,
+    shares,
+    portfolio_value,
+    current_weight_pct,
+    sizing: dict[str, Any],
+) -> dict[str, float | None]:
+    """Translate stored sizing into a descriptive position delta.
+
+    This is a reference map, not an order. Current price is used only to translate
+    already-computed Portfolio sizing into approximate dollars/shares; it never
+    creates the Position Action.
+    """
+    price = _f(current_price)
+    shares_now = abs(_f(shares))
+    total = _f(portfolio_value)
+    target_raw = sizing.get("suggested_position_pct")
+    target_pct = _f(target_raw) if target_raw is not None else None
+    current_pct = _f(current_weight_pct) if current_weight_pct is not None else None
+    if target_pct is None:
+        return {
+            "current_weight_pct": current_pct,
+            "target_weight_pct": None,
+            "headroom_pp": None,
+            "current_value": shares_now * price if price > 0 else None,
+            "target_value": None,
+            "delta_value": None,
+            "target_shares": None,
+            "delta_shares": None,
+        }
+
+    current_value = shares_now * price if price > 0 else None
+    target_value = total * target_pct / 100.0 if total > 0 else None
+    target_shares = target_value / price if target_value is not None and price > 0 else None
+    delta_value = target_value - current_value if target_value is not None and current_value is not None else None
+    delta_shares = target_shares - shares_now if target_shares is not None else None
+    return {
+        "current_weight_pct": current_pct,
+        "target_weight_pct": target_pct,
+        "headroom_pp": target_pct - current_pct if current_pct is not None else None,
+        "current_value": current_value,
+        "target_value": target_value,
+        "delta_value": delta_value,
+        "target_shares": target_shares,
+        "delta_shares": delta_shares,
+    }
+
+
+def merge_action_history(
+    previous_actions: dict[str, Any],
+    current_actions: dict[str, Any],
+    existing_history: list[dict[str, Any]],
+    *,
+    changed_at: str | None = None,
+) -> list[dict[str, Any]]:
+    """Append only meaningful deterministic Position Action transitions."""
+    stamp = changed_at or utcnow().isoformat()
+    history = list(existing_history or [])
+    new_events: list[dict[str, Any]] = []
+    for key, current in current_actions.items():
+        previous = dict(previous_actions.get(key) or {})
+        if not previous:
+            continue
+        changed = any(
+            previous.get(field) != current.get(field)
+            for field in ("action", "rule", "research_conclusion")
+        )
+        if not changed:
+            continue
+        new_events.append({
+            "security_id": current.get("security_id"),
+            "ticker": current.get("ticker"),
+            "changed_at": stamp,
+            "from_action": previous.get("action"),
+            "to_action": current.get("action"),
+            "from_rule": previous.get("rule"),
+            "to_rule": current.get("rule"),
+            "from_research": previous.get("research_conclusion"),
+            "to_research": current.get("research_conclusion"),
+            "trigger": current.get("why_now") or "",
+        })
+    return (new_events + history)[:100]
+
+
+def build_needs_action(actions: dict[str, Any]) -> list[dict[str, Any]]:
+    priority = {
+        "EXIT / SELL": 0,
+        "COVER": 0,
+        "REDUCE": 1,
+        "REDUCE SHORT": 1,
+        "DATA REVIEW": 1,
+        "ADD ON EVIDENCE": 2,
+        "ADD SHORT ON EVIDENCE": 2,
+    }
+    out: list[dict[str, Any]] = []
+    for item in actions.values():
+        action = str(item.get("action") or "")
+        research = str(item.get("research_conclusion") or "")
+        include = action in priority
+        if action in {"HOLD", "HOLD SHORT", "HOLD / WAIT"} and research in {"LONG READY", "SHORT READY"}:
+            include = True
+        if not include:
+            continue
+        out.append({
+            "security_id": item.get("security_id"),
+            "ticker": item.get("ticker"),
+            "action": action,
+            "research_conclusion": research,
+            "why_now": item.get("why_now") or "",
+            "blocker": item.get("blocker") or "",
+            "priority": priority.get(action, 3),
+        })
+    out.sort(key=lambda item: (item["priority"], str(item.get("ticker") or "")))
+    return out[:12]
+
+
 def ensure_portfolio_profile(user_id: int, security_id: int) -> PositionProfile:
     row = PositionProfile.query.filter_by(user_id=user_id, security_id=security_id).first()
     if row is None:
@@ -174,6 +291,10 @@ def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     investment_by_coverage = {
         row.coverage_id: row
         for row in InvestmentState.query.filter(InvestmentState.coverage_id.in_(coverage_ids)).all()
+    } if coverage_ids else {}
+    research_risk_by_coverage = {
+        row.coverage_id: row
+        for row in RiskPlan.query.filter(RiskPlan.coverage_id.in_(coverage_ids)).all()
     } if coverage_ids else {}
     profiles = {
         row.security_id: row
@@ -247,6 +368,7 @@ def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             "pnl": pnl,
             "pnl_pct": (((price / avg_cost) - 1.0) * sign * 100.0) if market and avg_cost > 0 else None,
             "investment": investment,
+            "research_risk": research_risk_by_coverage.get(coverage.id) if coverage else None,
             "risk": risk,
             "sizing": sizing,
             "valuation": dict(cache.get("valuation") or {}),
@@ -257,9 +379,35 @@ def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     for row in raw:
         value = row["market_value"]
         row["weight_pct"] = (value / total_market * 100.0) if value is not None and total_market else None
-        limit = _f(row["risk"].max_position_pct) if row.get("risk") and row["risk"].max_position_pct is not None else None
+        risk = row.get("risk")
+        limit = _f(risk.max_position_pct) if risk and risk.max_position_pct is not None else None
+        suggested = row["sizing"].get("suggested_position_pct")
+        effective_limits = [x for x in (limit, suggested) if x is not None and float(x) >= 0]
         row["position_limit_pct"] = limit
-        row["risk_breach"] = bool(limit is not None and row["weight_pct"] is not None and row["weight_pct"] > limit)
+        row["effective_limit_pct"] = min(effective_limits) if effective_limits else None
+        row["risk_breach"] = bool(
+            row["effective_limit_pct"] is not None
+            and row["weight_pct"] is not None
+            and row["weight_pct"] > row["effective_limit_pct"] + 0.05
+        )
+        adjusted = row["sizing"].get("adjusted_loss_pct")
+        row["risk_budget_used_pct"] = (
+            row["weight_pct"] * adjusted / 100.0
+            if row["weight_pct"] is not None and adjusted is not None else None
+        )
+        budget = _f(risk.risk_budget_pct) if risk and risk.risk_budget_pct is not None else None
+        row["risk_budget_pct"] = budget
+        row["risk_budget_remaining_pct"] = (
+            budget - row["risk_budget_used_pct"]
+            if budget is not None and row["risk_budget_used_pct"] is not None else None
+        )
+        row["capacity"] = position_capacity(
+            current_price=row["market"].price if row.get("market") else None,
+            shares=row["position"].shares,
+            portfolio_value=total_market,
+            current_weight_pct=row["weight_pct"],
+            sizing=row["sizing"],
+        )
 
     raw.sort(key=lambda x: abs(x["market_value"] or 0), reverse=True)
     weights = [float(row["weight_pct"]) for row in raw if row["weight_pct"] is not None]
@@ -290,21 +438,50 @@ def _assemble_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         "validated_pct": (validated / len(raw) * 100.0) if raw else 0.0,
         "risk_breaches": breaches,
         "factor_exposure": factor_exposure,
+        "risk_budget_configured_pct": sum(
+            row["risk_budget_pct"] for row in raw if row.get("risk_budget_pct") is not None
+        ),
+        "risk_budget_used_pct": sum(
+            row["risk_budget_used_pct"] for row in raw if row.get("risk_budget_used_pct") is not None
+        ),
+        "risk_budget_unresolved": sum(
+            1 for row in raw
+            if row.get("risk") is None or row["sizing"].get("adjusted_loss_pct") is None
+        ),
     }
 
 
 def portfolio_rows(user_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Fast request-path Portfolio view. Heavy correlations remain background materialized."""
+    """Fast request-path Portfolio view. Heavy/action analytics remain background materialized."""
     rows, totals = _assemble_rows(user_id)
     analytics = _stored_portfolio_analytics(user_id)
+    actions = dict(analytics.get("actions") or {})
+    for row in rows:
+        row["position_action"] = actions.get(str(row["security"].id))
     totals["correlations"] = list(analytics.get("correlations") or [])[:20]
+    totals["actions"] = actions
+    totals["needs_action"] = list(analytics.get("needs_action") or [])[:12]
+    totals["action_history"] = list(analytics.get("action_history") or [])[:100]
     totals["analytics_generated_at"] = analytics.get("generated_at")
     totals["analytics_ready"] = bool(analytics)
+    totals["risk_budget_available_pct"] = max(
+        0.0,
+        float(totals.get("risk_budget_configured_pct") or 0.0)
+        - float(totals.get("risk_budget_used_pct") or 0.0),
+    )
     return rows, totals
 
 
 def refresh_portfolio_analytics(user_id: int) -> dict[str, Any]:
-    rows, _ = _assemble_rows(user_id)
+    """Materialize correlations plus deterministic Portfolio command state."""
+    from .position_action import (
+        build_position_action,
+        monitoring_condition_state,
+        monitoring_invalidation_state,
+    )
+
+    rows, totals = _assemble_rows(user_id)
+    previous = _stored_portfolio_analytics(user_id)
     top = [row for row in rows if row.get("market_value") is not None][:8]
     series = {row["security"].id: _return_series(row["security"].id) for row in top}
     correlation_rows: list[dict[str, Any]] = []
@@ -319,10 +496,66 @@ def refresh_portfolio_analytics(user_id: int) -> dict[str, Any]:
                     "samples": samples,
                 })
     correlation_rows.sort(key=lambda row: abs(row["correlation"]), reverse=True)
+
+    actions: dict[str, Any] = {}
+    for row in rows:
+        coverage = row.get("coverage")
+        conditions = monitoring_condition_state(
+            user_id=user_id,
+            security_id=row["security"].id,
+            coverage_id=coverage.id if coverage else None,
+        )
+        invalidation = monitoring_invalidation_state(
+            coverage.id if coverage else None,
+            row.get("research_risk"),
+        )
+        action = build_position_action(
+            position=row["position"],
+            side=row["side"],
+            research_attached=coverage is not None,
+            decision_lenses=row.get("decision_lenses") or {},
+            readiness=row.get("readiness") or {},
+            research_risk=row.get("research_risk"),
+            money_risk=row.get("risk"),
+            portfolio_weight_pct=row.get("weight_pct"),
+            sizing=row.get("sizing") or {},
+            monitoring_state=invalidation,
+            condition_state=conditions,
+        )
+        key = str(row["security"].id)
+        actions[key] = {
+            "security_id": row["security"].id,
+            "ticker": row["security"].ticker,
+            "action": action["action"],
+            "rule": action["rule"],
+            "research_conclusion": action["research_conclusion"],
+            "why_now": action["why_now"],
+            "blocker": action["blocker"],
+            "next_confirmation": action["next_confirmation"],
+            "risk_state": action["risk_state"],
+            "weight_pct": row.get("weight_pct"),
+            "suggested_position_pct": (row.get("sizing") or {}).get("suggested_position_pct"),
+            "capacity": row.get("capacity") or {},
+            "conditions": conditions.get("conditions") or {},
+        }
+
+    history = merge_action_history(
+        dict(previous.get("actions") or {}),
+        actions,
+        list(previous.get("action_history") or []),
+    )
     value = {
         "generated_at": utcnow().isoformat(),
         "correlations": correlation_rows[:20],
         "top_security_ids": [row["security"].id for row in top],
+        "actions": actions,
+        "needs_action": build_needs_action(actions),
+        "action_history": history,
+        "risk_budget_summary": {
+            "configured_pct": totals.get("risk_budget_configured_pct") or 0.0,
+            "used_pct": totals.get("risk_budget_used_pct") or 0.0,
+            "unresolved_positions": totals.get("risk_budget_unresolved") or 0,
+        },
     }
     pref = UserPreference.query.filter_by(user_id=user_id, key=PORTFOLIO_CACHE_KEY).first()
     if pref is None:
@@ -338,7 +571,10 @@ __all__ = [
     "PORTFOLIO_CACHE_KEY",
     "ensure_portfolio_profile",
     "ensure_portfolio_risk",
+    "build_needs_action",
+    "merge_action_history",
     "portfolio_rows",
+    "position_capacity",
     "position_sizing",
     "refresh_portfolio_analytics",
 ]
