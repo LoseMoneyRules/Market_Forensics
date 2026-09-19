@@ -45,6 +45,21 @@ def cache_event_type(coverage_id: int) -> str:
     return f"{CACHE_PREFIX}{int(coverage_id)}"[:48]
 
 
+def _canonical_discovery_labels(payload: dict[str, Any]) -> list[str]:
+    intelligence = dict(payload.get("intelligence") or {})
+    if intelligence.get("valuation_base_quality") is None:
+        valuation = dict(payload.get("valuation") or {})
+        intelligence["valuation_base_quality"] = (
+            valuation.get("base_quality")
+            or valuation.get("quality")
+            or "DATA_WARNING"
+        )
+    return classify_coverage(
+        intelligence,
+        dict(payload.get("readiness") or {}),
+    )
+
+
 def latest_research_cache(coverage_id: int, company_id: int | None = None) -> dict[str, Any] | None:
     query = Event.query.filter_by(event_type=cache_event_type(coverage_id))
     if company_id is not None:
@@ -55,10 +70,7 @@ def latest_research_cache(coverage_id: int, company_id: int | None = None) -> di
     payload = dict(row.payload or {})
     # Recompute Discovery labels from current fail-closed policy on read. Old
     # materialized labels must not preserve a value signal after quality rules tighten.
-    payload["discovery_labels"] = classify_coverage(
-        dict(payload.get("intelligence") or {}),
-        dict(payload.get("readiness") or {}),
-    )
+    payload["discovery_labels"] = _canonical_discovery_labels(payload)
     payload["_event_id"] = row.id
     payload["_generated_at"] = row.event_date.isoformat() if row.event_date else None
     return payload
@@ -79,10 +91,7 @@ def latest_cache_map(coverage_ids: list[int]) -> dict[int, dict[str, Any]]:
         if coverage_id not in ids or coverage_id in out:
             continue
         payload = dict(row.payload or {})
-        payload["discovery_labels"] = classify_coverage(
-            dict(payload.get("intelligence") or {}),
-            dict(payload.get("readiness") or {}),
-        )
+        payload["discovery_labels"] = _canonical_discovery_labels(payload)
         payload["_event_id"] = row.id
         payload["_generated_at"] = row.event_date.isoformat() if row.event_date else None
         out[coverage_id] = payload
