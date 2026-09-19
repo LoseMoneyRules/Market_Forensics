@@ -16,9 +16,17 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-GUIDANCE_WORDS = r"(?:expect(?:s|ed)?|guidance|outlook|forecast(?:s|ed)?|anticipat(?:e|es|ed)|target(?:s|ed)?)"
+MANAGEMENT_SCAN_VERSION = "5"
+ORIGINAL_ACTUAL_VERSION = "1"
+
+GUIDANCE_WORDS = (
+    r"(?:expect(?:s|ed|ing)?|guidance|outlook|forecast(?:s|ed|ing)?|"
+    r"anticipat(?:e|es|ed|ing)|target(?:s|ed|ing)?|project(?:s|ed|ing)?|"
+    r"estimat(?:e|es|ed|ing))"
+)
 INTERIM_WORDS = re.compile(
-    r"\b(?:q[1-4]|quarter|quarterly|first\s+half|second\s+half|h[12]|six\s+months|nine\s+months|ytd|year[- ]to[- ]date)\b",
+    r"\b(?:q[1-4]|quarter|quarterly|first\s+half|second\s+half|h[12]|"
+    r"six\s+months|nine\s+months|ytd|year[- ]to[- ]date)\b",
     re.I,
 )
 FULL_YEAR_PATTERNS = (
@@ -26,9 +34,28 @@ FULL_YEAR_PATTERNS = (
     re.compile(r"\b(20[2-4]\d)\s*(?:fy|fiscal(?:\s+year)?|full[-\s]?year)\b", re.I),
 )
 NON_GAAP_WORDS = re.compile(
-    r"\b(?:adjusted|non[-\s]?gaap|organic|constant[-\s]?currency|currency[-\s]?neutral|comparable\s+sales|excluding)\b",
+    r"\b(?:adjusted|non[-\s]?gaap|organic|constant[-\s]?currency|currency[-\s]?neutral|"
+    r"comparable\s+sales|excluding|exclude(?:s|d)?|underlying)\b",
     re.I,
 )
+DECLINE_WORDS = re.compile(r"\b(?:declin(?:e|es|ed|ing)|decreas(?:e|es|ed|ing)|down|contract(?:s|ed|ing)?)\b", re.I)
+QUALITATIVE_WORDS = re.compile(
+    r"\b(?:low|mid|high)[-\s]single[-\s]digit(?:s)?\b|"
+    r"\b(?:single|double)[-\s]digit(?:s)?\b|"
+    r"\b(?:roughly\s+flat|approximately\s+flat|about\s+flat|flat)\b|"
+    r"\b(?:increase|growth|grow|decline|decrease|down|up)\b[^.;]{0,70}",
+    re.I,
+)
+
+ORIGINAL_ACTUAL_TAGS: dict[str, tuple[str, ...]] = {
+    "revenue": ("RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"),
+    "gross_profit": ("GrossProfit",),
+    "operating_income": ("OperatingIncomeLoss",),
+    "net_income": ("NetIncomeLoss", "ProfitLoss"),
+    "cfo": ("NetCashProvidedByUsedInOperatingActivities",),
+    "capex": ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsForAdditionsToPropertyPlantAndEquipment"),
+    "eps": ("EarningsPerShareDiluted",),
+}
 
 
 def html_to_text(raw: str) -> str:
@@ -45,12 +72,17 @@ def _scale_money(value: float, unit: str) -> float:
         return value * 1_000_000_000
     if unit.startswith("m"):
         return value * 1_000_000
+    if unit.startswith("k"):
+        return value * 1_000
     return value
 
 
 def _sentences(text: str) -> list[str]:
-    chunks = re.split(r"(?<=[.!?])\s+", text)
-    return [s.strip() for s in chunks if 20 <= len(s.strip()) <= 900]
+    # SEC HTML often loses paragraph structure. Split on punctuation, bullets and
+    # semicolons while keeping enough local context for guidance ranges.
+    normalized = re.sub(r"[\u2022\u25aa\u25cf]", ". ", text or "")
+    chunks = re.split(r"(?<=[.!?;])\s+|\s{2,}", normalized)
+    return [s.strip(" -–—\t") for s in chunks if 20 <= len(s.strip()) <= 1200]
 
 
 def _iso_day(value: Any) -> str | None:
