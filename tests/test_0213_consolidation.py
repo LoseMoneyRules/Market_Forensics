@@ -52,7 +52,7 @@ def test_0213_css_readability_responsive_and_cleanup_contract():
         assert forbidden not in lowered
     assert "font-size:11px" not in css
     assert not re.search(r"/\*\s*0\.2\.\d+", css)
-    assert css.count("!important") <= 54
+    assert css.count("!important") <= 14
     assert "body{margin:0" in css and "font-size:14px" in css
     assert ":focus-visible{" in css
     assert ".table-card{overflow-x:auto;overflow-y:hidden" in css
