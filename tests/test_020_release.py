@@ -765,11 +765,19 @@ def test_020_cached_navigation_never_runs_heavy_research_engines(tmp_path, monke
     ):
         monkeypatch.setattr(routes, name, bomb)
 
+    def network_bomb(*args, **kwargs):
+        raise AssertionError("normal GET navigation must not call external providers")
+
+    monkeypatch.setattr("requests.sessions.Session.request", network_bomb)
+
     client = app.test_client()
     login_control(client, uid)
     for path in (
         "/", "/discovery", "/company/EXM/overview", "/company/EXM/business",
+        "/company/EXM/fundamentals", "/company/EXM/expectations",
         "/company/EXM/management", "/company/EXM/tape",
+        "/company/EXM/financial-flows", "/company/EXM/validate",
+        "/portfolio", "/settings",
     ):
         response = client.get(path)
         assert response.status_code == 200, (path, response.status_code, response.data[:400])
