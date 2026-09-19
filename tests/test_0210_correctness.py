@@ -416,7 +416,7 @@ def test_0210_discovery_manual_override_is_not_intrinsic_candidate(monkeypatch):
     assert _local_forensics(context, 100.0, -5.0) is None
 
 
-def test_0210_discovery_labels_fail_closed_without_intrinsic_quality():
+def test_0210_discovery_labels_require_intrinsic_quality():
     from mfapp.discovery_engine import classify_coverage
 
     readiness = {"done": 13, "total": 13}
@@ -428,7 +428,6 @@ def test_0210_discovery_labels_fail_closed_without_intrinsic_quality():
         "negatives": 0,
         "positives": 3,
     }
-    assert "LONG DISLOCATION" not in classify_coverage(dict(common), readiness)
     assert "LONG DISLOCATION" not in classify_coverage(
         {**common, "valuation_base_quality": "MANUAL_OVERRIDE"},
         readiness,
@@ -438,3 +437,35 @@ def test_0210_discovery_labels_fail_closed_without_intrinsic_quality():
         readiness,
     )
     assert "LONG DISLOCATION" in labels
+
+
+def test_0210_legacy_cache_missing_quality_is_normalized_fail_closed(tmp_path):
+    from mfapp.research_cache import cache_event_type, latest_research_cache
+
+    app = make_app(tmp_path, "legacy_cache_quality")
+    _, company_id, _, coverage_id = seed_workspace(app, "OLD")
+    with app.app_context():
+        db.session.add(Event(
+            company_id=company_id,
+            event_type=cache_event_type(coverage_id),
+            title="OLD research cache",
+            event_date=datetime(2026, 9, 18, 12, 0, 0),
+            payload={
+                "valuation": {"current_price": 100.0, "base": 140.0},
+                "intelligence": {
+                    "base_gap_pct": 40.0,
+                    "bias": "LONG",
+                    "stance": "ATTRACTIVE",
+                    "confidence": "HIGH",
+                    "negatives": 0,
+                    "positives": 3,
+                },
+                "readiness": {"done": 13, "total": 13},
+                "discovery_labels": ["QUALITY AT DISCOUNT", "LONG DISLOCATION"],
+            },
+        ))
+        db.session.commit()
+        cache = latest_research_cache(coverage_id, company_id)
+        assert cache is not None
+        assert "LONG DISLOCATION" not in cache["discovery_labels"]
+        assert "QUALITY AT DISCOUNT" not in cache["discovery_labels"]
