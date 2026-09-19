@@ -277,7 +277,8 @@ def extract_promises(
         (
             "eps",
             r"(?:diluted\s+)?(?:earnings\s+per\s+share|eps)[^.;]{0,140}?"
-            r"\$?\s*(-?\d+(?:\.\d+)?)"
+            r"(?:(?:of|between|range(?:\s+of)?|to\s+be|approximately|about|:)\s*\$?\s*|\$\s*)"
+            r"(-?\d+(?:\.\d+)?)"
             r"(?:\s*(?:to|-|–|and)\s*\$?\s*(-?\d+(?:\.\d+)?))?",
             "USD/share",
         ),
@@ -629,23 +630,23 @@ def original_actuals_from_companyfacts(
 
 def store_original_actuals(company_id: int, rows: list[dict[str, Any]]) -> int:
     stored = 0
+    existing_rows = Event.query.filter_by(
+        company_id=company_id,
+        event_type="MANAGEMENT_ACTUAL_ORIGINAL",
+    ).all()
+    existing = {
+        (
+            str((item.payload or {}).get("metric") or ""),
+            int((item.payload or {}).get("fiscal_year") or 0),
+        ): item
+        for item in existing_rows
+    }
     for row in rows:
         metric = str(row.get("metric") or "")
         year = int(row.get("fiscal_year") or 0)
         if not metric or not year:
             continue
-        existing = Event.query.filter_by(
-            company_id=company_id,
-            event_type="MANAGEMENT_ACTUAL_ORIGINAL",
-        ).all()
-        event = next(
-            (
-                item for item in existing
-                if str((item.payload or {}).get("metric") or "") == metric
-                and int((item.payload or {}).get("fiscal_year") or 0) == year
-            ),
-            None,
-        )
+        event = existing.get((metric, year))
         payload = dict(row)
         payload["actual_version"] = ORIGINAL_ACTUAL_VERSION
         payload["fingerprint"] = hashlib.sha256(
