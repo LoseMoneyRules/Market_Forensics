@@ -81,7 +81,7 @@ def test_025_command_center_compact_contract():
     assert "<strong>" not in note and "<b>" not in note
     assert "Process = approved Research gates." in note
     assert "Validate = latest point-in-time walk-forward validation status" in note
-    freshness = html.split("<th>Freshness</th>", 1)[1].split("</table>", 1)[0]
+    freshness = html.split('<th class="coverage-fresh-col">Freshness</th>', 1)[1].split("</table>", 1)[0]
     assert "strftime" not in freshness and "%Y-" not in freshness
     table = html.split('<table class="data-table coverage-table">', 1)[1].split("</table>", 1)[0]
     assert table.count("<strong>") == 1
