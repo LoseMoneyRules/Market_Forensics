@@ -71,7 +71,7 @@ def validation_payload(run: Any | None) -> dict[str, Any]:
         return {
             "state": "NOT RUN",
             "run_id": None,
-            "status": None,
+            "status": "NOT RUN",
             "samples": 0,
             "reliability": None,
             "policy": {
