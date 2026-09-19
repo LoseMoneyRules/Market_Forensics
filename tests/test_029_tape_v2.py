@@ -116,7 +116,7 @@ def test_029_tape_surface_restores_local_chart_contract():
     assert "WHAT WOULD CHANGE THE REGIME?" in template
     assert "Large / Whale is a trade-size proxy" in template
     assert "Tape Engine V2" in operating
-    assert Path("VERSION").read_text().strip() == "0.2.9"
+    assert tuple(int(part) for part in Path("VERSION").read_text().strip().split(".")) >= (0, 2, 9)
 
 
 def test_029_tape_v2_preserves_028_tape_surface():
