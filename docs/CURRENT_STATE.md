@@ -18,14 +18,15 @@
 **Production:** 0.2.9 on Namecheap  
 **Verified production baseline:** deploy run `35395407123` / deploy #45 = completed / success on main commit `e8ffdd5316f44f37647314aba94950912bd55fd0`; pre-upload tests, startup smoke, candidate health and post-cleanup health passed; persistent reporting-vendor rebuild/upload was skipped because it was unchanged  
 **Main baseline before 0.2.10 merge:** VERSION `0.2.9` at `e8ffdd5316f44f37647314aba94950912bd55fd0`  
-**Latest verified main release CI:** run `35394852070` / #927 = completed / success for the 0.2.9 merge; the later `[skip ci]` CURRENT_STATE sync did not change runtime code  
-**0.2.10 candidate:** branch `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch is its base  
+**0.2.10 source branch:** `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch was its base  
 **Verified 0.2.10 final branch CI:** push run `35417497708` / #974 and PR run `35417499925` / #975 = completed / success at `ed8a0c726975ebe886de30ea6bf062b19c7bcb3b`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**Pull request:** #35 `0.2.10: close correctness gaps`, open and mergeable after the verified branch head above; the final CURRENT_STATE synchronization is documentation-only and uses `[skip ci]`  
-**Release phase:** 0.2.10 candidate; merge pending. Production remains 0.2.9. No 0.2.10 production deploy is authorized by merge alone.  
-**Branch:** `release/0.2.10-correctness`
+**Pull request:** #35 `0.2.10: close correctness gaps` = merged  
+**0.2.10 merge commit:** `62007c1b73c00e865d1bd4b526c711c2f472efb1`  
+**Latest verified main release CI:** run `35417564393` / #976 = completed / success on merge commit `62007c1b73c00e865d1bd4b526c711c2f472efb1`; full release suite and all production/reporting smoke checks passed  
+**Main:** VERSION `0.2.10`; 0.2.10 is the accepted main baseline  
+**Release phase:** 0.2.10 merged and verified in main. Production remains 0.2.9. No 0.2.10 production deploy has been run.  
 
-Production and main are separate states. The 0.2.10 release must merge and pass post-merge main CI before any explicit Namecheap deploy is considered.
+Production and main remain separate states. Any Namecheap deployment of 0.2.10 requires a separate explicit deploy action.
 ---
 
 ## 0.2.10 release scope — correctness closure
