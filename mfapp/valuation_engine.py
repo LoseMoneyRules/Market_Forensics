@@ -6,6 +6,30 @@ from typing import Any
 
 ENGINE_VERSION = "0.2.0"
 
+DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
+QUALITY_ALIASES = {
+    "STALE_INTRINSIC_FALLBACK": "PROVISIONAL_STORED_FALLBACK",
+    "REFERENCE_PRICE_FALLBACK": "PROVISIONAL_REFERENCE_FALLBACK",
+}
+
+
+def canonical_valuation_quality(value: Any) -> str:
+    quality = str(value or "").strip().upper()
+    return QUALITY_ALIASES.get(quality, quality or "DATA_WARNING")
+
+
+def valuation_base_quality(valuation: dict[str, Any] | None) -> str:
+    valuation = valuation or {}
+    return canonical_valuation_quality(
+        valuation.get("base_quality")
+        or ((valuation.get("scenarios") or {}).get("BASE") or {}).get("quality")
+        or valuation.get("quality")
+    )
+
+
+def valuation_is_decision_grade(valuation: dict[str, Any] | None) -> bool:
+    return valuation_base_quality(valuation) in DECISION_GRADE_QUALITIES
+
 TYPE_PRIORS = {
     "Generic": {"pe": (12.0, 18.0, 24.0), "ev_sales": (0.8, 1.5, 2.4), "fcf_yield": (0.080, 0.055, 0.040)},
     "Consumer / Brand": {"pe": (15.0, 21.0, 27.0), "ev_sales": (0.9, 1.8, 3.0), "fcf_yield": (0.070, 0.050, 0.035)},
@@ -471,7 +495,8 @@ def evaluate(
 
 
 __all__ = [
-    "ENGINE_VERSION", "TYPE_PRIORS", "infer_company_type", "metrics_from_history", "calibrate_multiples",
+    "ENGINE_VERSION", "TYPE_PRIORS", "DECISION_GRADE_QUALITIES", "canonical_valuation_quality",
+    "valuation_base_quality", "valuation_is_decision_grade", "infer_company_type", "metrics_from_history", "calibrate_multiples",
     "default_cases", "pe_value", "ev_sales_value", "fcf_yield_value", "dcf_value", "robust_blend",
     "scenario_value", "evaluate", "n", "clamp", "quantile",
 ]
