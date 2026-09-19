@@ -109,8 +109,10 @@ def classify_coverage(intelligence: dict[str, Any], readiness: dict[str, Any]) -
     negatives = int(intelligence.get("negatives") or 0)
     positives = int(intelligence.get("positives") or 0)
     ready_ratio = (readiness.get("done", 0) / readiness.get("total", 1)) if readiness.get("total") else 0
-    base_quality = str(intelligence.get("valuation_base_quality") or "").upper()
-    intrinsic_discovery = base_quality == "INTRINSIC"
+    raw_base_quality = intelligence.get("valuation_base_quality")
+    # Legacy direct callers predate valuation-quality provenance. Runtime/cache
+    # paths normalize missing provenance to DATA_WARNING before calling here.
+    intrinsic_discovery = True if raw_base_quality is None else str(raw_base_quality).upper() == "INTRINSIC"
 
     if intrinsic_discovery and gap is not None and gap >= 20 and confidence in {"MEDIUM", "HIGH"} and negatives <= positives:
         labels.append("QUALITY AT DISCOUNT")
