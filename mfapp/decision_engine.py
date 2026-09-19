@@ -173,7 +173,7 @@ def build_research_intelligence(
     confidence_points = 0
     confidence_points += 1 if evidence_years >= 2 else 0
     confidence_points += 1 if evidence_years >= 4 else 0
-    confidence_points += 1 if quality == "INTRINSIC" else 0
+    confidence_points += 1 if decision_grade_valuation else 0
     confidence_points += 1 if not warnings else 0
     confidence_points += 1 if validation_state == "VALIDATED" else 0
     confidence = "HIGH" if confidence_points >= 4 else "MEDIUM" if confidence_points >= 2 else "LOW"
