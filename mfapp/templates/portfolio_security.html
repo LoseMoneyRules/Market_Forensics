@@ -26,6 +26,21 @@
     <div class="kpi"><span>Portfolio weight</span><strong>{{ '%.1f'|format(portfolio_weight_pct) }}%</strong><small>Current gross marked weight</small></div>
   </div>
 
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <p class="eyebrow">POSITION ACTION</p>
+        <h2>{{ position_action.action }}</h2>
+      </div>
+      <span class="status-chip">{{ position_action.research_conclusion }}</span>
+    </div>
+    <p>{{ position_action.why_now }}</p>
+    <p><span class="muted">Blocks a stronger action:</span> {{ position_action.blocker }}</p>
+    <p><span class="muted">Next confirmation:</span> {{ position_action.next_confirmation }}</p>
+    <p><span class="muted">Risk / invalidation:</span> {{ position_action.risk_state }}</p>
+    <p class="muted">Research judges the security. Portfolio decides what the existing position allows you to do. ADD ON EVIDENCE, NOT ON PRICE.</p>
+  </div>
+
   {% if not research_attached %}
   <div class="notice amber"><strong>PORTFOLIO ONLY.</strong> This is a real holding without a Research file. Capital tracking remains available; fair value, validation and thesis controls remain intentionally blank until Research is started.</div>
   {% elif readiness.validation.state != 'VALIDATED' %}
@@ -45,10 +60,6 @@
       </div>
       <label>Average cost<input name="avg_cost" inputmode="decimal" value="{{ position.avg_cost if position else 0 }}"></label>
       <label>Exposure tags<input name="tags" value="{{ profile.tags if profile else '' }}" placeholder="consumer, China, rates, AI capex"></label>
-      {% if investment %}
-      <label>Portfolio action<input name="action" value="{{ investment.action }}"></label>
-      <label>Review reason<textarea name="review_reason" rows="3">{{ investment.review_reason }}</textarea></label>
-      {% endif %}
       <label>Private position notes<textarea name="notes" rows="4">{{ position.notes if position else '' }}</textarea></label>
     </form>
 
