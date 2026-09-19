@@ -762,15 +762,16 @@ def _comparability(payload: dict[str, Any], actual: dict[str, Any] | None) -> tu
         return "COMPARABLE", ""
     if str(actual.get("period_type") or "").upper() != "FY":
         return "NON_COMPARABLE", "ACTUAL_PERIOD_NOT_FULL_YEAR"
-    if not actual.get("point_in_time_original"):
-        return "NON_COMPARABLE", "ORIGINAL_ACTUAL_NOT_VERIFIED"
-    if actual.get("is_restated"):
-        return "NON_COMPARABLE", "ACTUAL_IS_LATER_RESTATEMENT"
 
     source_date = _iso_day(payload.get("source_date"))
     period_end = _iso_day(actual.get("period_end"))
     if source_date and period_end and source_date > period_end:
         return "NON_COMPARABLE", "GUIDANCE_PUBLISHED_AFTER_TARGET_PERIOD"
+
+    if not actual.get("point_in_time_original"):
+        return "NON_COMPARABLE", "ORIGINAL_ACTUAL_NOT_VERIFIED"
+    if actual.get("is_restated"):
+        return "NON_COMPARABLE", "ACTUAL_IS_LATER_RESTATEMENT"
 
     low = payload.get("low")
     high = payload.get("high")
