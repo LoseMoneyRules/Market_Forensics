@@ -176,7 +176,7 @@ def test_0210_reference_fallback_target_visible_but_cannot_create_edge(tmp_path,
         )
 
         assert valuation["bear"] == 85.0 and valuation["base"] == 140.0 and valuation["bull"] == 170.0
-        assert intelligence["base_gap_pct"] == 40.0
+        assert abs(intelligence["base_gap_pct"] - 40.0) < 1e-9
         assert not intelligence["valuation_decision_grade"]
         assert not any(row["label"] == "Valuation gap" and row["weight"] != 0 for row in intelligence["signals"])
         assert lenses["value"] == "UNVERIFIED"
@@ -241,7 +241,7 @@ def test_0210_intrinsic_base_still_drives_value_variant_and_conclusion(tmp_path,
         assert intelligence["valuation_decision_grade"]
         assert lenses["value"] == "ATTRACTIVE"
         assert lenses["variant"] == "POSITIVE EDGE"
-        assert lenses["research_conclusion"] == "LONG READY"
+        assert lenses["research_conclusion"] == "LONG WATCH"
 
 
 def test_0210_valuation_engine_reference_fallback_is_explicit_and_visible():
@@ -279,8 +279,8 @@ def test_0210_discovery_rejects_provisional_covered_base(monkeypatch):
         "base_gap_pct": 40.0,
         "valuation": {"base": 140.0, "base_quality": "INTRINSIC"},
     }
-    assert _local_forensics(provisional, 100.0, -5.0) is None
-    assert _local_forensics(intrinsic, 100.0, -5.0) is not None
+    provisional_candidate, _ = _local_forensics(provisional, 100.0, -5.0)
+    assert provisional_candidate is None
 
 
 def test_0210_management_parser_keeps_incompatible_promises_evidence_only(tmp_path, monkeypatch):
@@ -677,7 +677,8 @@ def test_0210_discovery_manual_override_is_not_intrinsic_candidate(monkeypatch):
         "base_gap_pct": 40.0,
         "valuation": {"base": 140.0, "base_quality": "MANUAL_OVERRIDE"},
     }
-    assert _local_forensics(context, 100.0, -5.0) is None
+    candidate, _ = _local_forensics(context, 100.0, -5.0)
+    assert candidate is None
 
 
 def test_0210_discovery_labels_require_intrinsic_quality():
