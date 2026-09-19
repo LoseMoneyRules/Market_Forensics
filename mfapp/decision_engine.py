@@ -3,6 +3,8 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
+from .valuation_engine import canonical_valuation_quality, valuation_is_decision_grade
+
 
 BUY_THRESHOLD = 2.5
 SELL_THRESHOLD = -2.5
@@ -61,8 +63,19 @@ def build_research_intelligence(
     base_gap = ((base / price - 1.0) * 100.0) if base is not None and price not in (None, 0) else None
     expected_gap = ((expected / price - 1.0) * 100.0) if expected is not None and price not in (None, 0) else None
 
+    base_quality = canonical_valuation_quality(valuation.get("base_quality") or valuation_quality)
+    decision_grade_valuation = valuation_is_decision_grade({"base_quality": base_quality})
     if base_gap is None:
         blockers.append("Verified market/Base comparison is missing.")
+    elif not decision_grade_valuation:
+        add(
+            "Valuation reference",
+            f"Displayed Base is {base_gap:+.1f}% vs market but quality is {base_quality.replace('_', ' ')}; no valuation edge is scored.",
+            "watch",
+            0.0,
+            "valuation",
+        )
+        blockers.append("Base fair value is visible but is not intrinsic/manual verified.")
     elif base_gap >= 30:
         add("Valuation gap", f"Base fair value is {base_gap:+.1f}% vs market.", "positive", 2.0, "valuation")
     elif base_gap >= 15:
@@ -144,9 +157,8 @@ def build_research_intelligence(
             "tape",
         )
 
-    quality = str(valuation_quality or "").upper()
-    if quality and quality != "INTRINSIC":
-        warnings.append(f"Valuation quality is {quality.replace('_', ' ')}; stance remains provisional.")
+    if not decision_grade_valuation:
+        warnings.append(f"Valuation quality is {base_quality.replace('_', ' ')}; target remains visible but cannot create an edge.")
     if data_quality_issues:
         warnings.append(f"{data_quality_issues} open data-quality issue(s) require review.")
 
@@ -170,7 +182,7 @@ def build_research_intelligence(
     negatives = sum(1 for s in signals if s["tone"] == "negative")
     bias = "LONG" if score >= 2 else "SHORT" if score <= -2 else "NEUTRAL"
 
-    hard_block = bool(warnings or base_gap is None)
+    hard_block = bool(warnings or base_gap is None or not decision_grade_valuation)
     if hard_block:
         action = "WAIT"
         stance = "DATA REVIEW"
@@ -221,6 +233,8 @@ def build_research_intelligence(
         "blockers": blockers,
         "evidence_years": evidence_years,
         "validation_state": validation_state,
+        "valuation_base_quality": base_quality,
+        "valuation_decision_grade": decision_grade_valuation,
         "ready_to_validate": bool(readiness.get("ready_to_validate")),
         "summary": f"{action} · {stance} · {bias} bias · {confidence} confidence",
     }
