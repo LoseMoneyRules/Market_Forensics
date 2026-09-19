@@ -714,6 +714,15 @@ def _execute(job: Job) -> dict[str, Any]:
         if not security or not company: raise RuntimeError("Company/security not found")
         result = refresh_company_fundamentals(company, security, job.user_id); result["recalculation"] = recalculate_company(company.id, coverage_id)
         if coverage_id: result["autofill"] = prefill_coverage(coverage_id, job.user_id)
+        management_job = enqueue_job(
+            "MANAGEMENT_SCAN",
+            user_id=job.user_id,
+            company_id=company.id,
+            security_id=security.id,
+            payload={"coverage_id": coverage_id, "limit": 36, "force": False},
+            priority=80,
+        )
+        result["management_scan_job_id"] = management_job.id
         return result
     if kind == "MACRO_REFRESH":
         if not job.company_id: raise RuntimeError("company_id is required")
@@ -760,7 +769,13 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "MANAGEMENT_SCAN":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
-        payload = _management_scan(company, security, job.user_id, int((job.payload or {}).get("limit") or 24))
+        payload = _management_scan(
+            company,
+            security,
+            job.user_id,
+            int((job.payload or {}).get("limit") or 36),
+            force=bool((job.payload or {}).get("force")),
+        )
         payload["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         return payload
     if kind == "DISCOVERY_SCAN": return _discovery(job.user_id)
