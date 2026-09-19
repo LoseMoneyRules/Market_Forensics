@@ -20,8 +20,8 @@
 **Main baseline before 0.2.10 merge:** VERSION `0.2.9` at `e8ffdd5316f44f37647314aba94950912bd55fd0`  
 **Latest verified main release CI:** run `35394852070` / #927 = completed / success for the 0.2.9 merge; the later `[skip ci]` CURRENT_STATE sync did not change runtime code  
 **0.2.10 candidate:** branch `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch is its base  
-**Verified 0.2.10 final branch CI:** push run `35417442009` / #972 and PR run `35417444094` / #973 = completed / success at `5ce46a635c868234008beec4fa22b4cfe9100c4f`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**Pull request:** #35 `0.2.10: close correctness gaps`, open and mergeable at the verified branch head above  
+**Verified 0.2.10 final branch CI:** push run `35417497708` / #974 and PR run `35417499925` / #975 = completed / success at `ed8a0c726975ebe886de30ea6bf062b19c7bcb3b`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**Pull request:** #35 `0.2.10: close correctness gaps`, open and mergeable after the verified branch head above; the final CURRENT_STATE synchronization is documentation-only and uses `[skip ci]`  
 **Release phase:** 0.2.10 candidate; merge pending. Production remains 0.2.9. No 0.2.10 production deploy is authorized by merge alone.  
 **Branch:** `release/0.2.10-correctness`
 
