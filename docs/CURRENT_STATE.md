@@ -45,16 +45,21 @@
 **Verified 0.2.12 hardening PR CI:** pull-request run `35459077261` / #1094 = completed / success on `405e5510eefd6c0da6c792c7bf5d4c7bbfc5501f`; full release suite and both smoke gates passed.  
 **Accepted 0.2.12 runtime merge:** `1e309fa77b864ed5ccd9831478a54fcdefe05419`.  
 **Verified final post-merge main CI:** run `35459124021` / #1095 = completed / success on `1e309fa77b864ed5ccd9831478a54fcdefe05419`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed.  
-**Main:** VERSION `0.2.12`; accepted broad/hardening runtime `1e309fa77b864ed5ccd9831478a54fcdefe05419`; accepted production render-fix merge `28f262da51f768c801d540d4b4d772964cfd7630`; post-merge CI is green.  
+**Main:** VERSION `0.2.12`; accepted broad/hardening runtime `1e309fa77b864ed5ccd9831478a54fcdefe05419`; accepted production render-fix merge `28f262da51f768c801d540d4b4d772964cfd7630`; accepted Discovery opportunity-funnel merge `adfd99593f6db378cf8cf99a41976a2e85c6c49d`; post-merge CI is green.  
 **0.2.12 production render-fix branch:** `fix/0.2.12-discovery-rejection-render`, created directly from main `6656a7941c1e2d40a87f5318303b28527de859f8`; consolidated head `c85157460f7cbc4258760816f68ac3ddfe456f0e`; same VERSION, Discovery-only rendering/normalization fix plus regression test.  
 **0.2.12 render-fix PR:** #42 `0.2.12: Fix sparse Discovery rejection rendering` = merged by squash.  
 **Verified render-fix branch CI:** run `35462668640` / #1100 = completed / success on `c85157460f7cbc4258760816f68ac3ddfe456f0e`.  
 **Verified render-fix PR CI:** run `35462722236` / #1101 = completed / success on `c85157460f7cbc4258760816f68ac3ddfe456f0e`.  
 **Accepted render-fix merge:** `28f262da51f768c801d540d4b4d772964cfd7630`.  
 **Verified post-merge render-fix main CI:** run `35462772554` / #1102 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
-**0.2.12 opportunity-funnel branch:** `fix/0.2.12-discovery-opportunity-funnel`, created directly from current main `e5732676ae70937a622a3a73acb95ed3cc53b9a1`; VERSION remains `0.2.12`; scope remains Discovery-only.  
+**0.2.12 opportunity-funnel branch:** `fix/0.2.12-discovery-opportunity-funnel`, created directly from current main `e5732676ae70937a622a3a73acb95ed3cc53b9a1`; history collapsed before PR to clean head `55f59f3fdc9099491110bfd7c72a16ade52eb281`; VERSION remained `0.2.12`; scope remained Discovery-only.  
 **0.2.12 opportunity-funnel scope:** separate Discovery from final Validation: P1 strong opportunities, P2 valuation opportunities, WATCH emerging/verification-needed leads; Stage-1 liquidity rebalanced to 200k shares / $15M completed-day dollar volume; broad rotation 360 names/run; Stage-2 cap 10; no Research/Valuation/Portfolio/Tape/Auth/Settings/deploy redesign.  
-**Release phase:** same-version 0.2.12 Discovery opportunity-funnel rebalance is under branch verification. Production is still deploy #50 at pre-render-fix main `6656a7941c1e2d40a87f5318303b28527de859f8`; do not treat branch/main as production until an explicit later deploy.  
+**Verified opportunity-funnel branch CI:** run `35469101160` / #1115 = completed / success on clean head `55f59f3fdc9099491110bfd7c72a16ade52eb281`; release suite, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed.  
+**0.2.12 opportunity-funnel pull request:** #43 `0.2.12: Rebalance Discovery opportunity funnel` = merged by squash.  
+**Verified opportunity-funnel PR CI:** run `35469153142` / #1116 = completed / success on `55f59f3fdc9099491110bfd7c72a16ade52eb281`.  
+**Accepted opportunity-funnel merge:** `adfd99593f6db378cf8cf99a41976a2e85c6c49d`.  
+**Verified opportunity-funnel post-merge main CI:** run `35469221771` / #1117 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
+**Release phase:** same-version 0.2.12 Discovery opportunity-funnel rebalance is complete in main. Production is still deploy #50 at pre-render-fix main `6656a7941c1e2d40a87f5318303b28527de859f8`; one explicit redeploy from current main is required to publish both the render fix and the final opportunity-funnel rebalance.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
