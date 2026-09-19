@@ -801,6 +801,17 @@ def company_section(ticker, section):
         extra["management_engine"] = dict(cache.get("management") or {"score": None, "coverage_pct": 0, "components": []})
         extra["management_accountability"] = list(cache.get("management_accountability") or [])
         extra["management_promises"] = list(cache.get("management_promises") or [])
+        latest_management_scan = RefreshRun.query.filter_by(
+            company_id=company.id,
+            refresh_type="MANAGEMENT_SCAN",
+        ).order_by(RefreshRun.started_at.desc(), RefreshRun.id.desc()).first()
+        extra["management_scan"] = {
+            "status": latest_management_scan.status if latest_management_scan else "NOT RUN",
+            "started_at": latest_management_scan.started_at if latest_management_scan else None,
+            "finished_at": latest_management_scan.finished_at if latest_management_scan else None,
+            "summary": dict(latest_management_scan.summary or {}) if latest_management_scan else {},
+            "error_id": latest_management_scan.error_id if latest_management_scan else "",
+        }
     elif section == "tape":
         months = 6 if str(request.args.get("months") or "12") == "6" else 12
         extra["tape_events"] = Event.query.filter(
