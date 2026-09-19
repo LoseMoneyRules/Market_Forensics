@@ -921,7 +921,8 @@ Decision-grade Base quality is fail-closed:
 - PROVISIONAL_STORED_FALLBACK, PROVISIONAL_REFERENCE_FALLBACK, MIXED / DATA WARNING remain visible but cannot create valuation edge or LONG / SHORT readiness/watch states;
 - the displayed Bear / Base / Bull values are preserved even when valuation quality is under review;
 - current market price is never evidence that an intrinsic fair value is correct;
-- cached 0.2.9 research is re-read against stored Base-quality provenance before a user-facing edge is allowed.
+- cached 0.2.9 research is re-read against stored Base-quality provenance before a user-facing edge is allowed;
+- if the active valuation model is newer than its materialized research cache, the last Bear / Base / Bull may stay visible but the cached valuation is treated as DATA WARNING / non-decision-grade until background RECALCULATE finishes; stale gaps cannot create VALUE/Variant edge or Discovery qualification.
 
 ### 12.9 Discovery is stricter than Research display
 
