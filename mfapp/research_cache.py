@@ -53,6 +53,12 @@ def latest_research_cache(coverage_id: int, company_id: int | None = None) -> di
     if row is None:
         return None
     payload = dict(row.payload or {})
+    # Recompute Discovery labels from current fail-closed policy on read. Old
+    # materialized labels must not preserve a value signal after quality rules tighten.
+    payload["discovery_labels"] = classify_coverage(
+        dict(payload.get("intelligence") or {}),
+        dict(payload.get("readiness") or {}),
+    )
     payload["_event_id"] = row.id
     payload["_generated_at"] = row.event_date.isoformat() if row.event_date else None
     return payload
@@ -73,6 +79,10 @@ def latest_cache_map(coverage_ids: list[int]) -> dict[int, dict[str, Any]]:
         if coverage_id not in ids or coverage_id in out:
             continue
         payload = dict(row.payload or {})
+        payload["discovery_labels"] = classify_coverage(
+            dict(payload.get("intelligence") or {}),
+            dict(payload.get("readiness") or {}),
+        )
         payload["_event_id"] = row.id
         payload["_generated_at"] = row.event_date.isoformat() if row.event_date else None
         out[coverage_id] = payload
