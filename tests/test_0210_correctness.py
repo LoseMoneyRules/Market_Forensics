@@ -399,3 +399,42 @@ def test_0210_stored_base_quality_survives_valuation_result(tmp_path):
         assert result["base"] == 125.0
         assert result["base_quality"] == "PROVISIONAL_REFERENCE_FALLBACK"
         assert result["decision_grade"] is False
+
+
+def test_0210_discovery_manual_override_is_not_intrinsic_candidate(monkeypatch):
+    annual = [
+        {"fiscal_year": 2024, "revenue": 100.0, "operating_income": 10.0, "net_income": 8.0, "fcf": 7.0, "inventory": 12.0, "receivables": 10.0},
+        {"fiscal_year": 2025, "revenue": 110.0, "operating_income": 12.0, "net_income": 9.0, "fcf": 9.0, "inventory": 12.0, "receivables": 10.0},
+    ]
+    monkeypatch.setattr("mfapp.discovery_forensics.quarterly_rows", lambda *args, **kwargs: [])
+    monkeypatch.setattr("mfapp.discovery_forensics.annual_rows", lambda *args, **kwargs: list(reversed(annual)))
+    context = {
+        "company_id": 1,
+        "base_gap_pct": 40.0,
+        "valuation": {"base": 140.0, "base_quality": "MANUAL_OVERRIDE"},
+    }
+    assert _local_forensics(context, 100.0, -5.0) is None
+
+
+def test_0210_discovery_labels_fail_closed_without_intrinsic_quality():
+    from mfapp.discovery_engine import classify_coverage
+
+    readiness = {"done": 13, "total": 13}
+    common = {
+        "base_gap_pct": 35.0,
+        "bias": "LONG",
+        "stance": "ATTRACTIVE",
+        "confidence": "HIGH",
+        "negatives": 0,
+        "positives": 3,
+    }
+    assert "LONG DISLOCATION" not in classify_coverage(dict(common), readiness)
+    assert "LONG DISLOCATION" not in classify_coverage(
+        {**common, "valuation_base_quality": "MANUAL_OVERRIDE"},
+        readiness,
+    )
+    labels = classify_coverage(
+        {**common, "valuation_base_quality": "INTRINSIC"},
+        readiness,
+    )
+    assert "LONG DISLOCATION" in labels
