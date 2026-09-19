@@ -71,7 +71,7 @@ def test_025_fundamentals_are_quarter_auditable_and_mixed_chart():
 def test_025_release_handoff_has_numbers_correctness_rules():
     version = Path("VERSION").read_text().strip()
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert tuple(int(part) for part in version.split(".")) >= (0, 2, 7)
-    assert f"**State-Version: {version}**" in state
+    assert version == "0.2.7"
+    assert "**State-Version: 0.2.7**" in state
     assert "four distinct fiscally consecutive quarters" in state
     assert "Companyfacts repeats comparative periods" in state
