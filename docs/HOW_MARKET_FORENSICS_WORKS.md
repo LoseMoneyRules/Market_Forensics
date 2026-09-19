@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.2.12  
+**Current product line:** 0.2.13  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -193,7 +193,10 @@ UI rules also include:
 - footer remains Lose Money Rules;
 - Settings is the only normal user-facing application-version surface;
 - one canonical company header;
-- one canonical mobile navigation;
+- one canonical mobile navigation; the drawer/control shell owns phone and tablet portrait navigation and must never leave an intermediate width without a reachable primary menu;
+- research-step navigation is server-rendered; JavaScript may control open/closed state but must not reconstruct missing canonical markup;
+- mobile controls use practical touch targets (about 44 px where applicable), important tables preserve information through controlled overflow/ledger layouts, and 320–430 px phone widths must remain usable without zoom;
+- shared component presentation belongs in canonical CSS; inline event/style fixes and release-number override layers are not an accepted cleanup strategy;
 - Research → Financial Flows remains inside Research, not a separate primary product;
 - Validate remains immediately after Sources / Audit.
 

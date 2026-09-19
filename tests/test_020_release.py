@@ -192,7 +192,8 @@ def test_020_canonical_routes_and_runtime_assets(tmp_path, monkeypatch):
     assert expected <= routes
 
     base = Path("mfapp/templates/base.html").read_text()
-    assert "css/app.css" in base and "js/app.js" in base and "js/theme.js" in base
+    assert "css/app.css" in base and "js/app.js" in base
+    assert "js/theme.js" not in base
     for legacy in ("v012.css", "v013.css", "v014.css", "v015.css", "v016.css", "v017.css", "v0171.css",
                    "v015.js", "v016.js", "v017.js", "v0171-pre.js", "v0171.js"):
         assert legacy not in base
@@ -764,11 +765,19 @@ def test_020_cached_navigation_never_runs_heavy_research_engines(tmp_path, monke
     ):
         monkeypatch.setattr(routes, name, bomb)
 
+    def network_bomb(*args, **kwargs):
+        raise AssertionError("normal GET navigation must not call external providers")
+
+    monkeypatch.setattr("requests.sessions.Session.request", network_bomb)
+
     client = app.test_client()
     login_control(client, uid)
     for path in (
         "/", "/discovery", "/company/EXM/overview", "/company/EXM/business",
+        "/company/EXM/fundamentals", "/company/EXM/expectations",
         "/company/EXM/management", "/company/EXM/tape",
+        "/company/EXM/financial-flows", "/company/EXM/validate",
+        "/portfolio", "/settings",
     ):
         response = client.get(path)
         assert response.status_code == 200, (path, response.status_code, response.data[:400])

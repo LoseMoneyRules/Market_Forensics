@@ -99,7 +99,7 @@
         <td>
           <div class="button-row compact">
             <a class="button micro" href="{{ url_for('web.portfolio_security', ticker=row.security.ticker) }}">Open</a>
-            <form method="post" action="{{ url_for('web.remove_position', ticker=row.security.ticker) }}" onsubmit="return confirm('Remove {{ row.security.ticker }} from Portfolio? Research and risk history will be preserved.');">
+            <form method="post" action="{{ url_for('web.remove_position', ticker=row.security.ticker) }}" data-confirm="Remove {{ row.security.ticker }} from Portfolio? Research and risk history will be preserved.">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="button micro danger" type="submit">Remove</button>
             </form>

@@ -7,6 +7,19 @@
   const realRole = document.querySelector('meta[name="mf-real-role"]')?.content || '';
   const effectiveRole = document.querySelector('meta[name="mf-effective-role"]')?.content || '';
 
+  const themeButton = document.getElementById('mf-theme-toggle');
+  function applyTheme(theme, {persist = true} = {}) {
+    const next = theme === 'dark' ? 'dark' : 'light';
+    root.dataset.theme = next;
+    if (persist) {
+      try { window.localStorage.setItem('mf-theme', next); } catch (_) {}
+    }
+    if (themeButton) themeButton.textContent = next === 'dark' ? 'Light' : 'Dark';
+    window.dispatchEvent(new CustomEvent('mf-theme-change', {detail: {theme: next}}));
+  }
+  applyTheme(root.dataset.theme || 'light', {persist: false});
+  themeButton?.addEventListener('click', () => applyTheme(root.dataset.theme === 'dark' ? 'light' : 'dark'));
+
   document.querySelectorAll('.flash').forEach((el) => {
     window.setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(-4px)'; }, 4500);
     window.setTimeout(() => el.remove(), 5000);
@@ -22,6 +35,24 @@
       button.textContent = 'Copied';
       window.setTimeout(() => { button.textContent = old; }, 1400);
     });
+  });
+
+  document.addEventListener('click', (event) => {
+    const trigger = event.target.closest('[data-confirm]');
+    if (!trigger) return;
+    if (!window.confirm(trigger.dataset.confirm || 'Continue?')) event.preventDefault();
+  });
+
+  document.addEventListener('submit', (event) => {
+    const form = event.target.closest?.('form[data-confirm]');
+    if (!form) return;
+    if (!window.confirm(form.dataset.confirm || 'Continue?')) event.preventDefault();
+  });
+
+  document.addEventListener('change', (event) => {
+    const control = event.target.closest?.('[data-submit-on-change]');
+    if (!control?.form) return;
+    control.form.requestSubmit();
   });
 
   // One mobile-navigation controller. No later script is allowed to rebind it.
@@ -49,26 +80,29 @@
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeMobile(); });
   window.addEventListener('resize', () => { if (window.innerWidth > 900) closeMobile(); });
 
-  // Mobile research-step selector.
-  document.querySelectorAll('.company-tabs').forEach((tabs, index) => {
-    const active = tabs.querySelector('a.active')?.textContent?.trim() || 'Research steps';
-    const id = tabs.id || ('mf-research-tabs-' + index);
-    tabs.id = id;
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'company-tabs-toggle';
-    toggle.setAttribute('aria-controls', id);
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.innerHTML = '<span>Research step</span><strong></strong>';
-    toggle.querySelector('strong').textContent = active;
-    tabs.parentNode?.insertBefore(toggle, tabs);
-    const close = () => { tabs.classList.remove('mobile-open'); toggle.setAttribute('aria-expanded', 'false'); };
+  // Mobile research-step selector. The server owns markup; JavaScript owns state.
+  document.querySelectorAll('[data-company-tabs-toggle]').forEach((toggle) => {
+    const id = toggle.getAttribute('aria-controls');
+    const tabs = id ? document.getElementById(id) : null;
+    if (!tabs) return;
+    const close = () => {
+      tabs.classList.remove('mobile-open');
+      toggle.setAttribute('aria-expanded', 'false');
+    };
     toggle.addEventListener('click', () => {
       const open = !tabs.classList.contains('mobile-open');
       tabs.classList.toggle('mobile-open', open);
       toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
     tabs.addEventListener('click', (event) => { if (event.target.closest('a')) close(); });
+  });
+
+  const valuationForm = document.getElementById('valuation-model-form');
+  valuationForm?.addEventListener('submit', () => {
+    valuationForm.querySelectorAll('[data-percent="1"]').forEach((input) => {
+      const value = Number.parseFloat(input.value);
+      if (Number.isFinite(value)) input.value = String(value / 100);
+    });
   });
 
   // Localize visible server timestamps while keeping UTC in storage.
@@ -100,21 +134,33 @@
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
   }
+  function showQuoteUnavailable(message = 'Live quote unavailable') {
+    if (!priceMeta) return;
+    priceMeta.textContent = message;
+    priceMeta.dataset.semantic = 'caution';
+  }
   async function readQuote() {
-    if (!ticker) return;
+    if (!ticker) return null;
     try {
       const response = await fetch('/company/' + encodeURIComponent(ticker) + '/price/live', {credentials:'same-origin',headers:{Accept:'application/json'}});
-      if (!response.ok) return;
+      if (!response.ok) {
+        showQuoteUnavailable();
+        return null;
+      }
       const q = await response.json();
       if (priceNode && Number.isFinite(Number(q.price))) priceNode.textContent = '$' + Number(q.price).toFixed(2);
       if (priceMeta) {
         priceMeta.textContent = '';
+        delete priceMeta.dataset.semantic;
         const dot = document.createElement('i');
         dot.className = 'live-dot' + (q.fresh ? '' : ' stale');
         priceMeta.append(dot, document.createTextNode((q.provider || 'quote') + ' · ' + fmtTime(q.as_of)));
       }
       return q;
-    } catch (_) { return null; }
+    } catch (_) {
+      showQuoteUnavailable();
+      return null;
+    }
   }
   async function requestQuote() {
     if (!ticker || !csrf || !location.pathname.includes('/company/')) return;
@@ -126,11 +172,16 @@
       if (response.ok) {
         const state = await response.json();
         if (state?.status === 'COOLDOWN') marketBox?.classList.remove('refreshing');
+      } else {
+        showQuoteUnavailable('Live quote refresh unavailable');
       }
       window.setTimeout(readQuote, 2500);
       window.setTimeout(readQuote, 9000);
-    } catch (_) {}
-    finally { window.setTimeout(() => marketBox?.classList.remove('refreshing'), 3000); }
+    } catch (_) {
+      showQuoteUnavailable('Live quote refresh unavailable');
+    } finally {
+      window.setTimeout(() => marketBox?.classList.remove('refreshing'), 3000);
+    }
   }
   if (ticker && location.pathname.includes('/company/')) {
     window.setTimeout(requestQuote, 1600);

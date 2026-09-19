@@ -4,7 +4,7 @@
 <section class="page">
   <div class="page-head split">
     <div><p class="eyebrow">RESEARCH COMMAND CENTER</p><h1>Coverage</h1><p>Prioritize evidence, finish the research process, validate the model, then manage capital separately in Portfolio.</p></div>
-    <form class="add-symbol" method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="ticker" placeholder="Ticker" maxlength="16" required><button class="button positive" type="submit">Add security</button></form>
+    <form class="add-symbol" method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label class="sr-only" for="coverage-ticker">Ticker</label><input id="coverage-ticker" name="ticker" placeholder="Ticker" maxlength="16" autocomplete="off" autocapitalize="characters" required><button class="button positive" type="submit">Add security</button></form>
   </div>
 
 
@@ -35,7 +35,7 @@
         <td class="coverage-number-col">{% if row.market %}&#36;{{ '%.2f'|format(row.market.price|float) }}{% else %}—{% endif %}</td>
         <td class="coverage-number-col">{% if row.valuation.base is not none %}&#36;{{ '%.2f'|format(row.valuation.base) }}{% else %}—{% endif %}</td>
         <td class="coverage-number-col">{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td>
-        <td>{% if row.readiness.ready_to_validate %}<a class="micro-link process-ready-only" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% else %}<div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><div><i style="width:{{ (row.readiness.done / row.readiness.total * 100)|round if row.readiness.total else 0 }}%"></i></div></div>{% endif %}</td>
+        <td>{% if row.readiness.ready_to_validate %}<a class="micro-link process-ready-only" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% else %}<div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><progress class="readiness-progress" value="{{ row.readiness.done }}" max="{{ row.readiness.total if row.readiness.total else 1 }}" aria-label="Process readiness: {{ row.readiness.done }} of {{ row.readiness.total }}"></progress></div>{% endif %}</td>
         <td><span class="status-chip" title="Latest point-in-time walk-forward validation status">{{ row.readiness.validation.state }}</span></td>
         <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}{{ '%.0f'|format(row.freshness_hours*60) }}m{% else %}{{ '%.1f'|format(row.freshness_hours) }}h{% endif %}</td>
         <td class="coverage-wrap-col">{{ row.next_action }}</td>
@@ -43,7 +43,7 @@
         <td class="coverage-manage-col">
           <form class="coverage-manage-inline" method="post" action="{{ url_for('web.manage_coverage', ticker=row.security.ticker) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="button micro danger" type="submit" name="action" value="archive" onclick="return confirm('Remove {{ row.security.ticker }} from active Coverage? Research history will be preserved.')">Remove</button>
+            <button class="button micro danger" type="submit" name="action" value="archive" data-confirm="Remove {{ row.security.ticker }} from active Coverage? Research history will be preserved.">Remove</button>
           </form>
         </td>
       </tr>

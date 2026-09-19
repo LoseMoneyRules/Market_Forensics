@@ -256,11 +256,13 @@ def test_0211_position_action_never_enters_publication_member_payload(tmp_path, 
 
 
 def test_0211_version_and_contract_are_synced():
-    assert open("VERSION", encoding="utf-8").read().strip() == "0.2.12"
+    version = open("VERSION", encoding="utf-8").read().strip()
+    assert tuple(int(part) for part in version.split(".")) >= (0, 2, 12)
     current = open("docs/CURRENT_STATE.md", encoding="utf-8").read()
     how = open("docs/HOW_MARKET_FORENSICS_WORKS.md", encoding="utf-8").read()
     parity = open("docs/LOCAL_WEB_PARITY_0_2_11.md", encoding="utf-8").read()
-    assert "**State-Version: 0.2.12**" in current
-    assert "**Current product line:** 0.2.12" in how
+    assert f"**State-Version: {version}**" in current
+    assert f"**Current product line:** {version}" in how
     assert "Research judges the security. Portfolio decides what the existing position allows you to do." in how
-    assert "ADD ON EVIDENCE, NOT ON PRICE." in parity
+    assert "ADD ON EVIDENCE, NOT ON PRICE." in how
+    assert "Position Action" in parity

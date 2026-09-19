@@ -61,7 +61,8 @@ def test_025_settings_version_and_collapsed_jobs(tmp_path, monkeypatch):
     response = client.get("/settings")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert "application-version-value" in html and "v0.2.7" in html
+    assert "application-version-value" in html
+    assert f"v{Path('VERSION').read_text().strip()}" in html
     assert '<details class="panel recent-jobs">' in html
     assert "<summary class=\"recent-jobs-summary\">" in html
     assert "Click to view the job list." in html
@@ -75,12 +76,12 @@ def test_025_command_center_compact_contract():
     assert 'class="coverage-fresh-col"' in html
     assert '<th class="coverage-manage-col">Manage</th>' in html
     assert ".coverage-table .coverage-number-col,.coverage-table .coverage-fresh-col{width:1%;white-space:nowrap" in css
-    assert ".coverage-table .coverage-manage-col{width:48px;max-width:48px" in css
+    assert ".coverage-table .coverage-manage-col{width:62px;min-width:62px" in css
     note = html.split('class="command-table-note">', 1)[1].split("</p>", 1)[0]
     assert "<strong>" not in note and "<b>" not in note
     assert "Process = approved Research gates." in note
     assert "Validate = latest point-in-time walk-forward validation status" in note
-    freshness = html.split("<th>Freshness</th>", 1)[1].split("</table>", 1)[0]
+    freshness = html.split('<th class="coverage-fresh-col">Freshness</th>', 1)[1].split("</table>", 1)[0]
     assert "strftime" not in freshness and "%Y-" not in freshness
     table = html.split('<table class="data-table coverage-table">', 1)[1].split("</table>", 1)[0]
     assert table.count("<strong>") == 1

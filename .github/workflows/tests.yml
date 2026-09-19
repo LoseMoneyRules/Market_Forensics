@@ -33,7 +33,6 @@ jobs:
       - name: JavaScript syntax check
         run: |
           node --check mfapp/static/js/app.js
-          node --check mfapp/static/js/theme.js
           node --check mfapp/static/js/flows.js
           node --check mfapp/static/js/validate_chart.js
       - name: Release test suite

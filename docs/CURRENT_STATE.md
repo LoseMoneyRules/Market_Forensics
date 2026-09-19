@@ -11,11 +11,11 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.2.12**  
+**State-Version: 0.2.13**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.12 on Namecheap from manual deploy run `35460975736` / deploy #50 at main `6656a7941c1e2d40a87f5318303b28527de859f8`; deployment and health checks succeeded, but the first real post-scan Discovery render exposed a fail-safe 500 in sparse rejection diagnostics (trace ID `8b47d56f69b6`), now isolated to presentation normalization rather than the Discovery engine  
+**Production:** 0.2.12 on Namecheap from manual deploy run `35469617101` / deploy #52 at main `4f4d7466433eed69d5db7785d6a15b1d4a77522e`; release tests, production-minimal startup smoke, candidate health, restart, cleanup and final health all completed successfully; reporting-vendor rebuild/stage was correctly skipped because reporting dependencies were unchanged  
 **Verified production baseline:** manual deploy run `35448890411` / deploy #49 = completed / success on main event SHA `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; candidate and final production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.11"}`; persistent reporting-vendor rebuild/stage steps were skipped because dependencies were unchanged  
 **Accepted pre-0.2.12 main baseline:** `ff4eb1e96a92610bc3ddd2c21c6e32840a016452` (accepted 0.2.11 runtime `ba5a16783763f8032e3341b2e08eae8566457fbd` plus final 0.2.11 documentation sync)  
 **Latest verified 0.2.11 runtime main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`  
@@ -45,7 +45,7 @@
 **Verified 0.2.12 hardening PR CI:** pull-request run `35459077261` / #1094 = completed / success on `405e5510eefd6c0da6c792c7bf5d4c7bbfc5501f`; full release suite and both smoke gates passed.  
 **Accepted 0.2.12 runtime merge:** `1e309fa77b864ed5ccd9831478a54fcdefe05419`.  
 **Verified final post-merge main CI:** run `35459124021` / #1095 = completed / success on `1e309fa77b864ed5ccd9831478a54fcdefe05419`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed.  
-**Main:** VERSION `0.2.12`; accepted broad/hardening runtime `1e309fa77b864ed5ccd9831478a54fcdefe05419`; accepted production render-fix merge `28f262da51f768c801d540d4b4d772964cfd7630`; accepted Discovery opportunity-funnel merge `adfd99593f6db378cf8cf99a41976a2e85c6c49d`; post-merge CI is green.  
+**Main baseline for 0.2.13:** VERSION `0.2.12` at `4f4d7466433eed69d5db7785d6a15b1d4a77522e`; accepted Discovery opportunity-funnel runtime `adfd99593f6db378cf8cf99a41976a2e85c6c49d`; latest release CI #1117 is green on that runtime, and deploy #52 independently re-ran release tests plus production smoke from the later docs-sync main SHA.  
 **0.2.12 production render-fix branch:** `fix/0.2.12-discovery-rejection-render`, created directly from main `6656a7941c1e2d40a87f5318303b28527de859f8`; consolidated head `c85157460f7cbc4258760816f68ac3ddfe456f0e`; same VERSION, Discovery-only rendering/normalization fix plus regression test.  
 **0.2.12 render-fix PR:** #42 `0.2.12: Fix sparse Discovery rejection rendering` = merged by squash.  
 **Verified render-fix branch CI:** run `35462668640` / #1100 = completed / success on `c85157460f7cbc4258760816f68ac3ddfe456f0e`.  
@@ -59,11 +59,37 @@
 **Verified opportunity-funnel PR CI:** run `35469153142` / #1116 = completed / success on `55f59f3fdc9099491110bfd7c72a16ade52eb281`.  
 **Accepted opportunity-funnel merge:** `adfd99593f6db378cf8cf99a41976a2e85c6c49d`.  
 **Verified opportunity-funnel post-merge main CI:** run `35469221771` / #1117 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
-**Release phase:** same-version 0.2.12 Discovery opportunity-funnel rebalance is complete in main. Production is still deploy #50 at pre-render-fix main `6656a7941c1e2d40a87f5318303b28527de859f8`; one explicit redeploy from current main is required to publish both the render fix and the final opportunity-funnel rebalance.  
+**Release phase:** 0.2.13 UI/UX & codebase consolidation is in progress on `release/0.2.13-ui-ux-codebase-consolidation`, created directly from clean main `4f4d7466433eed69d5db7785d6a15b1d4a77522e`. Production remains independently verified at 0.2.12 deploy #52; 0.2.13 will not deploy automatically.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
 ---
+
+## 0.2.13 release scope — UI/UX & Codebase Consolidation
+
+Scope is consolidation only. No investment feature or financial-engine behavior may change.
+
+Current branch work:
+- one mobile navigation path; the obsolete bottom navigation has been removed;
+- the phone/tablet portrait drawer breakpoint is canonicalized so ~768 px no longer loses primary navigation;
+- Research-step toggle markup is server-rendered instead of created by a DOM rewrite;
+- theme behavior is consolidated into the canonical application controller; the standalone one-line theme wrapper is removed;
+- inline Valuation, Portfolio, Financial Flows and Trace presentation/behavior is moved into shared JavaScript/CSS contracts;
+- wide tables preserve information with controlled horizontal overflow instead of clipping;
+- touch/focus/readability rules are normalized without changing data or calculations;
+- the previously hidden duplicate Decision Brief markup/CSS is removed rather than preserved as dead UI;
+- the full historical regression suite is restored to CI collection (`test_*.py`); later release tests can no longer exist in the repository while being silently excluded.
+
+Real bugs found by the cleanup:
+1. the 761–820 px range could hide the desktop sidebar before the mobile drawer controls became available;
+2. `pytest.ini` excluded regression suites added after the older 0.2.8/0.2.9 collection pattern;
+3. `CURRENT_STATE.md` was stale about production: deploy #52 had already placed current 0.2.12 main on Namecheap successfully.
+
+Hard boundaries:
+- valuation, Bear/Base/Bull, Research Conclusion, Decision Lenses, Validate, Discovery ranking, Tape calculations, Portfolio sizing/action, Monitoring, Management scoring, SEC normalization and Financial Flows accounting are unchanged;
+- authentication, authorization, FRIEND/INSIDER/CONTROL, publication/privacy and database data are unchanged;
+- `.github/workflows/deploy-namecheap.yml`, Namecheap deployment logic, backup logic and reporting-vendor behavior are unchanged;
+- production remains 0.2.12 until a later explicit manual deploy.
 
 ## 0.2.12 release scope — Broad Universe Discovery
 
@@ -694,7 +720,7 @@ All accepted 0.2.9 architecture, UI, security, reporting-vendor and Tape behavio
 8. One validation policy requires >=5 valid samples and reliability >=65 for VALIDATED everywhere; a legacy raw run status cannot display VALIDATED on one surface and LIMITED on another.
 9. Normal GET remains provider-free/heavy-engine-free.
 10. No UI regression is introduced outside the minimal Management provenance text required for correctness.
-11. VERSION == State-Version == 0.2.10.
+11. The active release VERSION and top-level State-Version must match; historical gate text must not hardcode the current release identity.
 12. Production is not changed by PR or main merge; Namecheap deploy remains an explicit later action.
 
 
@@ -703,7 +729,7 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
-**Current phase:** 0.2.12 is complete in main; production remains independently verified at 0.2.11 and has not been advanced to 0.2.12.
+**Current phase:** 0.2.13 is the active source release on its dedicated branch; production is independently verified at 0.2.12 deploy #52 and has not been advanced to 0.2.13.
 
 Accepted 0.2.12 release sequence:
 - original broad-universe source baseline: main ff4eb1e96a92610bc3ddd2c21c6e32840a016452;

@@ -1,4 +1,9 @@
-<nav class="company-tabs" aria-label="Research workflow">
+{% set active_step = namespace(label='Research steps') %}
+{% for key,label in company_sections %}
+  {% if section == key %}{% set active_step.label = label %}{% endif %}
+{% endfor %}
+<button class="company-tabs-toggle" type="button" data-company-tabs-toggle aria-controls="mf-research-tabs" aria-expanded="false"><span>Research step</span><strong>{{ active_step.label }}</strong></button>
+<nav class="company-tabs" id="mf-research-tabs" aria-label="Research workflow">
   {% for key,label in company_sections %}
     {% if key == 'valuation' %}
       {% set href = url_for('web.valuation_company', ticker=security.ticker) %}
