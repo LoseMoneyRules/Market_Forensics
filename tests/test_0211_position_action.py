@@ -264,4 +264,5 @@ def test_0211_version_and_contract_are_synced():
     assert f"**State-Version: {version}**" in current
     assert f"**Current product line:** {version}" in how
     assert "Research judges the security. Portfolio decides what the existing position allows you to do." in how
-    assert "ADD ON EVIDENCE, NOT ON PRICE." in parity
+    assert "ADD ON EVIDENCE, NOT ON PRICE." in how
+    assert "Position Action" in parity
