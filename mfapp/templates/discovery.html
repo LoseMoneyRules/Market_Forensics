@@ -137,7 +137,8 @@
                 <div class="discovery-list-main">
                   <div class="discovery-list-title"><strong>{{ rejected.ticker }}</strong><span>{{ rejected.stage }}</span></div>
                   <p><strong>{{ rejected.reason }}</strong>{% if rejected.detail %} · {{ rejected.detail }}{% endif %}</p>
-                  {% if rejected.base_gap_pct is not none %}<p class="muted">Base gap {{ '%+.1f'|format(rejected.base_gap_pct) }}% · {{ rejected.valuation_methods or 0 }} methods · {{ rejected.quality or 'quality unavailable' }}</p>{% endif %}
+                  {% set rejected_gap = rejected.get('base_gap_pct') %}
+                  {% if rejected_gap is not none %}<p class="muted">Base gap {{ '%+.1f'|format(rejected_gap) }}% · {{ rejected.get('valuation_methods',0) }} methods · {{ rejected.get('quality') or 'quality unavailable' }}</p>{% endif %}
                 </div>
               </div>
             {% endfor %}
