@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from mfapp import create_app
@@ -15,7 +15,7 @@ from mfapp.extensions import db
 from mfapp.models import User
 from mfapp.readiness import research_readiness
 from mfapp.services import ensure_workspace, valuation_result
-from mfapp.validation_policy import state_for_run, validation_state
+from mfapp.validation_policy import state_for_run, validation_payload, validation_state
 from mfapp.valuation_engine import evaluate
 
 
@@ -346,6 +346,11 @@ def test_0210_management_retroactive_guidance_is_not_scored(tmp_path, monkeypatc
 
 def test_0210_validation_policy_is_single_and_conservative():
     assert validation_state(exists=False) == "NOT RUN"
+    assert validation_payload(None)["state"] == "NOT RUN"
+    assert validation_payload(None)["status"] == "NOT RUN"
+    from mfapp.routes import _fallback_readiness
+    assert _fallback_readiness()["validation"]["state"] == "NOT RUN"
+    assert _fallback_readiness()["validation"]["status"] == "NOT RUN"
     assert validation_state(exists=True, sample_size=3, reliability=90) == "LIMITED"
     assert validation_state(exists=True, sample_size=5, reliability=64.99) == "LIMITED"
     assert validation_state(exists=True, sample_size=5, reliability=65) == "VALIDATED"
@@ -469,3 +474,171 @@ def test_0210_legacy_cache_missing_quality_is_normalized_fail_closed(tmp_path):
         assert cache is not None
         assert "LONG DISLOCATION" not in cache["discovery_labels"]
         assert "QUALITY AT DISCOUNT" not in cache["discovery_labels"]
+
+
+
+def test_0210_valuation_model_save_queues_research_cache_refresh(tmp_path):
+    from mfapp.core_models import Job
+    from mfapp.research_cache import cache_event_type
+
+    app = make_app(tmp_path, "valuation_save_recalc")
+    user_id, company_id, _, coverage_id = seed_workspace(app, "SAVE")
+    with app.app_context():
+        model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).first()
+        cache_time = datetime.now() + timedelta(seconds=5)
+        db.session.add(Event(
+            company_id=company_id,
+            event_type=cache_event_type(coverage_id),
+            title="SAVE current research cache",
+            event_date=cache_time,
+            payload={
+                "valuation": {
+                    "current_price": 100.0, "bear": 85.0, "base": 120.0, "bull": 150.0,
+                    "base_quality": "INTRINSIC", "quality": "INTRINSIC",
+                },
+                "readiness": {"ready_to_validate": False, "gates": [], "validation": {"state": "NOT RUN"}},
+                "intelligence": {"valuation_base_quality": "INTRINSIC"},
+                "decision_lenses": {"value": "FAIR", "variant": "POSSIBLE", "research_conclusion": "RESEARCH INCOMPLETE", "rows": []},
+            },
+        ))
+        model.updated_at = cache_time - timedelta(seconds=1)
+        db.session.commit()
+        assert Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").count() == 0
+
+    client = app.test_client()
+    login(client, user_id)
+    response = client.post("/company/SAVE/valuation/model", data={
+        "company_type": "Industrial",
+        "current_shares": "1000000",
+        "share_basis_verified": "1",
+        "weight_pe": "0.40",
+        "weight_ev_sales": "0.25",
+        "weight_fcf_yield": "0.35",
+        "horizon_years": "5",
+    })
+    assert response.status_code == 302
+
+    with app.app_context():
+        jobs = Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").all()
+        assert len(jobs) == 1
+        assert (jobs[0].payload or {}).get("coverage_id") == coverage_id
+
+
+def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_path, monkeypatch):
+    from mfapp.core_models import Job
+    from mfapp.research_cache import cache_event_type
+    from mfapp.routes import _cached_coverage_rows
+
+    app = make_app(tmp_path, "stale_cache_guard")
+    user_id, company_id, _, coverage_id = seed_workspace(app, "STALE")
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).first()
+        old_time = datetime(2026, 1, 1, 12, 0, 0)
+        db.session.add(Event(
+            company_id=company_id,
+            event_type=cache_event_type(coverage_id),
+            title="STALE research cache",
+            event_date=old_time,
+            payload={
+                "valuation": {
+                    "current_price": 100.0, "bear": 90.0, "base": 140.0, "bull": 175.0,
+                    "base_quality": "INTRINSIC", "quality": "INTRINSIC", "decision_grade": True,
+                },
+                "readiness": {
+                    "ready_to_validate": True,
+                    "done": 13, "total": 13, "gates": [],
+                    "validation": {"state": "VALIDATED", "samples": 5, "reliability": 75.0},
+                },
+                "intelligence": {
+                    "valuation_base_quality": "INTRINSIC",
+                    "valuation_decision_grade": True,
+                    "base_gap_pct": 40.0,
+                    "warnings": [],
+                },
+                "decision_lenses": {
+                    "value": "ATTRACTIVE",
+                    "variant": "POSITIVE EDGE",
+                    "research_conclusion": "LONG READY",
+                    "rows": [
+                        {"key": "value", "state": "ATTRACTIVE"},
+                        {"key": "variant", "state": "POSITIVE EDGE"},
+                    ],
+                },
+            },
+        ))
+        model.updated_at = datetime(2026, 9, 18, 12, 0, 0)
+        coverage.updated_at = datetime(2026, 9, 18, 12, 0, 0)
+        db.session.commit()
+
+        rows, _ = _cached_coverage_rows(user_id)
+        row = next(item for item in rows if item["coverage"].id == coverage_id)
+        assert row["valuation"]["base"] == 140.0
+        assert row["valuation"]["base_quality"] == "DATA_WARNING"
+        assert row["valuation"]["decision_grade"] is False
+        assert row["decision_lenses"]["value"] == "UNVERIFIED"
+        assert row["decision_lenses"]["variant"] == "DEFINED · UNPROVEN"
+        assert row["decision_lenses"]["research_conclusion"] == "DATA REVIEW"
+        assert "LONG DISLOCATION" not in row["discovery_labels"]
+        assert "QUALITY AT DISCOUNT" not in row["discovery_labels"]
+
+        from mfapp.market_discovery import _coverage_context_map
+        discovery_context = _coverage_context_map(user_id, {"STALE"})["STALE"]
+        assert discovery_context["valuation"]["base"] == 140.0
+        assert discovery_context["valuation"]["base_quality"] == "DATA_WARNING"
+        assert discovery_context["valuation"]["decision_grade"] is False
+        assert "LONG DISLOCATION" not in discovery_context["discovery_labels"]
+        assert "QUALITY AT DISCOUNT" not in discovery_context["discovery_labels"]
+
+        monkeypatch.setattr("mfapp.jobs.market_scan", lambda user_id: {"contract_version": "FORENSIC_FAIR_VALUE_V1", "candidates": []})
+        from mfapp.jobs import _discovery
+        ranked = _discovery(user_id)["ranked"]
+        stale_rank = next(item for item in ranked if item["ticker"] == "STALE")
+        assert stale_rank["base_gap_pct"] == 40.0
+        assert stale_rank["score"] == 65.0  # 13 approved gates; stale/non-intrinsic gap contributes zero.
+
+        assert Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").count() == 1
+
+    client = app.test_client()
+    login(client, user_id)
+    response = client.get("/company/STALE/overview")
+    assert response.status_code == 200
+    assert b"DATA REVIEW" in response.data
+
+
+def test_0210_management_requires_explicit_full_year_and_interim_wins(tmp_path, monkeypatch):
+    import mfapp.management_promises as mp
+
+    app = make_app(tmp_path, "management_period_guard")
+    _, company_id, _, _ = seed_workspace(app, "PRD")
+    with app.app_context():
+        quarterly = mp.extract_promises("Management expects Q2 FY2027 revenue growth of 8% to 10%.")
+        plain_year = mp.extract_promises("Management expects 2028 revenue growth of 12% to 14%.")
+        explicit_fy = mp.extract_promises("Management expects FY2029 revenue growth of 6% to 8%.")
+
+        assert quarterly[0]["target_period_type"] == "INTERIM"
+        assert quarterly[0]["comparability"] == "NON_COMPARABLE"
+        assert plain_year[0]["target_period_type"] == "UNRESOLVED"
+        assert plain_year[0]["comparability"] == "NON_COMPARABLE"
+        assert explicit_fy[0]["target_period_type"] == "FY"
+        assert explicit_fy[0]["comparability"] == "COMPARABLE"
+
+        mp.store_promises(company_id, quarterly + plain_year + explicit_fy)
+        monkeypatch.setattr(mp, "annual_rows", lambda company_id, limit=20: [
+            {"fiscal_year": 2029, "period_type": "FY", "period_end": "2029-12-31", "metrics": {"revenue_growth_pct": 7.0}},
+            {"fiscal_year": 2028, "period_type": "FY", "period_end": "2028-12-31", "metrics": {"revenue_growth_pct": 13.0}},
+            {"fiscal_year": 2027, "period_type": "FY", "period_end": "2027-12-31", "metrics": {"revenue_growth_pct": 9.0}},
+        ])
+        rows = mp.evaluate_promises(company_id)
+        by_year = {row["target_year"]: row for row in rows}
+        assert by_year[2027]["status"] == "EVIDENCE_ONLY"
+        assert by_year[2028]["status"] == "EVIDENCE_ONLY"
+        assert by_year[2029]["status"] == "MET"
+
+
+def test_0210_management_reports_use_target_period_not_forced_fy_label():
+    from pathlib import Path
+
+    source = Path("mfapp/reporting.py").read_text()
+    assert '["Period","Metric","Promise","Actual","Status"]' in source
+    assert 'row.get("target_period")' in source

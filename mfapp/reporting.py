@@ -141,7 +141,8 @@ def _plain_research_lines(data: dict[str, Any]) -> list[str]:
             for row in promises[:30]:
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
                 promise=str(lo) if lo==hi else f"{lo}–{hi}"
-                lines.append(f"FY{row.get('target_year')} · {row.get('metric')} · {promise} {unit} · actual {row.get('actual') if row.get('actual') is not None else '—'} · {row.get('status') or ''}")
+                period = row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "—")
+                lines.append(f"{period} · {row.get('metric')} · {promise} {unit} · actual {row.get('actual') if row.get('actual') is not None else '—'} · {row.get('status') or ''}")
         lines += ["", "SOURCES"]
         for row in data.get("sources") or []:
             lines.append(f"• {row.get('provider')} · {row.get('type')} · {row.get('title')} · {row.get('retrieved_at')}")
@@ -794,13 +795,13 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
         if promises:
             _docx_add_heading(doc,"Management promises vs actuals",1)
             t_prom=doc.add_table(rows=1,cols=5); t_prom.style="Table Grid"
-            for i,v in enumerate(["FY","Metric","Promise","Actual","Status"]):
+            for i,v in enumerate(["Period","Metric","Promise","Actual","Status"]):
                 _docx_cell(t_prom.cell(0,i),v.upper(),bold=True,size=8.5); _docx_shade(t_prom.cell(0,i),"EAF0F5")
             for row in promises[:20]:
                 cells=t_prom.add_row().cells
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
                 promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
-                vals=[str(row.get("target_year") or ""),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")]
+                vals=[str(row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "")),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")]
                 for i,v in enumerate(vals): _docx_cell(cells[i],v,size=9)
 
         tape=data.get("tape_metrics") or {}
@@ -1005,11 +1006,11 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
         promises=data.get("management_promises") or []
         if promises:
             story.append(Paragraph("Management promises vs actuals",styles["MFH2"]))
-            rows=[["FY","Metric","Promise","Actual","Status"]]
+            rows=[["Period","Metric","Promise","Actual","Status"]]
             for row in promises[:20]:
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
                 promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
-                rows.append([str(row.get("target_year") or ""),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")])
+                rows.append([str(row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "")),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")])
             tt=Table(rows,colWidths=[.5*inch,1.35*inch,1.8*inch,1.1*inch,1.0*inch],repeatRows=1)
             tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.3,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.7),("VALIGN",(0,0),(-1,-1),"TOP")]))
             story += [tt,Spacer(1,5)]

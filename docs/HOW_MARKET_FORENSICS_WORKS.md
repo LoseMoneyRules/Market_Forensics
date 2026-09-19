@@ -282,6 +282,8 @@ Heavy analytical outputs are materialized into a research cache.
 
 Normal page navigation uses that cache rather than recalculating everything.
 
+A cache cannot preserve decision-grade valuation state after the underlying Coverage or active valuation model has changed. If a materialized cache is stale, the last Bear / Base / Bull may remain visible for continuity, but valuation quality becomes DATA_WARNING, VALUE / Variant / Research Conclusion fail closed, value-based Discovery qualification is withheld, and a background RECALCULATE is queued. The normal GET does not execute providers or heavy analytical work itself.
+
 Lightweight state — especially Process Readiness — is read live.
 
 Gate approval/reopen may re-evaluate Decision Lenses from already-materialized evidence because this is cheap and does not require external providers.
@@ -919,7 +921,8 @@ Decision-grade Base quality is fail-closed:
 - PROVISIONAL_STORED_FALLBACK, PROVISIONAL_REFERENCE_FALLBACK, MIXED / DATA WARNING remain visible but cannot create valuation edge or LONG / SHORT readiness/watch states;
 - the displayed Bear / Base / Bull values are preserved even when valuation quality is under review;
 - current market price is never evidence that an intrinsic fair value is correct;
-- cached 0.2.9 research is re-read against stored Base-quality provenance before a user-facing edge is allowed.
+- cached 0.2.9 research is re-read against stored Base-quality provenance before a user-facing edge is allowed;
+- if the active valuation model is newer than its materialized research cache, the last Bear / Base / Bull may stay visible but the cached valuation is treated as DATA WARNING / non-decision-grade until background RECALCULATE finishes; stale gaps cannot create VALUE/Variant edge or Discovery qualification.
 
 ### 12.9 Discovery is stricter than Research display
 
@@ -1029,7 +1032,7 @@ Current label logic:
 
 Management guidance/promises can be extracted from filings and compared with realized filed outcomes.
 
-Promise scoring is comparability-first. Every stored promise preserves source/date, metric, target period, basis/definition, comparability and status. PENDING may become MET or MISS only when the target and actual are economically comparable. Interim/quarterly targets, incompatible fiscal periods, adjusted/non-GAAP basis, management-defined FCF, retrospective guidance, later restatements, ambiguous comparator years, incompatible units/ranges or other unresolved definitions remain EVIDENCE_ONLY / non-comparable rather than receiving a false MET/MISS.
+Promise scoring is comparability-first. Every stored promise preserves source/date, metric, target period, basis/definition, comparability and status. PENDING may become MET or MISS only when the target and actual are economically comparable. Automatic scoring requires an explicit full-year target marker such as FY / fiscal year / full-year; a bare year does not prove fiscal-period comparability. Any interim marker such as Q1–Q4, quarter, H1/H2, six months, nine months or YTD wins over an FY token in the same evidence and keeps the promise EVIDENCE_ONLY. Interim/quarterly targets, incompatible fiscal periods, adjusted/non-GAAP basis, management-defined FCF, retrospective guidance, later restatements, ambiguous comparator years, incompatible units/ranges or other unresolved definitions remain EVIDENCE_ONLY / non-comparable rather than receiving a false MET/MISS.
 
 This is accountability evidence, not an integrity/personality judgment.
 

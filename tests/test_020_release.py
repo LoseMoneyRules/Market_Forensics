@@ -564,7 +564,7 @@ def test_020_management_promises_parse_and_score_met_miss(tmp_path, monkeypatch)
     app = make_app(tmp_path, monkeypatch)
     _, company_id, _, _ = seed_workspace(app)
     import mfapp.management_promises as mp
-    sentence = "Management expects 2027 revenue growth of 8% to 10% as capacity normalizes."
+    sentence = "Management expects FY2027 revenue growth of 8% to 10% as capacity normalizes."
     parsed = mp.extract_promises(sentence)
     assert len(parsed) == 1
     assert parsed[0]["metric"] == "revenue_growth_pct"

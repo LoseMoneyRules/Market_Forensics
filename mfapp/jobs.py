@@ -26,6 +26,7 @@ from .macro_context import refresh_macro_context
 from .market_discovery import market_scan
 from .positioning import refresh_positioning_bundle
 from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
+from .valuation_engine import valuation_base_quality
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
 TERMINAL_JOB_STATUSES = ("DONE", "FAILED", "CANCELLED", "SUPERSEDED")
@@ -343,14 +344,23 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
 
 def _discovery(user_id: int) -> dict[str, Any]:
     """Market-wide scan plus cache-only ranking for current Coverage."""
-    from .research_cache import latest_cache_map
+    from .research_cache import cache_is_stale, latest_cache_map
 
     scan = market_scan(user_id)
     coverages = Coverage.query.filter(
         Coverage.user_id == user_id,
         Coverage.status != "ARCHIVED",
     ).all()
-    caches = latest_cache_map([row.id for row in coverages])
+    coverage_ids = [row.id for row in coverages]
+    caches = latest_cache_map(coverage_ids)
+    model_rows = ValuationModel.query.filter(
+        ValuationModel.coverage_id.in_(coverage_ids),
+        ValuationModel.is_active.is_(True),
+    ).order_by(ValuationModel.id.desc()).all() if coverage_ids else []
+    models: dict[int, ValuationModel] = {}
+    for model in model_rows:
+        models.setdefault(model.coverage_id, model)
+
     security_ids = [row.security_id for row in coverages]
     securities = {
         row.id: row
@@ -365,10 +375,16 @@ def _discovery(user_id: int) -> dict[str, Any]:
         cache = dict(caches.get(coverage.id) or {})
         readiness = dict(cache.get("readiness") or {})
         intelligence = dict(cache.get("intelligence") or {})
+        valuation = dict(cache.get("valuation") or {})
         done = int(readiness.get("done") or 0)
         total = int(readiness.get("total") or 13)
         gap = intelligence.get("base_gap_pct")
-        score = done * 5 + (min(abs(float(gap)), 50) if gap is not None else 0)
+        intrinsic_gap = (
+            gap is not None
+            and valuation_base_quality(valuation) == "INTRINSIC"
+            and not cache_is_stale(cache, coverage, models.get(coverage.id))
+        )
+        score = done * 5 + (min(abs(float(gap)), 50) if intrinsic_gap else 0)
         ranked.append({
             "ticker": security.ticker,
             "readiness": f"{done}/{total}",

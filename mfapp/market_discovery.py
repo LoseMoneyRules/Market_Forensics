@@ -5,11 +5,12 @@ from typing import Any
 
 import requests
 
-from .core_models import Coverage, Security
+from .core_models import Coverage, Security, ValuationModel
 from .data_providers import get_secret
+from .discovery_engine import classify_coverage
 from .discovery_forensics import enrich_forensic_candidates, forensic_side
 from .extensions import db
-from .research_cache import latest_cache_map
+from .research_cache import cache_is_stale, latest_cache_map
 from .services import valuation_result
 
 MIN_LONG_PRICE = 5.0
@@ -60,15 +61,33 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
     if not rows:
         return {}
 
-    caches = latest_cache_map([coverage.id for coverage, _ in rows])
+    coverage_ids = [coverage.id for coverage, _ in rows]
+    caches = latest_cache_map(coverage_ids)
+    model_rows = ValuationModel.query.filter(
+        ValuationModel.coverage_id.in_(coverage_ids),
+        ValuationModel.is_active.is_(True),
+    ).order_by(ValuationModel.id.desc()).all()
+    models: dict[int, ValuationModel] = {}
+    for model in model_rows:
+        models.setdefault(model.coverage_id, model)
+
     out: dict[str, dict[str, Any]] = {}
     for coverage, security in rows:
         cache = dict(caches.get(coverage.id) or {})
         valuation = dict(cache.get("valuation") or {})
-        if not valuation.get("base_quality"):
+        if cache and cache_is_stale(cache, coverage, models.get(coverage.id)):
+            valuation["base_quality"] = "DATA_WARNING"
+            valuation["quality"] = "DATA_WARNING"
+            valuation["decision_grade"] = False
+        elif not valuation.get("base_quality"):
             live_valuation = valuation_result(coverage)
             for key in ("quality", "base_quality", "decision_grade"):
                 valuation[key] = live_valuation.get(key)
+
+        intelligence = dict(cache.get("intelligence") or {})
+        intelligence["valuation_base_quality"] = valuation.get("base_quality") or "DATA_WARNING"
+        intelligence["valuation_decision_grade"] = bool(valuation.get("decision_grade"))
+        discovery_labels = classify_coverage(intelligence, dict(cache.get("readiness") or {}))
         out[security.ticker.upper()] = {
             "known": True,
             "coverage_id": coverage.id,
@@ -77,7 +96,7 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
             "base_gap_pct": (cache.get("intelligence") or {}).get("base_gap_pct"),
             "readiness": dict(cache.get("readiness") or {}),
             "decision_lenses": dict(cache.get("decision_lenses") or {}),
-            "discovery_labels": list(cache.get("discovery_labels") or []),
+            "discovery_labels": discovery_labels,
             "valuation": {
                 "current_price": valuation.get("current_price"),
                 "base": valuation.get("base"),
