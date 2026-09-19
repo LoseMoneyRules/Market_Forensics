@@ -35,7 +35,7 @@ from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
 from .symbols import validate_ticker
-from .valuation_engine import valuation_base_quality, valuation_is_decision_grade
+from .valuation_engine import stored_model_base_quality, valuation_base_quality, valuation_is_decision_grade
 
 bp = Blueprint("web", __name__)
 
@@ -242,9 +242,10 @@ def _ctx(ticker: str) -> dict:
     cache = latest_research_cache(coverage.id, company.id)
     valuation = dict((cache or {}).get("valuation") or valuation_result(coverage))
     if not valuation.get("base_quality"):
-        live_valuation_meta = valuation_result(coverage)
-        for key in ("quality", "base_quality", "decision_grade"):
-            valuation[key] = live_valuation_meta.get(key)
+        base_quality = stored_model_base_quality(model)
+        valuation["base_quality"] = base_quality
+        valuation["quality"] = valuation.get("quality") or base_quality
+        valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
 
     active_recalc = Job.query.filter(
         Job.user_id == g.user.id,
