@@ -651,7 +651,9 @@ def test_020_market_wide_discovery_screen_is_only_a_funnel_for_forensic_value():
     assert "stage0_universe" in market
     assert "stage1_screen" in market
     assert "BROAD_FORENSIC_DISCOVERY_V2" in market
-    assert "FORENSIC_ENRICH_LIMIT = 8" in forensic
+    assert "FORENSIC_ENRICH_LIMIT = 10" in forensic
+    assert "FORENSIC_WATCH_EDGE_PCT = 12.0" in forensic
+    assert "discovery_opportunity" in forensic
     assert "allow_reference_fallback=False" in forensic
     assert "from .secdata" not in universe and "api/xbrl" not in universe.lower()
     assert "fill_quota" in market

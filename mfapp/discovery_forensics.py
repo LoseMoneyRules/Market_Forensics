@@ -15,9 +15,12 @@ from .secdata import (
 )
 from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
 
+FORENSIC_WATCH_EDGE_PCT = 12.0
 FORENSIC_EDGE_PCT = 20.0
-FORENSIC_ENRICH_LIMIT = 8
-FORENSIC_ENRICH_PER_SIDE = 4  # compatibility alias; Stage 2 is capped by FORENSIC_ENRICH_LIMIT
+FORENSIC_STRONG_EDGE_PCT = 25.0
+FORENSIC_CONFIRM_SCORE = 14
+FORENSIC_ENRICH_LIMIT = 10
+FORENSIC_ENRICH_PER_SIDE = 5  # compatibility alias; Stage 2 is capped by FORENSIC_ENRICH_LIMIT
 FORENSIC_TIMEOUT = (4, 10)
 
 
@@ -418,18 +421,21 @@ def _local_forensics(
     stored_base = _num(stored_valuation.get("base"))
     base_gap = _num(context.get("base_gap_pct"))
     methods = int(context.get("valuation_methods") or 0)
-    if valuation_base_quality(stored_valuation) != "INTRINSIC":
-        return None, "BASE QUALITY NOT INTRINSIC"
-    if methods < 2:
-        return None, "LESS THAN 2 VALUATION METHODS"
-    if stored_base is None or base_gap is None:
-        return None, "INTRINSIC BASE UNAVAILABLE"
+    quality = valuation_base_quality(stored_valuation)
+    if stored_base is None:
+        return None, "BASE UNAVAILABLE"
+    if base_gap is None:
+        comparison_price = _num(stored_valuation.get("current_price")) or price
+        if comparison_price not in (None, 0):
+            base_gap = (stored_base / comparison_price - 1.0) * 100.0
+    if base_gap is None:
+        return None, "BASE GAP UNAVAILABLE"
     return {
         "bear": _num(stored_valuation.get("bear")),
         "base": stored_base,
         "bull": _num(stored_valuation.get("bull")),
         "gap_pct": base_gap,
-        "quality": "INTRINSIC",
+        "quality": quality,
         "valuation_methods": methods,
         "snapshot": snapshot,
         "signals": signals,
@@ -468,12 +474,8 @@ def _external_forensics(
         return None, "TTM INVALID / INCOMPLETE"
 
     valuation = _valuation_from_history(annual, current, prior, price, company_type)
-    if str(valuation.get("quality") or "").upper() != "INTRINSIC":
-        return None, "BASE QUALITY NOT INTRINSIC"
-    if int(valuation.get("valuation_methods") or 0) < 2:
-        return None, "LESS THAN 2 VALUATION METHODS"
     if valuation.get("base") is None or valuation.get("gap_pct") is None:
-        return None, "INTRINSIC BASE UNAVAILABLE"
+        return None, "BASE / GAP UNAVAILABLE"
 
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
@@ -482,7 +484,7 @@ def _external_forensics(
         "base": valuation["base"],
         "bull": valuation.get("bull"),
         "gap_pct": valuation["gap_pct"],
-        "quality": "INTRINSIC",
+        "quality": str(valuation.get("quality") or "DATA_WARNING").upper(),
         "valuation_methods": int(valuation.get("valuation_methods") or 0),
         "company_type": company_type,
         "sic_description": sic_description,
@@ -582,22 +584,74 @@ def enrich_forensic_candidates(
             reject(symbol, reason or "FORENSIC DATA INSUFFICIENT")
     return out, diagnostics
 
-def forensic_side(result: dict[str, Any]) -> tuple[str, str, int] | None:
+def discovery_opportunity(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Classify research leads without pretending Discovery is final validation.
+
+    P1 requires a large intrinsic gap plus aligned operating confirmation.
+    P2 accepts a decision-grade valuation gap when operations are stable or aligned.
+    WATCH keeps emerging or verification-needed dislocations visible for Research.
+    """
     gap = _num(result.get("gap_pct"))
+    if gap is None or abs(gap) < FORENSIC_WATCH_EDGE_PCT:
+        return None
+
+    side = "LONG" if gap > 0 else "SHORT"
     long_score = int(result.get("long_score") or 0)
     short_score = int(result.get("short_score") or 0)
-    if gap is None:
-        return None
-    if gap >= FORENSIC_EDGE_PCT and long_score >= 14 and long_score > short_score:
-        priority = "P1" if gap >= 30 and long_score >= 35 else "P2"
-        return "LONG", priority, long_score
-    if gap <= -FORENSIC_EDGE_PCT and short_score >= 14 and short_score > long_score:
-        priority = "P1" if gap <= -30 and short_score >= 35 else "P2"
-        return "SHORT", priority, short_score
+    aligned_score = long_score if side == "LONG" else short_score
+    opposing_score = short_score if side == "LONG" else long_score
+    aligned_confirmation = aligned_score >= FORENSIC_CONFIRM_SCORE and aligned_score > opposing_score
+    material_contradiction = opposing_score >= FORENSIC_CONFIRM_SCORE and opposing_score > aligned_score
+    quality = str(result.get("quality") or "DATA_WARNING").upper()
+    methods = int(result.get("valuation_methods") or 0)
+    decision_grade = quality == "INTRINSIC" and methods >= 2
+    edge = abs(gap)
+
+    if decision_grade and edge >= FORENSIC_STRONG_EDGE_PCT and aligned_confirmation:
+        return {
+            "side": side, "priority": "P1", "priority_rank": 1, "score": aligned_score,
+            "reason": "Strong intrinsic valuation edge with aligned filed operating confirmation.",
+            "operating_state": "CONFIRMING",
+        }
+
+    if decision_grade and edge >= FORENSIC_EDGE_PCT and not material_contradiction:
+        return {
+            "side": side, "priority": "P2", "priority_rank": 2, "score": aligned_score,
+            "reason": (
+                "Intrinsic valuation edge with confirming operations."
+                if aligned_confirmation
+                else "Intrinsic valuation edge with no material operating contradiction."
+            ),
+            "operating_state": "CONFIRMING" if aligned_confirmation else "STABLE / NOT CONTRADICTED",
+        }
+
+    if edge >= FORENSIC_EDGE_PCT or aligned_confirmation:
+        if edge < FORENSIC_EDGE_PCT:
+            reason = "Emerging 12–20% valuation edge with aligned operating confirmation."
+        elif not decision_grade:
+            reason = "Large valuation dislocation; valuation evidence still needs verification."
+        elif material_contradiction:
+            reason = "Large valuation dislocation, but current operating evidence conflicts."
+        else:
+            reason = "Emerging valuation setup that merits Research verification."
+        return {
+            "side": side, "priority": "WATCH", "priority_rank": 3, "score": aligned_score,
+            "reason": reason,
+            "operating_state": "CONFLICTING" if material_contradiction else ("CONFIRMING" if aligned_confirmation else "UNCONFIRMED"),
+        }
     return None
 
 
+def forensic_side(result: dict[str, Any]) -> tuple[str, str, int] | None:
+    """Compatibility wrapper for callers that only accept qualified P1/P2 leads."""
+    opportunity = discovery_opportunity(result)
+    if not opportunity or opportunity["priority"] == "WATCH":
+        return None
+    return opportunity["side"], opportunity["priority"], int(opportunity.get("score") or 0)
+
+
 __all__ = [
-    "FORENSIC_EDGE_PCT", "FORENSIC_ENRICH_LIMIT", "FORENSIC_ENRICH_PER_SIDE",
-    "enrich_forensic_candidates", "forensic_side", "_basis_review_flags",
+    "FORENSIC_WATCH_EDGE_PCT", "FORENSIC_EDGE_PCT", "FORENSIC_STRONG_EDGE_PCT",
+    "FORENSIC_CONFIRM_SCORE", "FORENSIC_ENRICH_LIMIT", "FORENSIC_ENRICH_PER_SIDE",
+    "enrich_forensic_candidates", "discovery_opportunity", "forensic_side", "_basis_review_flags",
 ]
