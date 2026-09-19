@@ -420,9 +420,16 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             "current_price": float(market.price) if market and market.price is not None else None,
             "bear": None, "base": None, "bull": None, "expected_value": None,
         })
+        if not valuation.get("base_quality"):
+            model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+            base_quality = stored_model_base_quality(model)
+            valuation["base_quality"] = base_quality
+            valuation["quality"] = valuation.get("quality") or base_quality
+            valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
         readiness = dict(cache.get("readiness") or _fallback_readiness())
         intelligence = dict(cache.get("intelligence") or _fallback_intelligence(readiness, updating=True))
         lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
+        intelligence, lenses = _fail_closed_cached_research(valuation, readiness, intelligence, lenses)
         pending = [gate.get("label") for gate in readiness.get("gates", []) if not gate.get("approved")]
         validation_state = str((readiness.get("validation") or {}).get("state") or "NOT RUN")
         conclusion = str(lenses.get("research_conclusion") or "DATA REVIEW")
