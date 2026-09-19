@@ -15,8 +15,8 @@
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.10 on Namecheap — pre-audit-closure runtime  
-**Verified production baseline:** deploy run `35417668259` / deploy #46 = completed / success from main commit `1eb92d79a1514da8d5bec53a8f72fae1eee0aa30`; candidate and post-cleanup `/health` returned HTTP 200 with `status=ok`, `version=0.2.10`, `architecture=web-native`, `database=primary`, `reports=rich`; rollback baseline was 0.2.9 and reporting-vendor rebuild/upload was skipped because dependencies were unchanged  
+**Production:** 0.2.10 on Namecheap — audit-closure runtime LIVE  
+**Verified production baseline:** deploy run `35418234654` / deploy #47 = completed / success from main commit `b447d1ce0f1af71536ac2cae5bb67ec4a5223f0d`; pre-upload release tests and production-minimal smoke passed; `_reporting_vendor` rebuild/staging were skipped because dependencies were unchanged and its backup exclusion preflight passed; upload/restart, candidate production health, cleanup and post-cleanup health all completed successfully  
 **Main baseline before 0.2.10 merge:** VERSION `0.2.9` at `e8ffdd5316f44f37647314aba94950912bd55fd0`  
 **0.2.10 source branch:** `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch was its base  
 **Verified 0.2.10 final branch CI:** push run `35417497708` / #974 and PR run `35417499925` / #975 = completed / success at `ed8a0c726975ebe886de30ea6bf062b19c7bcb3b`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
@@ -31,9 +31,9 @@
 **Audit-closure merge commit:** `cfc11aa1a57e007604593243708776800b08e6dd`  
 **Latest verified main release CI:** run `35418175253` / #1007 = completed / success on `cfc11aa1a57e007604593243708776800b08e6dd`; full regression suite and all production/reporting smoke checks passed  
 **Main:** VERSION `0.2.10`; audit-closure code is the accepted main baseline  
-**Release phase:** 0.2.10 audit closure is merged and verified in main. Production is already 0.2.10 from separate deploy #46, but that deployed runtime predates PR #36; no deploy of the audit-closure code has been run.  
+**Release phase:** 0.2.10 audit closure is merged, CI-verified and deployed to Namecheap through successful deploy #47. Main and production now contain the same accepted audit-closure runtime.  
 
-Production and main remain separate states even though both report VERSION 0.2.10: production is currently the pre-audit-closure 0.2.10 runtime from deploy #46, while main includes PR #36. Deploying the audit closure requires a separate explicit Namecheap action.
+Production and main are separately verified states even when they are on the same release. For the current 0.2.10 closure, main CI and the explicit Namecheap deploy have both passed.
 ---
 
 ## 0.2.10 release scope — correctness closure
