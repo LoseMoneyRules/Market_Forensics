@@ -604,3 +604,41 @@ def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_
     response = client.get("/company/STALE/overview")
     assert response.status_code == 200
     assert b"DATA REVIEW" in response.data
+
+
+def test_0210_management_requires_explicit_full_year_and_interim_wins(tmp_path, monkeypatch):
+    import mfapp.management_promises as mp
+
+    app = make_app(tmp_path, "management_period_guard")
+    _, company_id, _, _ = seed_workspace(app, "PRD")
+    with app.app_context():
+        quarterly = mp.extract_promises("Management expects Q2 FY2027 revenue growth of 8% to 10%.")
+        plain_year = mp.extract_promises("Management expects 2028 revenue growth of 12% to 14%.")
+        explicit_fy = mp.extract_promises("Management expects FY2029 revenue growth of 6% to 8%.")
+
+        assert quarterly[0]["target_period_type"] == "INTERIM"
+        assert quarterly[0]["comparability"] == "NON_COMPARABLE"
+        assert plain_year[0]["target_period_type"] == "UNRESOLVED"
+        assert plain_year[0]["comparability"] == "NON_COMPARABLE"
+        assert explicit_fy[0]["target_period_type"] == "FY"
+        assert explicit_fy[0]["comparability"] == "COMPARABLE"
+
+        mp.store_promises(company_id, quarterly + plain_year + explicit_fy)
+        monkeypatch.setattr(mp, "annual_rows", lambda company_id, limit=20: [
+            {"fiscal_year": 2029, "period_type": "FY", "period_end": "2029-12-31", "metrics": {"revenue_growth_pct": 7.0}},
+            {"fiscal_year": 2028, "period_type": "FY", "period_end": "2028-12-31", "metrics": {"revenue_growth_pct": 13.0}},
+            {"fiscal_year": 2027, "period_type": "FY", "period_end": "2027-12-31", "metrics": {"revenue_growth_pct": 9.0}},
+        ])
+        rows = mp.evaluate_promises(company_id)
+        by_year = {row["target_year"]: row for row in rows}
+        assert by_year[2027]["status"] == "EVIDENCE_ONLY"
+        assert by_year[2028]["status"] == "EVIDENCE_ONLY"
+        assert by_year[2029]["status"] == "MET"
+
+
+def test_0210_management_reports_use_target_period_not_forced_fy_label():
+    from pathlib import Path
+
+    source = Path("mfapp/reporting.py").read_text()
+    assert '["Period","Metric","Promise","Actual","Status"]' in source
+    assert 'row.get("target_period")' in source
