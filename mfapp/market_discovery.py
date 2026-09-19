@@ -3,28 +3,22 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-import requests
-
 from .core_models import Coverage, Security, ValuationModel
 from .data_providers import get_secret
 from .discovery_engine import classify_coverage
-from .discovery_forensics import enrich_forensic_candidates, forensic_side
+from .discovery_forensics import FORENSIC_ENRICH_LIMIT, enrich_forensic_candidates, forensic_side
+from .discovery_universe import MAJOR_EXCHANGES, stage0_universe, stage1_screen
 from .extensions import db
 from .research_cache import cache_is_stale, latest_cache_map
 from .services import valuation_result
+from .valuation_engine import valuation_base_quality
 
 MIN_LONG_PRICE = 5.0
 MIN_SHORT_PRICE = 10.0
 MIN_DOLLAR_VOLUME = 50_000_000.0
 MIN_DAILY_VOLUME = 500_000.0
 MAX_PER_SIDE = 10
-MAJOR_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA"}
-NON_OPERATING_NAME_TOKENS = (
-    " WARRANT", "WARRANT ", " RIGHTS", " RIGHT", " UNIT", " UNITS",
-    " ETF", "ETN", " EXCHANGE TRADED FUND", " FUND", " PORTFOLIO",
-    " ACQUISITION CORP", " ACQUISITION CO", " BLANK CHECK",
-    " PREFERRED", " PREFERENCE", " DEPOSITARY SHARE", " NOTES DUE ",
-)
+CONTRACT_VERSION = "BROAD_FORENSIC_DISCOVERY_V2"
 
 
 def _headers(user_id: int) -> dict[str, str] | None:
@@ -43,8 +37,23 @@ def _n(value: Any) -> float | None:
         return None
 
 
+def _valuation_method_count(model: ValuationModel | None) -> int:
+    if model is None:
+        return 0
+    assumptions = dict(model.assumptions or {})
+    latest = dict(assumptions.get("latest_engine_result") or {})
+    base = dict((latest.get("scenarios") or {}).get("BASE") or {})
+    if not base:
+        try:
+            scenario = next((row for row in model.scenarios if str(row.name or "").upper() == "BASE"), None)
+            base = dict(scenario.outputs or {}) if scenario is not None else {}
+        except Exception:
+            base = {}
+    return sum(1 for key in ("pe", "ev_sales", "fcf_yield") if _n(base.get(key)) is not None)
+
+
 def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str, Any]]:
-    """Batch-read already materialized Research context for screened symbols."""
+    """Batch-read materialized Research context only; no provider work."""
     if not symbols:
         return {}
     rows = (
@@ -74,8 +83,9 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
     out: dict[str, dict[str, Any]] = {}
     for coverage, security in rows:
         cache = dict(caches.get(coverage.id) or {})
+        model = models.get(coverage.id)
         valuation = dict(cache.get("valuation") or {})
-        if cache and cache_is_stale(cache, coverage, models.get(coverage.id)):
+        if cache and cache_is_stale(cache, coverage, model):
             valuation["base_quality"] = "DATA_WARNING"
             valuation["quality"] = "DATA_WARNING"
             valuation["decision_grade"] = False
@@ -87,266 +97,199 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
         intelligence = dict(cache.get("intelligence") or {})
         intelligence["valuation_base_quality"] = valuation.get("base_quality") or "DATA_WARNING"
         intelligence["valuation_decision_grade"] = bool(valuation.get("decision_grade"))
-        discovery_labels = classify_coverage(intelligence, dict(cache.get("readiness") or {}))
         out[security.ticker.upper()] = {
             "known": True,
             "coverage_id": coverage.id,
             "company_id": security.company_id,
             "security_id": security.id,
-            "base_gap_pct": (cache.get("intelligence") or {}).get("base_gap_pct"),
+            "base_gap_pct": intelligence.get("base_gap_pct"),
             "readiness": dict(cache.get("readiness") or {}),
             "decision_lenses": dict(cache.get("decision_lenses") or {}),
-            "discovery_labels": discovery_labels,
+            "discovery_labels": classify_coverage(intelligence, dict(cache.get("readiness") or {})),
             "valuation": {
                 "current_price": valuation.get("current_price"),
+                "bear": valuation.get("bear"),
                 "base": valuation.get("base"),
+                "bull": valuation.get("bull"),
                 "quality": valuation.get("quality"),
                 "base_quality": valuation.get("base_quality"),
                 "decision_grade": valuation.get("decision_grade"),
+                "warnings": list(valuation.get("warnings") or []),
             },
+            "valuation_methods": _valuation_method_count(model),
             "cache_ready": bool(cache),
+            "cache_generated_at": cache.get("_generated_at"),
+            "market_as_of": cache.get("market_as_of"),
         }
     return out
 
 
-def _snapshot_map(symbols: set[str], headers: dict[str, str], errors: list[str]) -> dict[str, dict[str, Any]]:
-    if not symbols:
-        return {}
-    try:
-        response = requests.get(
-            "https://data.alpaca.markets/v2/stocks/snapshots",
-            headers=headers,
-            params={"symbols": ",".join(sorted(symbols)), "feed": "iex"},
-            timeout=(5, 15),
+def _active_coverage_tickers(user_id: int) -> set[str]:
+    return {
+        str(ticker or "").upper()
+        for (ticker,) in (
+            db.session.query(Security.ticker)
+            .join(Coverage, Coverage.security_id == Security.id)
+            .filter(
+                Coverage.user_id == user_id,
+                Coverage.status != "ARCHIVED",
+                Security.active.is_(True),
+            )
+            .all()
         )
-        if response.status_code != 200:
-            errors.append(f"Snapshot qualification HTTP {response.status_code}.")
-            return {}
-        payload = response.json() or {}
-        out: dict[str, dict[str, Any]] = {}
-        for symbol, node in payload.items():
-            node = node or {}
-            trade = node.get("latestTrade") or {}
-            day = node.get("dailyBar") or {}
-            prior = node.get("prevDailyBar") or {}
-            price = _n(trade.get("p")) or _n(day.get("c"))
-            volume = _n(day.get("v"))
-            prior_close = _n(prior.get("c"))
-            move = ((price / prior_close - 1.0) * 100.0) if price is not None and prior_close not in (None, 0) else None
-            out[str(symbol).upper()] = {
-                "price": price,
-                "daily_volume": volume,
-                "dollar_volume": (price * volume) if price is not None and volume is not None else None,
-                "move_pct": move,
-            }
-        return out
-    except Exception as exc:
-        errors.append(f"Snapshot qualification: {type(exc).__name__}")
-        return {}
+        if ticker
+    }
 
 
-def _asset_map(symbols: set[str], headers: dict[str, str], errors: list[str]) -> dict[str, dict[str, Any]]:
-    """Validate the screened pool against active Alpaca US-equity metadata."""
-    if not symbols:
-        return {}
-    try:
-        response = requests.get(
-            "https://paper-api.alpaca.markets/v2/assets",
-            headers=headers,
-            params={"status": "active", "asset_class": "us_equity"},
-            timeout=(5, 20),
-        )
-        if response.status_code != 200:
-            errors.append(f"Asset qualification HTTP {response.status_code}.")
-            return {}
-        wanted = {str(x).upper() for x in symbols}
-        out: dict[str, dict[str, Any]] = {}
-        for raw in response.json() or []:
-            symbol = str(raw.get("symbol") or "").upper()
-            if symbol not in wanted:
+def _select_stage2_finalists(
+    rows: list[dict[str, Any]],
+    local_context: dict[str, dict[str, Any]],
+    *,
+    limit: int = FORENSIC_ENRICH_LIMIT,
+) -> list[dict[str, Any]]:
+    """Allocate a small deep-enrichment budget without reverting to activity bias.
+
+    This is not a candidate quota. It only decides which cheap Stage-1 names may
+    spend SEC/provider budget. Final qualification remains fail-closed in Stage 2.
+    """
+    known_edge: list[dict[str, Any]] = []
+    quiet_broad: list[dict[str, Any]] = []
+    activity: list[dict[str, Any]] = []
+    remainder: list[dict[str, Any]] = []
+
+    for row in rows:
+        ticker = str(row.get("ticker") or "").upper()
+        context = local_context.get(ticker) or {}
+        lanes = set(row.get("stage1_lanes") or [])
+        gap = _n(context.get("base_gap_pct"))
+        methods = int(context.get("valuation_methods") or 0)
+        quality = valuation_base_quality(context.get("valuation") or {})
+        item = dict(row)
+        if context:
+            item["known_context"] = context
+            item["in_coverage"] = True
+        else:
+            item["known_context"] = {}
+            item["in_coverage"] = False
+
+        if quality == "INTRINSIC" and methods >= 2 and gap is not None and abs(gap) >= 15:
+            item["stage2_selection_reason"] = "Stored intrinsic Base is already near or beyond the Discovery edge."
+            known_edge.append(item)
+        elif "BROAD_ROTATION" in lanes and "MARKET_ACTIVITY" not in lanes:
+            item["stage2_selection_reason"] = "Quiet liquid broad-universe name selected for forensic rotation."
+            quiet_broad.append(item)
+        elif "MARKET_ACTIVITY" in lanes:
+            item["stage2_selection_reason"] = "Current market activity adds a secondary forensic investigation lane."
+            activity.append(item)
+        else:
+            item["stage2_selection_reason"] = "Liquid Stage-1 name selected from the bounded remainder."
+            remainder.append(item)
+
+    known_edge.sort(key=lambda row: (-abs(_n((row.get("known_context") or {}).get("base_gap_pct")) or 0.0), row["ticker"]))
+    quiet_broad.sort(key=lambda row: (abs(_n(row.get("move_pct")) or 0.0), -(_n(row.get("dollar_volume")) or 0.0), row["ticker"]))
+    activity.sort(key=lambda row: (-abs(_n(row.get("move_pct")) or 0.0), int(row.get("activity_rank") or 9999), row["ticker"]))
+    remainder.sort(key=lambda row: (-(_n(row.get("dollar_volume")) or 0.0), row["ticker"]))
+
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(items: list[dict[str, Any]], budget: int | None = None) -> None:
+        taken = 0
+        for item in items:
+            if len(selected) >= limit:
+                return
+            ticker = item["ticker"]
+            if ticker in seen:
                 continue
-            out[symbol] = {
-                "name": str(raw.get("name") or symbol).strip(),
-                "status": str(raw.get("status") or "").lower(),
-                "exchange": str(raw.get("exchange") or "").upper(),
-                "tradable": bool(raw.get("tradable")),
-                "marginable": bool(raw.get("marginable")),
-                "shortable": bool(raw.get("shortable")),
-                "easy_to_borrow": bool(raw.get("easy_to_borrow")),
-                "fractionable": bool(raw.get("fractionable")),
-            }
-        return out
-    except Exception as exc:
-        errors.append(f"Asset qualification: {type(exc).__name__}")
-        return {}
+            if budget is not None and taken >= budget:
+                return
+            selected.append(item)
+            seen.add(ticker)
+            taken += 1
+
+    add(known_edge, 2)
+    add(quiet_broad, 4)
+    add(activity, 2)
+    add(known_edge)
+    add(quiet_broad)
+    add(activity)
+    add(remainder)
+    return selected[:limit]
 
 
-def _asset_is_operating_equity(asset: dict[str, Any]) -> tuple[bool, str]:
-    if not asset:
-        return False, "UNVERIFIED ASSET"
-    if asset.get("status") != "active" or not asset.get("tradable"):
-        return False, "INACTIVE / NOT TRADABLE"
-    exchange = str(asset.get("exchange") or "").upper()
-    if exchange not in MAJOR_EXCHANGES:
-        return False, "NON-CORE EXCHANGE"
-    name = " " + str(asset.get("name") or "").upper() + " "
-    if any(token in name for token in NON_OPERATING_NAME_TOKENS):
-        return False, "NON-OPERATING SECURITY"
-    return True, ""
+def _family_label(side: str, evidence: dict[str, Any]) -> str:
+    labels = {str(row.get("label") or "").upper() for row in evidence.get("signals") or []}
+    gap = _n(evidence.get("gap_pct")) or 0.0
+    if side == "LONG":
+        if gap >= 30 and labels.intersection({"OPERATING LEVERAGE", "CASH MARGIN INFLECTION", "EARNINGS → CASH"}):
+            return "Quality at Discount"
+        if labels.intersection({"REVENUE ACCELERATION", "OPERATING LEVERAGE", "CASH MARGIN INFLECTION"}):
+            return "Fundamental Inflection"
+        return "Valuation Dislocation"
+    if labels.intersection({"INVENTORY BUILD", "RECEIVABLES BUILD", "WEAK CASH CONVERSION"}):
+        return "Forensic Divergence"
+    if labels.intersection({"REVENUE DETERIORATION", "OPERATING DELEVERAGE", "CASH MARGIN EROSION"}):
+        return "Deterioration / Short Setup"
+    return "Valuation Dislocation"
 
 
-def _screen_pool(user_id: int, headers: dict[str, str], errors: list[str]) -> dict[str, dict[str, Any]]:
-    """Create a broad but cheap investigation pool. This never decides Long/Short."""
-    by_symbol: dict[str, dict[str, Any]] = {}
-
-    def touch(symbol: str) -> dict[str, Any]:
-        symbol = str(symbol or "").strip().upper()
-        if not symbol:
-            return {}
-        return by_symbol.setdefault(symbol, {
-            "ticker": symbol,
-            "activity_rank": None,
-            "activity_volume": None,
-            "trades": None,
-            "move_pct": None,
-            "move_side": "",
-            "price": None,
-            "daily_volume": None,
-            "dollar_volume": None,
-            "screen_score": 0.0,
-        })
-
-    try:
-        response = requests.get(
-            "https://data.alpaca.markets/v1beta1/screener/stocks/most-actives",
-            headers=headers,
-            params={"by": "volume", "top": 100},
-            timeout=(5, 12),
-        )
-        if response.status_code == 200:
-            for idx, row in enumerate((response.json() or {}).get("most_actives") or [], start=1):
-                item = touch(row.get("symbol"))
-                if not item:
-                    continue
-                item["activity_rank"] = idx
-                item["activity_volume"] = _n(row.get("volume"))
-                item["trades"] = _n(row.get("trade_count") or row.get("trades"))
-                item["screen_score"] += max(0.0, 30.0 - (idx - 1) * 0.30)
-        else:
-            errors.append(f"Most-active screener HTTP {response.status_code}.")
-    except Exception as exc:
-        errors.append(f"Most-active screener: {type(exc).__name__}")
-
-    try:
-        response = requests.get(
-            "https://data.alpaca.markets/v1beta1/screener/stocks/movers",
-            headers=headers,
-            params={"top": 50},
-            timeout=(5, 12),
-        )
-        if response.status_code == 200:
-            payload = response.json() or {}
-            for side_key, side_label, sign in (("gainers", "GAINER", 1), ("losers", "LOSER", -1)):
-                for idx, row in enumerate(payload.get(side_key) or [], start=1):
-                    item = touch(row.get("symbol"))
-                    if not item:
-                        continue
-                    change = _n(row.get("percent_change") or row.get("change_pct") or row.get("percentChange"))
-                    if change is not None and sign < 0 and change > 0:
-                        change = -change
-                    item["move_pct"] = change
-                    item["move_side"] = side_label
-                    item["price"] = _n(row.get("price")) or item.get("price")
-                    item["screen_score"] += min(35.0, abs(change or 0.0) * 1.8) + max(0.0, 6.0 - idx * 0.10)
-        else:
-            errors.append(f"Market-movers screener HTTP {response.status_code}.")
-    except Exception as exc:
-        errors.append(f"Market-movers screener: {type(exc).__name__}")
-
-    if not by_symbol:
-        return {}
-
-    symbols = set(by_symbol)
-    snapshots = _snapshot_map(symbols, headers, errors)
-    assets = _asset_map(symbols, headers, errors)
-    local_context = _coverage_context_map(user_id, symbols)
-
-    for symbol, item in by_symbol.items():
-        snap = snapshots.get(symbol) or {}
-        item["price"] = _n(snap.get("price")) or _n(item.get("price"))
-        item["move_pct"] = _n(item.get("move_pct"))
-        if item["move_pct"] is None:
-            item["move_pct"] = _n(snap.get("move_pct"))
-        item["daily_volume"] = _n(snap.get("daily_volume"))
-        item["dollar_volume"] = _n(snap.get("dollar_volume"))
-        if item["dollar_volume"] is None and item["price"] is not None and item.get("activity_volume") is not None:
-            item["dollar_volume"] = item["price"] * item["activity_volume"]
-        item["asset"] = dict(assets.get(symbol) or {})
-        item["known_context"] = dict(local_context.get(symbol) or {})
-    return by_symbol
+def _invalidation(side: str) -> str:
+    if side == "LONG":
+        return "Invalidated for Discovery if intrinsic Base gap falls below +20% or the filed TTM operating confirmation reverses."
+    return "Invalidated for Discovery if intrinsic Base gap rises above -20%, filed TTM deterioration reverses, or the security is no longer short-actionable."
 
 
 def market_scan(user_id: int) -> dict[str, Any]:
-    """Market Forensics Discovery.
-
-    Stage 1 is only a cheap investigation funnel. Stage 2 requires a calculable
-    Base fair value and confirming operating evidence. A raw price move can never
-    appear in the final Long/Short list by itself.
-    """
+    """Broad-universe Discovery with cheap rotation followed by bounded forensics."""
     headers = _headers(user_id)
     if not headers:
         return {
             "configured": False, "candidates": [], "long_candidates": [], "short_candidates": [],
-            "errors": ["Alpaca credentials are not configured."],
+            "errors": ["Alpaca credentials are not configured."], "contract_version": CONTRACT_VERSION,
         }
 
     errors: list[str] = []
-    screened = _screen_pool(user_id, headers, errors)
+    provider_calls: Counter = Counter()
     excluded = Counter()
-    qualified_pool: list[dict[str, Any]] = []
-    local_context: dict[str, dict[str, Any]] = {}
 
-    for symbol, item in screened.items():
-        asset = dict(item.get("asset") or {})
-        valid_asset, reason = _asset_is_operating_equity(asset)
-        if not valid_asset:
-            excluded[reason] += 1
-            continue
+    universe = stage0_universe(user_id, headers, errors, provider_calls)
+    known_tickers = _active_coverage_tickers(user_id)
+    stage1 = stage1_screen(
+        user_id, headers, universe, errors, provider_calls,
+        known_tickers=known_tickers,
+        min_price=MIN_LONG_PRICE,
+        min_daily_volume=MIN_DAILY_VOLUME,
+        min_dollar_volume=MIN_DOLLAR_VOLUME,
+    )
+    stage1_rows = list(stage1.get("rows") or [])
+    symbols = {str(row.get("ticker") or "").upper() for row in stage1_rows if row.get("ticker")}
+    local_context = _coverage_context_map(user_id, symbols)
+    finalists = _select_stage2_finalists(stage1_rows, local_context)
 
-        context = dict(item.get("known_context") or {})
-        if context:
-            local_context[symbol] = context
+    forensic_raw = enrich_forensic_candidates(
+        user_id, finalists, local_context, errors, provider_calls, limit=FORENSIC_ENRICH_LIMIT,
+    )
+    if isinstance(forensic_raw, tuple):
+        forensic, stage2_excluded = forensic_raw
+    else:
+        forensic, stage2_excluded = dict(forensic_raw or {}), {}
+    excluded.update(stage2_excluded)
 
-        price = _n(item.get("price")) or _n((context.get("valuation") or {}).get("current_price"))
-        volume = _n(item.get("daily_volume"))
-        dollar_volume = _n(item.get("dollar_volume"))
-        if price is None:
-            excluded["PRICE UNKNOWN"] += 1
-            continue
-        if price < MIN_LONG_PRICE:
-            excluded["LOW PRICE"] += 1
-            continue
-        if volume is not None and volume < MIN_DAILY_VOLUME and not context:
-            excluded["LOW VOLUME"] += 1
-            continue
-        if (dollar_volume is None or dollar_volume < MIN_DOLLAR_VOLUME) and not context:
-            excluded["LOW / UNKNOWN LIQUIDITY"] += 1
-            continue
-
-        item["price"] = price
-        item["name"] = asset.get("name") or symbol
-        item["exchange"] = asset.get("exchange") or ""
-        item["in_coverage"] = bool(context)
-        qualified_pool.append(item)
-
-    forensic = enrich_forensic_candidates(user_id, qualified_pool, local_context, errors)
     candidates: list[dict[str, Any]] = []
-
-    for item in qualified_pool:
-        symbol = str(item.get("ticker") or "").upper()
+    finalist_map = {str(row.get("ticker") or "").upper(): row for row in finalists}
+    for symbol, item in finalist_map.items():
         evidence = dict(forensic.get(symbol) or {})
         if not evidence:
-            excluded["NO FORENSIC FAIR VALUE / DATA"] += 1
+            if symbol not in forensic:
+                excluded["NO FORENSIC FAIR VALUE / DATA"] += 1
+            continue
+
+        if str(evidence.get("quality") or "").upper() != "INTRINSIC":
+            excluded["BASE QUALITY NOT INTRINSIC"] += 1
+            continue
+        methods = int(evidence.get("valuation_methods") or 0)
+        if methods < 2:
+            excluded["LESS THAN 2 VALUATION METHODS"] += 1
             continue
 
         decision = forensic_side(evidence)
@@ -355,13 +298,16 @@ def market_scan(user_id: int) -> dict[str, Any]:
             continue
         side, priority, forensic_score = decision
 
-        asset = dict(item.get("asset") or {})
         price = _n(item.get("price"))
         gap = _n(evidence.get("gap_pct"))
         fair = _n(evidence.get("base"))
-        move = _n(item.get("move_pct"))
-
-        if side == "SHORT" and (price is None or price < MIN_SHORT_PRICE or not asset.get("shortable")):
+        if side == "LONG" and (gap is None or gap < 20.0):
+            excluded["LONG GAP BELOW +20%"] += 1
+            continue
+        if side == "SHORT" and (gap is None or gap > -20.0):
+            excluded["SHORT GAP ABOVE -20%"] += 1
+            continue
+        if side == "SHORT" and (price is None or price < MIN_SHORT_PRICE or not item.get("shortable")):
             excluded["SHORT NOT ACTIONABLE"] += 1
             continue
 
@@ -373,43 +319,68 @@ def market_scan(user_id: int) -> dict[str, Any]:
             excluded["NO CONFIRMING OPERATING SIGNAL"] += 1
             continue
 
-        context = dict(item.get("known_context") or {})
+        warning_parts = [str(x) for x in evidence.get("warnings") or [] if x]
+        if side == "SHORT" and not item.get("easy_to_borrow"):
+            warning_parts.append("Shortable flag is positive, but borrow depth/fee is not verified by Discovery.")
+
+        context = local_context.get(symbol) or {}
         reasons = [
-            f"Base fair value ${fair:,.2f}" if fair is not None else "Base unavailable",
-            f"Fair-value gap {gap:+.1f}%" if gap is not None else "Gap unavailable",
+            ("Intrinsic Base $" + format(fair, ",.2f")) if fair is not None else "Intrinsic Base unavailable",
+            f"Base fair-value gap {gap:+.1f}%" if gap is not None else "Gap unavailable",
+            str(item.get("stage2_selection_reason") or ""),
         ]
         reasons.extend(str(row.get("detail") or "") for row in operating_signals[:2])
-        if move is not None:
-            reasons.append(f"Price move {move:+.1f}%")
+        reasons = [reason for reason in reasons if reason]
 
-        priority_rank = 1 if priority == "P1" else 2
-        scan_score = abs(gap or 0.0) + forensic_score + min(15.0, abs(move or 0.0) * 0.5)
-        item.update({
+        candidate = dict(item)
+        candidate.update({
             "research_side": side,
+            "direction": side,
             "priority": priority,
-            "priority_rank": priority_rank,
-            "priority_reason": "FAIR VALUE + OPERATING CONFIRMATION",
-            "scan_score": round(scan_score, 2),
-            "base_gap_pct": gap,
+            "priority_rank": 1 if priority == "P1" else 2,
+            "priority_reason": "INTRINSIC BASE + FILED TTM OPERATING CONFIRMATION",
+            "bear": _n(evidence.get("bear")),
             "fair_value": fair,
-            "fair_value_quality": evidence.get("quality"),
+            "base": fair,
+            "bull": _n(evidence.get("bull")),
+            "base_gap_pct": gap,
+            "fair_value_quality": "INTRINSIC",
+            "valuation_methods": methods,
             "forensic_source": evidence.get("source"),
             "forensic_score": forensic_score,
             "forensic_signals": operating_signals,
+            "operating_confirmation": [str(row.get("detail") or "") for row in operating_signals],
             "operating_snapshot": dict(evidence.get("snapshot") or {}),
             "target_status": "ROOM TO BASE" if side == "LONG" else "ABOVE BASE",
-            "radar_label": "UNDERVALUED + OPERATING INFLECTION" if side == "LONG" else "OVERVALUED + OPERATING DETERIORATION",
+            "radar_label": _family_label(side, evidence),
             "why_found": reasons,
+            "what_invalidates": _invalidation(side),
+            "data_freshness": evidence.get("data_freshness"),
+            "market_freshness": item.get("snapshot_as_of"),
+            "materialized_at": evidence.get("materialized_at"),
+            "warning": " ".join(warning_parts),
             "known_context": context,
             "in_coverage": bool(context),
             "lenses": [str(row.get("label") or "") for row in operating_signals],
         })
-        candidates.append(item)
+        candidates.append(candidate)
 
-    candidates.sort(key=lambda row: (row["priority_rank"], -row["scan_score"], row["ticker"]))
+    candidates.sort(key=lambda row: (
+        int(row.get("priority_rank") or 9),
+        -abs(_n(row.get("base_gap_pct")) or 0.0),
+        -int(row.get("valuation_methods") or 0),
+        -int(row.get("forensic_score") or 0),
+        row["ticker"],
+    ))
     long_candidates = [row for row in candidates if row["research_side"] == "LONG"][:MAX_PER_SIDE]
     short_candidates = [row for row in candidates if row["research_side"] == "SHORT"][:MAX_PER_SIDE]
     final = long_candidates + short_candidates
+
+    stage0_excluded = dict(universe.get("excluded_breakdown") or {})
+    stage1_excluded = dict(stage1.get("excluded_breakdown") or {})
+    combined_excluded = Counter(stage0_excluded)
+    combined_excluded.update(stage1_excluded)
+    combined_excluded.update(excluded)
 
     return {
         "configured": True,
@@ -417,18 +388,32 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "long_candidates": long_candidates,
         "short_candidates": short_candidates,
         "errors": errors,
-        "universe_source": "Alpaca investigation funnel → SEC operating forensics → Market Forensics Base fair value",
+        "universe_source": "Cached Alpaca active US operating equities + rotating cheap Stage 1 + bounded SEC/filed Stage 2",
+        "universe_generated_at": universe.get("generated_at"),
+        "universe_cache_hit": bool(universe.get("cache_hit")),
+        "stage0_count": int(universe.get("member_count") or 0),
+        "stage0_raw_count": int(universe.get("raw_count") or 0),
+        "stage0_excluded_count": int(universe.get("excluded_count") or 0),
+        "stage0_excluded_breakdown": stage0_excluded,
+        "stage1_scanned_count": int(stage1.get("scanned_count") or 0),
+        "stage1_qualified_count": int(stage1.get("qualified_count") or 0),
+        "stage1_broad_rotation_count": int(stage1.get("broad_rotation_count") or 0),
+        "stage1_quiet_broad_count": int(stage1.get("quiet_broad_count") or 0),
+        "stage1_activity_count": int(stage1.get("activity_count") or 0),
+        "stage1_cursor_start": int(stage1.get("cursor_start") or 0),
+        "stage1_cursor_end": int(stage1.get("cursor_end") or 0),
+        "stage2_selected_count": len(finalists),
+        "stage2_enriched_count": len(forensic),
         "candidate_count": len(final),
-        "screened_count": len(screened),
-        "qualified_pool_count": len(qualified_pool),
-        "forensic_enriched_count": len(forensic),
         "known_enriched": sum(1 for row in final if row.get("in_coverage")),
         "long_count": len(long_candidates),
         "short_count": len(short_candidates),
         "p1_count": sum(1 for row in final if row.get("priority") == "P1"),
         "p2_count": sum(1 for row in final if row.get("priority") == "P2"),
-        "excluded_count": sum(excluded.values()),
-        "excluded_breakdown": dict(excluded),
+        "excluded_count": sum(combined_excluded.values()),
+        "excluded_breakdown": dict(combined_excluded),
+        "provider_calls": dict(provider_calls),
+        "provider_call_total": sum(provider_calls.values()),
         "guardrails": {
             "min_long_price": MIN_LONG_PRICE,
             "min_short_price": MIN_SHORT_PRICE,
@@ -437,13 +422,24 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "fair_value_edge_pct": 20.0,
             "major_exchanges": sorted(MAJOR_EXCHANGES),
             "short_requires_shortable": True,
-            "final_requires_fair_value": True,
+            "final_requires_intrinsic_base": True,
+            "final_requires_valuation_methods": 2,
+            "final_requires_valid_ttm": True,
             "final_requires_operating_confirmation": True,
+            "reference_price_fallback": False,
             "fill_quota": "none",
+            "stage2_deep_enrichment_limit": FORENSIC_ENRICH_LIMIT,
         },
-        "contract_version": "FORENSIC_FAIR_VALUE_V1",
-        "enrichment_mode": "FAIR_VALUE_FORENSIC_STAGE",
+        "ranking_basis": [
+            "priority tier",
+            "absolute intrinsic Base gap",
+            "valuation method count",
+            "operating confirmation strength",
+            "ticker",
+        ],
+        "contract_version": CONTRACT_VERSION,
+        "enrichment_mode": "BROAD_STAGE0_ROTATION_STAGE1_BOUNDED_FORENSIC_STAGE2",
     }
 
 
-__all__ = ["market_scan"]
+__all__ = ["market_scan", "CONTRACT_VERSION", "_select_stage2_finalists"]

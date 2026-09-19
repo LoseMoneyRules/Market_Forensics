@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from statistics import mean
 from typing import Any
 
@@ -16,7 +16,8 @@ from .secdata import (
 from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
 
 FORENSIC_EDGE_PCT = 20.0
-FORENSIC_ENRICH_PER_SIDE = 8
+FORENSIC_ENRICH_LIMIT = 8
+FORENSIC_ENRICH_PER_SIDE = 4  # compatibility alias; Stage 2 is capped by FORENSIC_ENRICH_LIMIT
 FORENSIC_TIMEOUT = (4, 10)
 
 
@@ -182,29 +183,38 @@ def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") ->
 
 
 def _ttm(rows: list[dict[str, Any]], offset: int = 0) -> dict[str, Any] | None:
+    """Build only a filing-coherent four-quarter TTM block."""
     block = rows[-(4 + offset):len(rows) - offset if offset else None]
     if len(block) != 4:
         return None
-    try:
-        first = date.fromisoformat(str(block[0].get("period_end") or "")[:10])
-        last = date.fromisoformat(str(block[-1].get("period_end") or "")[:10])
-        if (last - first).days > 370:
+    ends: list[date] = []
+    for row in block:
+        try:
+            ends.append(date.fromisoformat(str(row.get("period_end") or "")[:10]))
+        except Exception:
             return None
-    except Exception:
-        pass
+    if len(set(ends)) != 4 or ends != sorted(ends):
+        return None
+    span = (ends[-1] - ends[0]).days
+    if span < 240 or span > 370:
+        return None
+
     flow_fields = ("revenue", "gross_profit", "operating_income", "net_income", "cfo", "capex", "fcf")
     out: dict[str, Any] = {}
     for field in flow_fields:
         values = [_num(row.get(field)) for row in block]
         out[field] = sum(values) if all(value is not None for value in values) else None
+    if out.get("revenue") is None:
+        return None
+
     latest = block[-1]
     for field in ("cash", "debt", "inventory", "receivables", "payables", "shares_outstanding"):
         out[field] = _num(latest.get(field))
     shares = [_num(row.get("diluted_shares")) for row in block if _num(row.get("diluted_shares")) is not None]
     out["diluted_shares"] = mean(shares) if shares else _num(latest.get("shares_outstanding"))
     out["period_end"] = latest.get("period_end")
+    out["quarter_ends"] = [item.isoformat() for item in ends]
     return out
-
 
 def _operating_snapshot(current: dict[str, Any] | None, prior: dict[str, Any] | None) -> dict[str, Any]:
     current = current or {}
@@ -297,7 +307,14 @@ def _signals(snapshot: dict[str, Any], day_move: float | None) -> tuple[list[dic
     return signals, long_score, short_score
 
 
-def _valuation_from_history(annual: list[dict[str, Any]], current_ttm: dict[str, Any] | None, prior_ttm: dict[str, Any] | None, price: float, company_type: str = "Generic") -> dict[str, Any]:
+def _valuation_from_history(
+    annual: list[dict[str, Any]],
+    current_ttm: dict[str, Any] | None,
+    prior_ttm: dict[str, Any] | None,
+    price: float,
+    company_type: str = "Generic",
+) -> dict[str, Any]:
+    """Reuse the canonical valuation engine; Discovery owns no duplicate valuation model."""
     metrics = metrics_from_history(annual)
     if current_ttm and _num(current_ttm.get("revenue")) is not None:
         revenue = _num(current_ttm.get("revenue"))
@@ -325,130 +342,156 @@ def _valuation_from_history(annual: list[dict[str, Any]], current_ttm: dict[str,
         })
     defaults = default_cases(metrics, company_type)
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
-    result = evaluate(metrics, cases, defaults["weights"], defaults["horizon_years"], current_price=price, allow_reference_fallback=False)
-    base_row = ((result.get("scenarios") or {}).get("BASE") or {})
-    base = base_row.get("fair_value")
+    result = evaluate(
+        metrics, cases, defaults["weights"], defaults["horizon_years"],
+        current_price=price, allow_reference_fallback=False,
+    )
+    scenarios = result.get("scenarios") or {}
+    base_row = scenarios.get("BASE") or {}
     methods = sum(1 for key in ("pe", "ev_sales", "fcf_yield") if _num(base_row.get(key)) is not None)
-    if result.get("quality") != "INTRINSIC" or methods < 2:
-        base = None
+    base = base_row.get("fair_value")
     gap = ((float(base) / price - 1.0) * 100.0) if base is not None and price else None
     return {
+        "bear": (scenarios.get("BEAR") or {}).get("fair_value"),
         "base": base,
+        "bull": (scenarios.get("BULL") or {}).get("fair_value"),
         "gap_pct": gap,
         "quality": result.get("quality"),
         "valuation_methods": methods,
         "metrics": metrics,
+        "warnings": list(result.get("warnings") or []),
     }
 
-
-def _local_forensics(context: dict[str, Any], price: float, day_move: float | None) -> dict[str, Any] | None:
+def _local_forensics(
+    context: dict[str, Any],
+    price: float,
+    day_move: float | None,
+) -> tuple[dict[str, Any] | None, str]:
     company_id = int(context.get("company_id") or 0)
     if not company_id:
-        return None
-    quarters = list(reversed(quarterly_rows(company_id, 8)))
-    annual = list(reversed(annual_rows(company_id, 4)))
+        return None, "LOCAL CONTEXT MISSING"
+    quarters = list(reversed(quarterly_rows(company_id, 12)))
     current = _ttm(quarters, 0)
     prior = _ttm(quarters, 4)
-    if (current is None or prior is None) and len(annual) >= 2:
-        current, prior = annual[-1], annual[-2]
+    if current is None or prior is None:
+        return None, "TTM INVALID / INCOMPLETE"
+
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
     stored_valuation = dict(context.get("valuation") or {})
     stored_base = _num(stored_valuation.get("base"))
     base_gap = _num(context.get("base_gap_pct"))
-    if stored_base is None or base_gap is None or valuation_base_quality(stored_valuation) != "INTRINSIC":
-        return None
+    methods = int(context.get("valuation_methods") or 0)
+    if valuation_base_quality(stored_valuation) != "INTRINSIC":
+        return None, "BASE QUALITY NOT INTRINSIC"
+    if methods < 2:
+        return None, "LESS THAN 2 VALUATION METHODS"
+    if stored_base is None or base_gap is None:
+        return None, "INTRINSIC BASE UNAVAILABLE"
     return {
+        "bear": _num(stored_valuation.get("bear")),
         "base": stored_base,
+        "bull": _num(stored_valuation.get("bull")),
         "gap_pct": base_gap,
-        "quality": stored_valuation.get("base_quality") or stored_valuation.get("quality") or "INTRINSIC",
+        "quality": "INTRINSIC",
+        "valuation_methods": methods,
         "snapshot": snapshot,
         "signals": signals,
         "long_score": long_score,
         "short_score": short_score,
         "source": "STORED RESEARCH + NORMALIZED SEC OPERATING DATA",
-    }
+        "data_freshness": current.get("period_end"),
+        "materialized_at": context.get("cache_generated_at"),
+        "warnings": list(stored_valuation.get("warnings") or []),
+    }, ""
 
-
-def _external_forensics(symbol: str, price: float, day_move: float | None, meta: dict[str, str], headers: dict[str, str]) -> dict[str, Any] | None:
+def _external_forensics(
+    symbol: str,
+    price: float,
+    day_move: float | None,
+    meta: dict[str, str],
+    headers: dict[str, str],
+    provider_calls: dict[str, int] | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    provider_calls = provider_calls if provider_calls is not None else {}
+    provider_calls["sec_submissions"] = int(provider_calls.get("sec_submissions") or 0) + 1
     submission = _sec_submission(meta["cik"], headers)
     fiscal_year_end = str(submission.get("fiscalYearEnd") or "")
     sic_description = str(submission.get("sicDescription") or "")
     company_type = infer_company_type("", sic_description)
+    provider_calls["sec_companyfacts"] = int(provider_calls.get("sec_companyfacts") or 0) + 1
     facts = _sec_companyfacts(meta["cik"], headers)
     annual = _annual_history(facts, fiscal_year_end)
     quarters = _quarter_history(facts, fiscal_year_end)
     if len(annual) < 2:
-        return None
+        return None, "FILED HISTORY INSUFFICIENT"
     current = _ttm(quarters, 0)
     prior = _ttm(quarters, 4)
-    valuation = _valuation_from_history(annual, current, prior, price, company_type)
-    if valuation.get("base") is None or valuation.get("gap_pct") is None:
-        return None
     if current is None or prior is None:
-        current, prior = annual[-1], annual[-2]
+        return None, "TTM INVALID / INCOMPLETE"
+
+    valuation = _valuation_from_history(annual, current, prior, price, company_type)
+    if str(valuation.get("quality") or "").upper() != "INTRINSIC":
+        return None, "BASE QUALITY NOT INTRINSIC"
+    if int(valuation.get("valuation_methods") or 0) < 2:
+        return None, "LESS THAN 2 VALUATION METHODS"
+    if valuation.get("base") is None or valuation.get("gap_pct") is None:
+        return None, "INTRINSIC BASE UNAVAILABLE"
+
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
     return {
+        "bear": valuation.get("bear"),
         "base": valuation["base"],
+        "bull": valuation.get("bull"),
         "gap_pct": valuation["gap_pct"],
-        "quality": f"FORENSIC BASE · {valuation.get('valuation_methods', 0)} METHODS",
+        "quality": "INTRINSIC",
+        "valuation_methods": int(valuation.get("valuation_methods") or 0),
         "company_type": company_type,
         "sic_description": sic_description,
         "snapshot": snapshot,
         "signals": signals,
         "long_score": long_score,
         "short_score": short_score,
-        "source": "SEC COMPANYFACTS + MARKET FORENSICS VALUATION",
-    }
-
+        "source": "SEC COMPANYFACTS + CANONICAL MARKET FORENSICS VALUATION",
+        "data_freshness": current.get("period_end"),
+        "materialized_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
+        "warnings": list(valuation.get("warnings") or []),
+    }, ""
 
 def enrich_forensic_candidates(
     user_id: int,
     candidates: list[dict[str, Any]],
     local_context: dict[str, dict[str, Any]],
     errors: list[str],
-) -> dict[str, dict[str, Any]]:
-    """Return only candidates with a calculable fair value and confirming operating evidence.
+    provider_calls: dict[str, int] | None = None,
+    *,
+    limit: int = FORENSIC_ENRICH_LIMIT,
+) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
+    """Stage 2: enrich exactly the bounded Stage-1 finalists.
 
-    This stage is intentionally bounded. Screeners choose where to investigate;
-    they never decide the final Long/Short list.
+    No mover/activity re-ranking happens here. SEC work is sequential, bounded,
+    and only performed for unknown finalists. Companyfacts is never called for
+    the Stage-0 universe or the full Stage-1 batch.
     """
+    provider_calls = provider_calls if provider_calls is not None else {}
+    selected = list(candidates or [])[:max(0, int(limit))]
+    known = [row for row in selected if local_context.get(str(row.get("ticker") or "").upper())]
+    unknown = [row for row in selected if not local_context.get(str(row.get("ticker") or "").upper())]
+    diagnostics: dict[str, int] = {}
+
+    def reject(reason: str) -> None:
+        diagnostics[reason] = diagnostics.get(reason, 0) + 1
+
     headers = _sec_headers(user_id)
-    known = [row for row in candidates if local_context.get(str(row.get("ticker") or "").upper())]
-    unknown = [row for row in candidates if not local_context.get(str(row.get("ticker") or "").upper())]
-
-    # Bound SEC work but do not require a dramatic price move: operating inflections
-    # can lead price. Mix downside/upside dislocations with the most-active names.
-    by_downside = sorted(
-        unknown,
-        key=lambda r: (_num(r.get("move_pct")) if _num(r.get("move_pct")) is not None else 999.0),
-    )[:FORENSIC_ENRICH_PER_SIDE]
-    by_upside = sorted(
-        unknown,
-        key=lambda r: -(_num(r.get("move_pct")) if _num(r.get("move_pct")) is not None else -999.0),
-    )[:FORENSIC_ENRICH_PER_SIDE]
-    by_activity = sorted(
-        unknown,
-        key=lambda r: (int(r.get("activity_rank") or 9999), -(_num(r.get("dollar_volume")) or 0.0)),
-    )[:FORENSIC_ENRICH_PER_SIDE]
-    selected_unknown = []
-    seen: set[str] = set()
-    for row in by_downside + by_upside + by_activity:
-        symbol = str(row.get("ticker") or "").upper()
-        if symbol and symbol not in seen:
-            selected_unknown.append(row)
-            seen.add(symbol)
-        if len(selected_unknown) >= FORENSIC_ENRICH_PER_SIDE * 2:
-            break
-
     ticker_map: dict[str, dict[str, str]] = {}
-    if selected_unknown and headers:
+    if unknown and headers:
         try:
+            provider_calls["sec_ticker_map"] = int(provider_calls.get("sec_ticker_map") or 0) + 1
             ticker_map = _sec_ticker_map(headers)
         except Exception as exc:
             errors.append(f"Forensic SEC ticker map: {type(exc).__name__}")
-    elif selected_unknown and not headers:
+    elif unknown and not headers:
         errors.append("Forensic SEC enrichment unavailable: configure SEC User-Agent in Settings.")
 
     out: dict[str, dict[str, Any]] = {}
@@ -456,27 +499,41 @@ def enrich_forensic_candidates(
         symbol = str(row.get("ticker") or "").upper()
         price = _num(row.get("price"))
         if price is None:
+            reject("PRICE UNKNOWN")
             continue
-        result = _local_forensics(local_context.get(symbol) or {}, price, _num(row.get("move_pct")))
+        result, reason = _local_forensics(local_context.get(symbol) or {}, price, _num(row.get("move_pct")))
         if result:
             out[symbol] = result
+        else:
+            reject(reason or "LOCAL FORENSIC DATA INSUFFICIENT")
 
-    for row in selected_unknown:
+    for row in unknown:
         symbol = str(row.get("ticker") or "").upper()
         price = _num(row.get("price"))
         meta = ticker_map.get(symbol)
-        if price is None or not meta or not headers:
+        if price is None:
+            reject("PRICE UNKNOWN")
+            continue
+        if not headers:
+            reject("SEC NOT CONFIGURED")
+            continue
+        if not meta:
+            reject("SEC TICKER UNRESOLVED")
             continue
         try:
-            result = _external_forensics(symbol, price, _num(row.get("move_pct")), meta, headers)
+            result, reason = _external_forensics(
+                symbol, price, _num(row.get("move_pct")), meta, headers, provider_calls,
+            )
         except Exception as exc:
             errors.append(f"{symbol} forensic enrichment: {type(exc).__name__}")
+            reject("SEC ENRICHMENT ERROR")
             continue
         if result:
             result["sec_name"] = meta.get("name") or symbol
             out[symbol] = result
-    return out
-
+        else:
+            reject(reason or "FORENSIC DATA INSUFFICIENT")
+    return out, diagnostics
 
 def forensic_side(result: dict[str, Any]) -> tuple[str, str, int] | None:
     gap = _num(result.get("gap_pct"))
@@ -494,6 +551,6 @@ def forensic_side(result: dict[str, Any]) -> tuple[str, str, int] | None:
 
 
 __all__ = [
-    "FORENSIC_EDGE_PCT", "FORENSIC_ENRICH_PER_SIDE",
+    "FORENSIC_EDGE_PCT", "FORENSIC_ENRICH_LIMIT", "FORENSIC_ENRICH_PER_SIDE",
     "enrich_forensic_candidates", "forensic_side",
 ]

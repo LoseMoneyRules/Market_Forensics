@@ -529,7 +529,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
-    if scan and scan.get("contract_version") != "FORENSIC_FAIR_VALUE_V1":
+    if scan and scan.get("contract_version") != "BROAD_FORENSIC_DISCOVERY_V2":
         return {
             "candidates": [], "long_candidates": [], "short_candidates": [],
             "candidate_count": 0, "long_count": 0, "short_count": 0,
@@ -538,6 +538,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
             "errors": [], "stale_contract": True,
             "contract_version": scan.get("contract_version") or "LEGACY",
         }
+
     raw_candidates = scan.get("candidates")
     candidates = []
     if isinstance(raw_candidates, list):
@@ -545,41 +546,57 @@ def _normalized_market_scan(job: Job | None) -> dict:
             if not isinstance(raw, dict):
                 continue
             ticker = str(raw.get("ticker") or "").strip().upper()
-            if not ticker:
-                continue
-            side = str(raw.get("research_side") or "").upper()
-            if not (side.startswith("LONG") or side.startswith("SHORT")):
+            side = str(raw.get("research_side") or raw.get("direction") or "").upper()
+            if not ticker or side not in {"LONG", "SHORT"}:
                 continue
             row = dict(raw)
             row.update({
                 "ticker": ticker,
                 "research_side": side,
-                "scan_score": as_float(raw.get("scan_score"), 0.0) or 0.0,
+                "direction": side,
                 "move_pct": as_float(raw.get("move_pct")),
                 "base_gap_pct": as_float(raw.get("base_gap_pct")),
-                "fair_value": as_float(raw.get("fair_value")),
+                "bear": as_float(raw.get("bear")),
+                "fair_value": as_float(raw.get("fair_value") if raw.get("fair_value") is not None else raw.get("base")),
+                "base": as_float(raw.get("base") if raw.get("base") is not None else raw.get("fair_value")),
+                "bull": as_float(raw.get("bull")),
+                "valuation_methods": as_int(raw.get("valuation_methods"), 0),
                 "forensic_score": as_int(raw.get("forensic_score"), 0),
                 "forensic_signals": list(raw.get("forensic_signals") or []) if isinstance(raw.get("forensic_signals") or [], list) else [],
+                "operating_confirmation": list(raw.get("operating_confirmation") or []) if isinstance(raw.get("operating_confirmation") or [], list) else [],
                 "fair_value_quality": str(raw.get("fair_value_quality") or ""),
                 "forensic_source": str(raw.get("forensic_source") or ""),
                 "price": as_float(raw.get("price")),
                 "dollar_volume": as_float(raw.get("dollar_volume")),
                 "target_status": str(raw.get("target_status") or "TARGET UNKNOWN"),
-                "radar_label": str(raw.get("radar_label") or "RESEARCH LEAD"),
-                "priority": str(raw.get("priority") or "P3"),
-                "priority_rank": as_int(raw.get("priority_rank"), 3),
-                "priority_reason": str(raw.get("priority_reason") or "WATCH / DEEPER CHECK"),
+                "radar_label": str(raw.get("radar_label") or "Valuation Dislocation"),
+                "priority": str(raw.get("priority") or "P2"),
+                "priority_rank": as_int(raw.get("priority_rank"), 2),
+                "priority_reason": str(raw.get("priority_reason") or ""),
                 "why_found": list(raw.get("why_found") or []) if isinstance(raw.get("why_found") or [], list) else [],
+                "what_invalidates": str(raw.get("what_invalidates") or ""),
+                "data_freshness": raw.get("data_freshness"),
+                "market_freshness": raw.get("market_freshness"),
+                "materialized_at": raw.get("materialized_at"),
+                "warning": str(raw.get("warning") or ""),
+                "stage1_lanes": list(raw.get("stage1_lanes") or []) if isinstance(raw.get("stage1_lanes") or [], list) else [],
+                "stage2_selection_reason": str(raw.get("stage2_selection_reason") or ""),
                 "lenses": list(raw.get("lenses") or []) if isinstance(raw.get("lenses") or [], list) else [],
                 "in_coverage": bool(raw.get("in_coverage")),
             })
             candidates.append(row)
 
-    candidates.sort(key=lambda row: (row["priority_rank"], -row["scan_score"], row["ticker"]))
+    candidates.sort(key=lambda row: (
+        row["priority_rank"],
+        -abs(row["base_gap_pct"] or 0.0),
+        -row["valuation_methods"],
+        -row["forensic_score"],
+        row["ticker"],
+    ))
     errors = scan.get("errors")
     scan["candidates"] = candidates
-    scan["long_candidates"] = [row for row in candidates if row["research_side"].startswith("LONG")]
-    scan["short_candidates"] = [row for row in candidates if row["research_side"].startswith("SHORT")]
+    scan["long_candidates"] = [row for row in candidates if row["research_side"] == "LONG"]
+    scan["short_candidates"] = [row for row in candidates if row["research_side"] == "SHORT"]
     scan["errors"] = [str(x) for x in errors] if isinstance(errors, list) else ([] if not errors else [str(errors)])
     scan["candidate_count"] = len(candidates)
     scan["known_enriched"] = as_int(scan.get("known_enriched"), sum(1 for x in candidates if x.get("in_coverage")))
@@ -587,9 +604,19 @@ def _normalized_market_scan(job: Job | None) -> dict:
     scan["short_count"] = len(scan["short_candidates"])
     scan["p1_count"] = sum(1 for x in candidates if x.get("priority") == "P1")
     scan["p2_count"] = sum(1 for x in candidates if x.get("priority") == "P2")
-    scan["excluded_count"] = as_int(scan.get("excluded_count"), 0)
+    for key in (
+        "stage0_count", "stage0_raw_count", "stage0_excluded_count",
+        "stage1_scanned_count", "stage1_qualified_count", "stage1_broad_rotation_count",
+        "stage1_quiet_broad_count", "stage1_activity_count", "stage1_cursor_start",
+        "stage1_cursor_end", "stage2_selected_count", "stage2_enriched_count",
+        "provider_call_total", "excluded_count",
+    ):
+        scan[key] = as_int(scan.get(key), 0)
     scan["excluded_breakdown"] = dict(scan.get("excluded_breakdown") or {}) if isinstance(scan.get("excluded_breakdown") or {}, dict) else {}
+    scan["stage0_excluded_breakdown"] = dict(scan.get("stage0_excluded_breakdown") or {}) if isinstance(scan.get("stage0_excluded_breakdown") or {}, dict) else {}
+    scan["provider_calls"] = dict(scan.get("provider_calls") or {}) if isinstance(scan.get("provider_calls") or {}, dict) else {}
     scan["guardrails"] = dict(scan.get("guardrails") or {}) if isinstance(scan.get("guardrails") or {}, dict) else {}
+    scan["ranking_basis"] = list(scan.get("ranking_basis") or []) if isinstance(scan.get("ranking_basis") or [], list) else []
     return scan
 
 
@@ -624,8 +651,8 @@ def discovery():
     rows, cache_building = _cached_coverage_rows(g.user.id)
     return render_template(
         "discovery.html", rows=rows, q=q, external=external, external_error=external_error,
-        market_scan=market_scan, market_scan_job=latest_scan_job, scan_failure=scan_failure,
-        cache_building=cache_building,
+        market_scan=market_scan, market_scan_job=latest_scan_job, market_scan_attempt=latest_scan_attempt,
+        scan_failure=scan_failure, cache_building=cache_building,
     )
 
 
