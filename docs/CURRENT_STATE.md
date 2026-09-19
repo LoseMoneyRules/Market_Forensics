@@ -11,33 +11,41 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.2.10**  
+**State-Version: 0.2.11**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.10 on Namecheap — Management autofill repair LIVE  
-**Verified production baseline:** deploy run `35418234654` / deploy #47 attempt 2 = completed / success; the rerun metadata retains the original workflow event SHA, but the deployment log proves `Checkout main` resolved to accepted main commit `250b8092d66495533d3406f8bd711725c0ffdd8d`; pre-upload release tests and production-minimal smoke passed; persistent `_reporting_vendor` was a cache hit with `MF_REPORTING_VENDOR_UPLOAD=0`, rebuild/staging were skipped and backup exclusion passed; upload/restart, candidate production health, cleanup and post-cleanup health all completed successfully  
-**Main baseline before 0.2.10 merge:** VERSION `0.2.9` at `e8ffdd5316f44f37647314aba94950912bd55fd0`  
-**0.2.10 source branch:** `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch was its base  
-**Verified 0.2.10 final branch CI:** push run `35417497708` / #974 and PR run `35417499925` / #975 = completed / success at `ed8a0c726975ebe886de30ea6bf062b19c7bcb3b`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**Pull request:** #35 `0.2.10: close correctness gaps` = merged  
-**0.2.10 merge commit:** `62007c1b73c00e865d1bd4b526c711c2f472efb1`  
-**Latest verified main release CI:** run `35417564393` / #976 = completed / success on merge commit `62007c1b73c00e865d1bd4b526c711c2f472efb1`; full release suite and all production/reporting smoke checks passed  
-**Main:** VERSION `0.2.10`; 0.2.10 is the accepted main baseline  
-**0.2.10 audit-closure candidate:** branch `release/0.2.10-audit-closure`, created directly from clean main `1eb92d79a1514da8d5bec53a8f72fae1eee0aa30` after the first 0.2.10 merge; this is not stacked on the original development branch  
-**Verified audit-closure CI:** push run `35418102098` / #1002 and PR run `35418104650` / #1003 = completed / success at `737096b236055811cef92a525cd2d864e19df22e`; full regression suite, dedicated 0.2.10 parity-audit tests, Python/JS/YAML checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**Audit findings closed before production:** valuation-model saves now queue RECALCULATE; model-newer-than-cache valuation remains visible but is DATA_WARNING/non-decision-grade until refresh; stale Discovery labels/covered-name qualification/internal cached ranking cannot use the old gap; automatic Management scoring requires explicit full-year period evidence and interim markers win over FY tokens; report exports preserve the true target-period label; NOT RUN is canonical in state/status while raw historical execution status remains separately available  
-**Audit-closure pull request:** #36 `0.2.10: close Local-parity audit findings` = merged  
-**Audit-closure merge commit:** `cfc11aa1a57e007604593243708776800b08e6dd`  
-**Latest verified main release CI:** run `35418175253` / #1007 = completed / success on `cfc11aa1a57e007604593243708776800b08e6dd`; full regression suite and all production/reporting smoke checks passed  
-**Management autofill pull request:** #37 `0.2.10: repair Management SEC autofill` = merged by squash  
-**Management autofill merge commit:** `250b8092d66495533d3406f8bd711725c0ffdd8d`  
-**Verified Management autofill branch/PR CI:** push run `35419888084` / #1031 and PR run `35419980484` / #1032 = completed / success on head `715b1963041b650eae5def23db7b3e69cb0f481d`; full regression suite, dedicated Management correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**Latest verified main release CI:** run `35420028622` / #1033 = completed / success on `250b8092d66495533d3406f8bd711725c0ffdd8d`; full release suite and all production/reporting smoke checks passed  
-**Main:** VERSION `0.2.10`; Management autofill repair is the accepted main baseline  
-**Release phase:** 0.2.10 Management autofill repair is merged, main-CI verified and LIVE on Namecheap through deploy #47 attempt 2. Main and production contain the same accepted runtime code.  
+**Production:** 0.2.10 on Namecheap; production has NOT been advanced to 0.2.11  
+**Verified production baseline:** manual deploy run `35433235128` / deploy #48 = completed / success on main event SHA `30d2e5cd2da07772235fef8c20e31e952e9fe68a`; production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.10"}`  
+**Accepted pre-0.2.11 main baseline:** `30d2e5cd2da07772235fef8c20e31e952e9fe68a` (0.2.10 runtime at `250b8092d66495533d3406f8bd711725c0ffdd8d` plus production-state documentation sync)  
+**Latest verified 0.2.10 runtime main CI:** run `35420028622` / #1033 = completed / success on `250b8092d66495533d3406f8bd711725c0ffdd8d`  
+**0.2.11 source branch:** `release/0.2.11-position-action`, created directly from clean main `30d2e5cd2da07772235fef8c20e31e952e9fe68a`; no old branch is its base  
+**0.2.11 scope:** Portfolio-owned deterministic Position Action downstream from the canonical Research Conclusion; no Research/Tape/Discovery/Valuation/deploy redesign  
+**Release phase:** 0.2.11 candidate implementation in progress on its clean release branch. PR/merge/post-merge main CI are not yet recorded in this candidate snapshot. Production remains 0.2.10 and no automatic deploy is part of this release sequence.  
 
-Production and main are separately verified states even when they are on the same release. For the current 0.2.10 closure, branch/PR CI, post-merge main CI and the explicit Namecheap deploy have all passed.
+Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
+
+---
+
+## 0.2.11 release scope — Portfolio Position Action
+
+- Adds a deterministic, auditable Position Action policy owned by Portfolio.
+- Research remains position-agnostic and continues to emit only its canonical Research Conclusion.
+- Precedence is fail-closed: locked thesis invalidation → Portfolio risk breach → Research/data gates → directional compatibility → conditional candidate/add/hold action.
+- A triggered locked pre-investment invalidation forces EXIT / SELL for a Long or COVER for a Short and cannot be overridden by valuation.
+- A max-position/downside-sizing breach forces REDUCE / REDUCE SHORT even when Research remains directionally READY.
+- Portfolio-only securities continue to work but cannot receive BUY/ADD/new-SHORT actions until Research exists.
+- No-position LONG READY / SHORT READY produces BUY CANDIDATE / SHORT CANDIDATE, never an order.
+- Existing same-direction READY can produce ADD ON EVIDENCE / ADD SHORT ON EVIDENCE only with VALIDATED research, CONTROLLED thesis, coherent Path, risk headroom and an explicit evidence-to-add condition.
+- Market price, average cost and P/L are not direct Position Action inputs. Price movement never satisfies the evidence-to-add condition and never independently creates ADD or SELL.
+- The Portfolio security detail gains one compact primary Position Action conclusion with Why now, blocker, next confirmation and risk/invalidation state.
+- The old manual Portfolio action input is removed from the primary Portfolio UI to avoid two competing action truths; legacy storage is retained for compatibility/history.
+- Position Action is CONTROL-private and never crosses publication/member payload boundaries.
+- Normal GET reads only stored/materialized data and performs no provider call.
+- Dedicated regression coverage lives in `tests/test_0211_position_action.py`.
+- `docs/LOCAL_WEB_PARITY_0_2_11.md` records the Local → Web recovery without re-coupling Research and Portfolio.
+- VERSION is 0.2.11. Production remains 0.2.10 until a later explicit deploy.
+
 ---
 
 ## 0.2.10 release scope — correctness closure

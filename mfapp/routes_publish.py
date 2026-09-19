@@ -15,6 +15,7 @@ from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
 from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows, position_sizing
+from .position_action import build_position_action, monitoring_invalidation_state
 from .reporting import emergency_discovery_report_stream, emergency_research_report_stream, get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
@@ -308,6 +309,7 @@ def portfolio_security(ticker):
         market = ctx["market"]
         investment = ctx["investment"]
         research_risk = ctx["risk"]
+        decision_lenses = dict(ctx.get("decision_lenses") or {})
     else:
         ctx = {}
         valuation = {"bear": None, "base": None, "bull": None, "expected_value": None}
@@ -315,6 +317,7 @@ def portfolio_security(ticker):
         market = latest_snapshot(security.id)
         investment = None
         research_risk = None
+        decision_lenses = {"research_conclusion": "RESEARCH INCOMPLETE"}
 
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     profile = PositionProfile.query.filter_by(user_id=g.user.id, security_id=security.id).first()
@@ -327,6 +330,23 @@ def portfolio_security(ticker):
     position_value = (row or {}).get("market_value") if row else None
     weight_pct = ((position_value / portfolio_value) * 100.0) if position_value is not None and portfolio_value else 0.0
     sizing = position_sizing(market.price if market else None, money_risk)
+    side = str(
+        profile.side if profile else
+        ("SHORT" if investment and "SHORT" in str(investment.state or "").upper() else "LONG")
+    ).upper()
+    invalidation_state = monitoring_invalidation_state(coverage.id if coverage else None, research_risk)
+    position_action = build_position_action(
+        position=position,
+        side=side,
+        research_attached=coverage is not None,
+        decision_lenses=decision_lenses,
+        readiness=readiness,
+        research_risk=research_risk,
+        money_risk=money_risk,
+        portfolio_weight_pct=weight_pct,
+        sizing=sizing,
+        monitoring_state=invalidation_state,
+    )
 
     return render_template(
         "portfolio_security.html",
@@ -346,6 +366,8 @@ def portfolio_security(ticker):
         portfolio_totals=totals,
         portfolio_weight_pct=weight_pct,
         research_attached=coverage is not None,
+        position_action=position_action,
+        invalidation_state=invalidation_state,
     )
 
 

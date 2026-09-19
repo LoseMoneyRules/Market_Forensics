@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.2.10  
+**Current product line:** 0.2.11  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -112,9 +112,11 @@ Research asks:
 
 Portfolio asks:
 
-> Given the research view and the real position, how much capital and money risk should be carried?
+> Given the research view and the real position, how much capital and money risk should be carried, and what does that position allow us to do now?
 
-Shares, average cost, P/L, position size, money-loss budget and portfolio sizing live under Portfolio, not Research.
+**Research judges the security. Portfolio decides what the existing position allows you to do.**
+
+Shares, average cost, P/L, position size, money-loss budget, Portfolio sizing and Position Action live under Portfolio, not Research.
 
 ### 3.7 Human approval is explicit
 
@@ -1428,6 +1430,47 @@ Correlations are background/materialized.
 
 The current implementation considers the largest positions and requires at least 30 overlapping return observations for a pair.
 
+### 20.3 Position Action
+
+Position Action is the Portfolio-owned final action layer downstream from Research Conclusion.
+
+Canonical flow:
+
+**DATA → VALUE → THESIS → TIMING → RISK → ACTION**
+
+Research remains position-agnostic and can conclude only with the canonical Research states such as RESEARCH INCOMPLETE, READY TO VALIDATE, LONG READY/WATCH, SHORT READY/WATCH, DATA REVIEW or NO EDGE · WAIT. It does not know shares, cost basis, Portfolio weight or sizing.
+
+Portfolio Position Action may combine that Research Conclusion with the user's stored position side, Validate state, Value / Variant / Path / Model Confidence, thesis control, latest stored locked-monitoring status, PortfolioRiskPlan, current gross exposure, downside-based suggested position and max-position cap.
+
+Precedence is conservative:
+
+1. A triggered **locked pre-investment thesis invalidation** overrides valuation and forces EXIT / SELL for a Long or COVER for a Short.
+2. A Portfolio money-risk breach overrides directional Research and requires REDUCE / REDUCE SHORT.
+3. PORTFOLIO ONLY, RESEARCH INCOMPLETE, DATA REVIEW and READY TO VALIDATE fail closed and cannot create BUY / ADD / new SHORT exposure.
+4. Strong opposite-direction READY Research may require REDUCE, but does not by itself rewrite the locked invalidation or force a full exit.
+5. No-position LONG READY / SHORT READY may produce BUY CANDIDATE / SHORT CANDIDATE. Candidate is not an order.
+6. Existing same-direction READY may produce **ADD ON EVIDENCE / ADD SHORT ON EVIDENCE** only when Validate is VALIDATED, thesis control is CONTROLLED, Path is directionally supportive/hostile, Portfolio risk has headroom and an explicit stored evidence-to-add condition exists.
+7. LONG WATCH, SHORT WATCH and NO EDGE · WAIT cannot authorize an add.
+
+Permanent rule:
+
+**ADD ON EVIDENCE, NOT ON PRICE.**
+
+Market price, average cost and P/L are deliberately not direct Position Action inputs. Price can change marked exposure and downside sizing, so it can reveal a genuine risk-limit breach or remove a sizing blocker, but price movement never satisfies the evidence-to-add condition and never independently creates ADD or SELL.
+
+The Position Action output is deliberately compact and auditable:
+
+- Action;
+- Why now;
+- What blocks a stronger action;
+- Next confirmation;
+- Risk / invalidation state;
+- an internal deterministic rule/audit trace, not a user-facing score.
+
+Position Action is calculated from stored/materialized state on normal GET. It performs no provider calls.
+
+Position Action and personalized sizing are CONTROL-private Portfolio data. They do not enter FRIEND/INSIDER publications or member-facing research artifacts.
+
 ---
 
 ## 21. Reports
@@ -1449,7 +1492,7 @@ An audit-write failure must not turn a valid report into HTTP 500.
 
 In-memory reports are returned as normal response bytes and must not be delegated to a problematic WSGI file wrapper.
 
-Private Portfolio holdings, sizing, P/L, private journal and credentials do not belong in published/member research reports.
+Private Portfolio holdings, Position Action, sizing, P/L, private journal and credentials do not belong in published/member research reports.
 
 ---
 
@@ -1683,7 +1726,7 @@ Before accepting a material future change, verify:
 - Readiness remains human-approved;
 - APPROVED · EVIDENCE CHANGED remains understandable;
 - Validation remains point-in-time;
-- Research remains separate from Portfolio sizing;
+- Research remains separate from Portfolio sizing and Position Action;
 - invalidation remains pre-investment and lockable;
 - Decision Journal remains immutable at decision time;
 - Discovery uses no filler quota;
