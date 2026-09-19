@@ -192,7 +192,8 @@ def test_020_canonical_routes_and_runtime_assets(tmp_path, monkeypatch):
     assert expected <= routes
 
     base = Path("mfapp/templates/base.html").read_text()
-    assert "css/app.css" in base and "js/app.js" in base and "js/theme.js" in base
+    assert "css/app.css" in base and "js/app.js" in base
+    assert "js/theme.js" not in base
     for legacy in ("v012.css", "v013.css", "v014.css", "v015.css", "v016.css", "v017.css", "v0171.css",
                    "v015.js", "v016.js", "v017.js", "v0171-pre.js", "v0171.js"):
         assert legacy not in base
