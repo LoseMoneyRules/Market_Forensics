@@ -187,7 +187,7 @@ def add_management_promise(ticker):
     high = dec(request.form.get("high"))
     unit = str(request.form.get("unit") or "").strip()[:16]
     statement = str(request.form.get("statement") or "").strip()
-    allowed = {"revenue", "revenue_growth_pct", "gross_margin_pct", "operating_margin_pct", "net_margin_pct", "fcf"}
+    allowed = {"revenue", "revenue_growth_pct", "gross_margin_pct", "operating_margin_pct", "net_margin_pct", "fcf", "eps"}
     if metric not in allowed or target_year < 2000 or low is None:
         flash("Promise needs a supported metric, target fiscal year and numeric target.", "error")
         return redirect(url_for("web.company_section", ticker=ticker.upper(), section="management"))
@@ -198,7 +198,7 @@ def add_management_promise(ticker):
         target_year=target_year,
         low=float(low),
         high=float(high),
-        unit=unit or ("%" if metric.endswith("_pct") else "USD"),
+        unit=unit or ("%" if metric.endswith("_pct") else ("USD/share" if metric == "eps" else "USD")),
         statement=statement or f"Manual management target: {metric} for FY{target_year}.",
     )
     audit("management.promise.add", "company", ctx["company"].id, {"metric": metric, "target_year": target_year})
