@@ -146,13 +146,6 @@ def _target_period(sentence: str) -> tuple[int | None, str, str, str | None]:
 
 def _basis_context(sentence: str, metric: str) -> tuple[str, str, str, str]:
     low = sentence.lower()
-    if metric == "fcf":
-        return (
-            "MANAGEMENT_DEFINED_FCF",
-            "Management free-cash-flow definition is not proven identical to Market Forensics CFO - capex.",
-            "NON_COMPARABLE",
-            "MANAGEMENT_DEFINED_FCF",
-        )
     if NON_GAAP_WORDS.search(sentence):
         return (
             "ADJUSTED_NON_GAAP",
@@ -160,56 +153,164 @@ def _basis_context(sentence: str, metric: str) -> tuple[str, str, str, str]:
             "NON_COMPARABLE",
             "BASIS_NOT_CANONICAL",
         )
+    if metric == "fcf":
+        canonical = bool(re.search(
+            r"(?:cash\s+(?:flow\s+)?from\s+operations|operating\s+cash\s+flow|cfo)"
+            r"[^.;]{0,80}?(?:less|minus|-)[^.;]{0,50}?(?:capex|capital\s+expenditures?)",
+            sentence,
+            re.I,
+        ))
+        if canonical:
+            return (
+                "CFO_MINUS_CAPEX",
+                "Guidance explicitly defines free cash flow as operating cash flow less capital expenditure.",
+                "COMPARABLE",
+                "",
+            )
+        return (
+            "MANAGEMENT_DEFINED_FCF",
+            "Management free-cash-flow definition is not proven identical to Market Forensics CFO - capex.",
+            "NON_COMPARABLE",
+            "MANAGEMENT_DEFINED_FCF",
+        )
+    if metric == "eps":
+        if re.search(r"\bgaap\b", low):
+            return "GAAP", "Explicit GAAP diluted EPS basis.", "COMPARABLE", ""
+        return (
+            "UNRESOLVED_EPS_BASIS",
+            "EPS guidance is preserved, but GAAP diluted-EPS equivalence is not explicit in the extracted statement.",
+            "NON_COMPARABLE",
+            "EPS_BASIS_NOT_EXPLICIT",
+        )
     if "gaap" in low:
         return "GAAP", "Explicit GAAP basis.", "COMPARABLE", ""
     return "REPORTED", "Reported metric; no adjusted/non-GAAP modifier detected.", "COMPARABLE", ""
 
 
-def extract_promises(text: str, *, source_id: int | None = None) -> list[dict[str, Any]]:
-    """Extract explicit numeric guidance while preserving comparability evidence.
+def _metric_hint(sentence: str) -> str:
+    low = sentence.lower()
+    if re.search(r"\b(?:diluted\s+)?(?:earnings\s+per\s+share|eps)\b", low):
+        return "eps"
+    if re.search(r"\b(?:free\s+cash\s+flow|fcf)\b", low):
+        return "fcf"
+    if "operating margin" in low:
+        return "operating_margin_pct"
+    if "gross margin" in low:
+        return "gross_margin_pct"
+    if "net margin" in low:
+        return "net_margin_pct"
+    if re.search(r"\b(?:revenue|sales)\b", low):
+        return "revenue_growth_pct" if re.search(r"\b(?:growth|increase|decline|decrease|down|up)\b", low) else "revenue"
+    return "guidance"
 
-    The parser intentionally prefers EVIDENCE_ONLY over a false MET/MISS. A target
-    is scored later only when period, basis, unit and actual are economically
-    comparable.
+
+def _qualitative_target(sentence: str) -> str:
+    match = QUALITATIVE_WORDS.search(sentence)
+    if match:
+        return match.group(0).strip(" ,;:.")[:180]
+    return sentence[:180].strip()
+
+
+def _numeric_range(match: re.Match[str], unit: str, *, negative: bool = False) -> tuple[float, float]:
+    groups = match.groups()
+    if unit == "%":
+        low = float(groups[0])
+        high = float(groups[1]) if len(groups) > 1 and groups[1] else low
+    elif unit == "USD/share":
+        low = float(groups[0])
+        high = float(groups[1]) if len(groups) > 1 and groups[1] else low
+    else:
+        low = _scale_money(float(groups[0]), str(groups[1]))
+        if len(groups) > 3 and groups[2]:
+            high = _scale_money(float(groups[2]), str(groups[3] or groups[1]))
+        else:
+            high = low
+    if negative and low >= 0 and high >= 0:
+        low, high = -high, -low
+    if low > high:
+        low, high = high, low
+    return low, high
+
+
+def extract_promises(
+    text: str,
+    *,
+    source_id: int | None = None,
+    document_url: str = "",
+    document_name: str = "",
+) -> list[dict[str, Any]]:
+    """Extract numeric and qualitative management guidance conservatively.
+
+    Numeric promises may become MET/MISS only when period, basis, unit and a
+    point-in-time original actual are comparable. Qualitative guidance is useful
+    evidence too, but always remains EVIDENCE_ONLY.
     """
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
 
+    specs = [
+        (
+            "revenue_growth_pct",
+            r"(?:revenue|sales)[^.;]{0,120}?(?:growth|increase|up|decline|decrease|down)"
+            r"[^.;]{0,90}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)"
+            r"(?:\s*(?:to|-|–|and)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?",
+            "%",
+        ),
+        (
+            "operating_margin_pct",
+            r"operating\s+margin[^.;]{0,120}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)"
+            r"(?:\s*(?:to|-|–|and)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?",
+            "%",
+        ),
+        (
+            "gross_margin_pct",
+            r"gross\s+margin[^.;]{0,120}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)"
+            r"(?:\s*(?:to|-|–|and)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?",
+            "%",
+        ),
+        (
+            "net_margin_pct",
+            r"net\s+margin[^.;]{0,120}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)"
+            r"(?:\s*(?:to|-|–|and)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?",
+            "%",
+        ),
+        (
+            "eps",
+            r"(?:diluted\s+)?(?:earnings\s+per\s+share|eps)[^.;]{0,140}?"
+            r"\$?\s*(-?\d+(?:\.\d+)?)"
+            r"(?:\s*(?:to|-|–|and)\s*\$?\s*(-?\d+(?:\.\d+)?))?",
+            "USD/share",
+        ),
+        (
+            "revenue",
+            r"(?:revenue|sales)[^.;]{0,140}?\$\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|mm|m|thousand|k)\b"
+            r"(?:\s*(?:to|-|–|and)\s*\$?\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|mm|m|thousand|k)\b)?",
+            "USD",
+        ),
+        (
+            "fcf",
+            r"(?:free\s+cash\s+flow|fcf)[^.;]{0,140}?\$\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|mm|m|thousand|k)\b"
+            r"(?:\s*(?:to|-|–|and)\s*\$?\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|mm|m|thousand|k)\b)?",
+            "USD",
+        ),
+    ]
+
     for sentence in _sentences(text):
-        low_sentence = sentence.lower()
-        if not re.search(GUIDANCE_WORDS, low_sentence):
+        if not re.search(GUIDANCE_WORDS, sentence, re.I):
             continue
 
         target_year, period_type, target_period, period_issue = _target_period(sentence)
-        if target_year is None:
-            continue
+        if not target_period:
+            target_period = "UNRESOLVED"
 
-        specs = [
-            ("revenue_growth_pct", r"(?:revenue|sales)[^.;]{0,100}?(?:growth|increase|decline)[^.;]{0,80}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)(?:\s*(?:to|-|–)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?", "%"),
-            ("operating_margin_pct", r"operating\s+margin[^.;]{0,100}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)(?:\s*(?:to|-|–)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?", "%"),
-            ("gross_margin_pct", r"gross\s+margin[^.;]{0,100}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)(?:\s*(?:to|-|–)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?", "%"),
-            ("net_margin_pct", r"net\s+margin[^.;]{0,100}?(-?\d+(?:\.\d+)?)\s*(?:%|percent)(?:\s*(?:to|-|–)\s*(-?\d+(?:\.\d+)?)\s*(?:%|percent))?", "%"),
-            ("revenue", r"(?:revenue|sales)[^.;]{0,100}?\$\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|m)\b(?:\s*(?:to|-|–)\s*\$?\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|m)\b)?", "USD"),
-            ("fcf", r"(?:free\s+cash\s+flow|fcf)[^.;]{0,100}?\$\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|m)\b(?:\s*(?:to|-|–)\s*\$?\s*(\d+(?:\.\d+)?)\s*(billion|million|bn|m)\b)?", "USD"),
-        ]
-
+        found_numeric = False
         for metric, pattern, unit in specs:
             match = re.search(pattern, sentence, flags=re.I)
             if not match:
                 continue
-            groups = match.groups()
-            if unit == "%":
-                low = float(groups[0])
-                high = float(groups[1]) if len(groups) > 1 and groups[1] else low
-            else:
-                low = _scale_money(float(groups[0]), str(groups[1]))
-                if len(groups) > 3 and groups[2]:
-                    high = _scale_money(float(groups[2]), str(groups[3] or groups[1]))
-                else:
-                    high = low
-            if low > high:
-                low, high = high, low
-
+            found_numeric = True
+            negative = metric == "revenue_growth_pct" and bool(DECLINE_WORDS.search(sentence))
+            low, high = _numeric_range(match, unit, negative=negative)
             basis, definition, comparability, reason = _basis_context(sentence, metric)
             if period_type != "FY":
                 comparability = "NON_COMPARABLE"
@@ -228,19 +329,61 @@ def extract_promises(text: str, *, source_id: int | None = None) -> list[dict[st
                 "target_period": target_period,
                 "low": low,
                 "high": high,
+                "target_text": "",
                 "unit": unit,
                 "operator": "RANGE" if low != high else "TARGET",
                 "basis": basis,
                 "definition": definition,
                 "comparability": comparability,
                 "comparability_reason": reason,
-                "statement": sentence[:800],
+                "statement": sentence[:1000],
                 "fingerprint": fingerprint,
                 "source_id": source_id,
                 "origin": "AUTO_FILING",
+                "document_url": document_url,
+                "document_name": document_name,
+                "parser_version": MANAGEMENT_SCAN_VERSION,
             })
-    return out
 
+        if found_numeric:
+            continue
+
+        # Do not make up a number from "low-single-digit", "roughly flat", etc.
+        # Preserve it as source-backed evidence so the table is informative.
+        if not QUALITATIVE_WORDS.search(sentence):
+            continue
+        metric = _metric_hint(sentence)
+        basis, definition, _, basis_reason = _basis_context(sentence, metric)
+        reason = period_issue or basis_reason or "QUALITATIVE_GUIDANCE"
+        fingerprint = hashlib.sha256(
+            f"{source_id}|QUALITATIVE|{metric}|{target_year}|{period_type}|{sentence}".encode()
+        ).hexdigest()[:24]
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        out.append({
+            "metric": metric,
+            "target_year": target_year,
+            "target_period_type": period_type,
+            "target_period": target_period,
+            "low": None,
+            "high": None,
+            "target_text": _qualitative_target(sentence),
+            "unit": "",
+            "operator": "QUALITATIVE",
+            "basis": basis,
+            "definition": definition,
+            "comparability": "NON_COMPARABLE",
+            "comparability_reason": reason,
+            "statement": sentence[:1000],
+            "fingerprint": fingerprint,
+            "source_id": source_id,
+            "origin": "AUTO_FILING",
+            "document_url": document_url,
+            "document_name": document_name,
+            "parser_version": MANAGEMENT_SCAN_VERSION,
+        })
+    return out
 
 def _source_fields(source: Source | None) -> dict[str, Any]:
     if source is None:
