@@ -40,7 +40,8 @@
 **Accepted 0.2.11 runtime merge commit:** `ba5a16783763f8032e3341b2e08eae8566457fbd`  
 **Verified final post-merge main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed  
 **Main:** VERSION `0.2.12`; accepted runtime merge `0d6debb6461a6dd7872c55dd5655cf6e921af1c1`; final post-merge CI is green  
-**Release phase:** 0.2.12 is complete in main. Production remains independently verified at 0.2.11; no 0.2.12 Namecheap deploy has been triggered.  
+**0.2.12 hardening branch:** `release/0.2.12-discovery-hardening`, created directly from current main `25ba14fb5f55060677cd6db77e5c721a1503649a`; VERSION remains `0.2.12` and the scope remains Discovery-only.  
+**Release phase:** 0.2.12 broad-universe runtime is already accepted in main; the same-version Discovery hardening is under verification on the clean branch above. Production remains independently verified at 0.2.11; no 0.2.12 Namecheap deploy has been triggered.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
@@ -62,6 +63,13 @@ Production and main are separately verified states. A merge to main does not imp
 - Candidate UI shows Price, Bear/Base/Bull, Base gap, quality, method count, operating confirmation, direction, why found, invalidation, filed/market freshness, warning and explicit Promote; the Discovery-only landscape PDF is aligned to the same fields without reintroducing scan_score.
 - Normal Discovery GET remains provider-free. Job status, Stage-0/1/2 counts, exclusions and provider-call counts are stored/displayed.
 - Promotion remains explicit and ticker validation runs again before persistence.
+- Discovery promotion now writes the originating scan/candidate evidence into the permanent audit meta: scan job, direction/family, price, Bear/Base/Bull, Base gap, valuation quality/methods, operating confirmation, why found, invalidation and freshness.
+- Stage 1 now persists broad-universe touch history and reports 7-day / 30-day breadth plus estimated runs for one full rotation.
+- Completed scans expose universe/provider health: Stage-0 collapse vs the prior catalog, stale universe cache, snapshot return rate and unusually concentrated Stage-1 exclusions.
+- Stage-2 rejection diagnostics are bounded and ticker-specific, so investigated-but-rejected names show the actual failed gate instead of disappearing into aggregate counts.
+- Candidate freshness is split into market, filed fundamentals, valuation materialization and universe eligibility timestamps.
+- Share-count discontinuities, short filing histories and recent S-1/F-1/10-12 registration patterns are conservative pre-candidate basis-review guards; flagged names cannot become final Discovery candidates until the basis is reviewed.
+- Scan cadence is explicit: retry in ~1 day after unhealthy/partial runs, ~3 days while recent broad-universe coverage is still thin, then weekly once breadth is established.
 - No dependency or deploy-workflow change is required.
 - Dedicated regressions live in `tests/test_0212_discovery.py`; `docs/LOCAL_WEB_PARITY_0_2_12.md` records Local/Web parity and the remaining incremental-breadth limitation.
 - Production remains 0.2.11 until an explicit post-merge deploy.

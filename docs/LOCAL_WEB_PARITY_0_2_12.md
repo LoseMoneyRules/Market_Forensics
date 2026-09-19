@@ -26,7 +26,13 @@ The objective is to recover the **broad liquid-universe / dislocation-search con
 | Local synchronous whole-market style | SUPERSEDED | Shared-hosting-safe cached universe + rotating Stage 1 + bounded sequential Stage 2 background work. |
 | Provider discipline | IMPROVED | Normal GET is provider-free; Stage 0 is cached; snapshot work is chunked; Companyfacts is limited to Stage-2 finalists; provider-call counts are stored/displayed. |
 | Resume / checkpoint | RECOVERED WEB-NATIVE | Stage-1 cursor is persisted in CONTROL-private preferences and advances after bounded scans. |
-| Decision-list UI | IMPROVED | Compact two-column Long/Short list shows Price, Bear/Base/Bull, gap, quality, method count, operating evidence, invalidation, freshness, warnings and Promote. |
+| Universe coverage over time | IMPROVED | CONTROL-private touch history reports 7-day / 30-day breadth and estimated successful runs for one full rotation. |
+| Universe/provider health | IMPROVED | Completed scans surface Stage-0 collapse, stale cache, snapshot return rate and concentrated Stage-1 exclusion anomalies. |
+| Why-not diagnostics | IMPROVED | A bounded ticker-level log explains Stage-2 enrichment/final-qualification rejection instead of showing only aggregate counts. |
+| Freshness | IMPROVED | Market, filed fundamentals, valuation materialization and universe eligibility timestamps are separated. |
+| Corporate-action / basis guard | IMPROVED | Large share-count discontinuities, short filed history and recent registration/listing filings force review before final candidacy. |
+| Discovery → Research provenance | IMPROVED | Explicit Promote stores originating scan evidence in permanent audit metadata without auto-creating thesis/Portfolio state. |
+| Decision-list UI | IMPROVED | Compact two-column Long/Short list shows Price, Bear/Base/Bull, gap, quality, method count, operating evidence, invalidation, four-part freshness, warnings and Promote. |
 
 ## Stage 0 source and effective universe
 
@@ -124,3 +130,10 @@ Unknown Stage-1 names do not yet have whole-market cheap fundamentals/consensus.
 - reporting-vendor dependencies.
 
 No purple is introduced. Existing typography/design system remains the source of styling.
+
+
+## Same-version 0.2.12 hardening
+
+The final 0.2.12 hardening intentionally does not create a 0.2.13 contract. It adds observability and guardrails around the accepted 0.2.12 funnel without changing canonical valuation, Research, Tape, Portfolio, Authentication, Settings, Financial Flows or deployment architecture.
+
+Recommended operating cadence is adaptive but manual: retry the next day after a critical universe/provider anomaly, retry in roughly three days for warning-level health or while recent broad-universe coverage is still thin, and settle to weekly once coverage is established. Normal Discovery GET remains provider-free.

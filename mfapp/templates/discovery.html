@@ -32,6 +32,9 @@
         <span class="status-chip">Stage 1 · {{ market_scan.stage1_scanned_count }} scanned / {{ market_scan.stage1_qualified_count }} passed</span>
         <span class="status-chip">Stage 2 · {{ market_scan.stage2_selected_count }} selected / {{ market_scan.stage2_enriched_count }} enriched</span>
         <span class="status-chip">{{ market_scan.candidate_count }} final</span>
+        <span class="status-chip">Universe health · {{ market_scan.universe_health.get('status','UNKNOWN') }}</span>
+        <span class="status-chip">7d breadth · {{ market_scan.coverage_progress.get('pct_7d',0) }}%</span>
+        <span class="status-chip">30d breadth · {{ market_scan.coverage_progress.get('pct_30d',0) }}%</span>
         <span class="status-chip" data-status-value="LONG">{{ market_scan.long_count }} long</span>
         <span class="status-chip" data-status-value="SHORT">{{ market_scan.short_count }} short</span>
         {% if market_scan_job %}<small>Completed {{ market_scan_job.finished_at }}</small>{% endif %}
@@ -46,7 +49,15 @@
         <span>Valid filed TTM + operating confirmation required</span>
         <span>Reference-price fallback off</span>
         <span>No final filler quota</span>
+        <span>Snapshots: {{ market_scan.stage1_snapshot_received_count }}/{{ market_scan.stage1_snapshot_requested_count }}</span>
+        <span>Suggested cadence: every {{ market_scan.scan_cadence.get('recommended_interval_days','—') }} day(s)</span>
       </div>
+      {% if market_scan.scan_cadence %}
+        <div class="notice"><strong>NEXT DISCOVERY.</strong> {{ market_scan.scan_cadence.get('reason','') }} Suggested next run: {{ market_scan.scan_cadence.get('next_due_at','—') }}.</div>
+      {% endif %}
+      {% if market_scan.universe_health.get('flags') %}
+        <div class="notice amber"><strong>UNIVERSE HEALTH {{ market_scan.universe_health.get('status') }}.</strong> {{ market_scan.universe_health.get('flags')|join(' ') }}</div>
+      {% endif %}
 
       <div class="discovery-side-grid">
         <section class="discovery-side long-side">
@@ -68,10 +79,10 @@
                 <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>
                 <p class="muted">{{ item.stage2_selection_reason }}</p>
                 <p><span class="muted">Invalidation:</span> {{ item.what_invalidates }}</p>
-                <p class="muted">Filed TTM through: {{ item.data_freshness or 'unknown' }} · Market snapshot: {{ item.market_freshness or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
+                <p class="muted">Freshness · Market: {{ item.freshness.get('market') or item.market_freshness or 'unknown' }} · Fundamentals: {{ item.freshness.get('fundamentals') or item.data_freshness or 'unknown' }} · Valuation: {{ item.freshness.get('valuation') or item.materialized_at or 'unknown' }} · Universe: {{ item.freshness.get('universe') or market_scan.universe_generated_at or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
               </div>
               <div class="discovery-list-action">
-                {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
+                {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><input type="hidden" name="origin" value="discovery"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
               </div>
             </div>
             {% else %}<div class="empty-state compact"><h3>No qualified Long lead</h3><p>Zero is valid. No investigated name currently has both intrinsic upside of at least +20% and filed TTM operating confirmation.</p></div>{% endfor %}
@@ -97,10 +108,10 @@
                 <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>
                 <p class="muted">{{ item.stage2_selection_reason }}</p>
                 <p><span class="muted">Invalidation:</span> {{ item.what_invalidates }}</p>
-                <p class="muted">Filed TTM through: {{ item.data_freshness or 'unknown' }} · Market snapshot: {{ item.market_freshness or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
+                <p class="muted">Freshness · Market: {{ item.freshness.get('market') or item.market_freshness or 'unknown' }} · Fundamentals: {{ item.freshness.get('fundamentals') or item.data_freshness or 'unknown' }} · Valuation: {{ item.freshness.get('valuation') or item.materialized_at or 'unknown' }} · Universe: {{ item.freshness.get('universe') or market_scan.universe_generated_at or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
               </div>
               <div class="discovery-list-action">
-                {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
+                {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><input type="hidden" name="origin" value="discovery"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
               </div>
             </div>
             {% else %}<div class="empty-state compact"><h3>No qualified Short lead</h3><p>Zero is valid. No investigated name currently has both intrinsic downside of at least -20%, filed deterioration and current short actionability.</p></div>{% endfor %}
@@ -117,6 +128,21 @@
           <span class="status-chip">Cursor {{ market_scan.stage1_cursor_start }} → {{ market_scan.stage1_cursor_end }}</span>
         </div>
         {% if market_scan.excluded_breakdown %}<div class="discovery-tags">{% for reason,count in market_scan.excluded_breakdown.items() %}<span class="status-chip">{{ reason }} · {{ count }}</span>{% endfor %}</div>{% endif %}
+        <p class="muted">Recent broad-universe coverage: {{ market_scan.coverage_progress.get('seen_7d',0) }}/{{ market_scan.coverage_progress.get('universe_size',market_scan.stage0_count) }} in 7d; {{ market_scan.coverage_progress.get('seen_30d',0) }}/{{ market_scan.coverage_progress.get('universe_size',market_scan.stage0_count) }} in 30d. Estimated full rotation: {{ market_scan.coverage_progress.get('estimated_full_rotation_runs','—') }} successful runs.</p>
+        {% if market_scan.rejection_log %}
+          <h3>Investigated but rejected</h3>
+          <div class="discovery-list">
+            {% for rejected in market_scan.rejection_log %}
+              <div class="discovery-list-row">
+                <div class="discovery-list-main">
+                  <div class="discovery-list-title"><strong>{{ rejected.ticker }}</strong><span>{{ rejected.stage }}</span></div>
+                  <p><strong>{{ rejected.reason }}</strong>{% if rejected.detail %} · {{ rejected.detail }}{% endif %}</p>
+                  {% if rejected.base_gap_pct is not none %}<p class="muted">Base gap {{ '%+.1f'|format(rejected.base_gap_pct) }}% · {{ rejected.valuation_methods or 0 }} methods · {{ rejected.quality or 'quality unavailable' }}</p>{% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
       </details>
       {% if market_scan.errors %}<div class="notice amber"><strong>PARTIAL SCAN.</strong> {{ market_scan.errors|join(' ') }}</div>{% endif %}
     {% else %}

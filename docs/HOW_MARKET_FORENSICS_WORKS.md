@@ -447,6 +447,40 @@ Discovery is designed for shared hosting:
 - a stale prior successful result remains readable while a new scan is queued/running;
 - no deploy workflow change or new dependency is required by 0.2.12.
 
+### Discovery observability, freshness and rerun cadence
+
+0.2.12 also records whether Discovery itself is healthy enough to trust.
+
+A completed run stores:
+
+- Stage-0 current and prior eligible-universe size, with a critical flag for a drop greater than 30%;
+- stale Stage-0 cache status;
+- requested versus returned Stage-1 snapshots;
+- unusually concentrated Stage-1 exclusion patterns;
+- the count and percentage of Stage-0 names actually touched in the last 7 and 30 days;
+- the estimated number of successful rotating runs needed to touch one full current Stage-0 universe;
+- a bounded ticker-level rejection log for Stage-2 enrichment and final qualification.
+
+Candidate freshness is not one ambiguous timestamp. It is separated into:
+
+- market snapshot;
+- filed fundamentals / TTM period;
+- valuation materialization;
+- Stage-0 universe eligibility refresh.
+
+Discovery also applies conservative basis-review guards before final qualification. A large YoY share-count discontinuity, short filed history, or a recent registration/listing filing such as S-1/F-1/10-12 creates a **CORPORATE ACTION / BASIS REVIEW** rejection instead of silently allowing a possibly mismatched price/share basis into the final list.
+
+Promotion provenance is immutable operating history: when CONTROL promotes a qualified Discovery candidate, the Coverage audit records the originating scan and the exact Discovery evidence visible at promotion time. This does not make Discovery a Research truth source; it preserves what Discovery saw when the human chose to start Research.
+
+Recommended manual cadence is deterministic and provider-free on GET:
+
+- critical universe/provider anomaly → retry in about 1 day;
+- warning-level anomaly → retry in about 3 days;
+- healthy but less than 25% of the current universe touched in 30 days → about every 3 days while establishing breadth;
+- established breadth → weekly.
+
+This is guidance, not an automatic trade or research action.
+
 ### Discovery limitation to remember
 
 Broad coverage is **incremental**, not a synchronous full-market deep valuation pass. A single run deeply enriches only a bounded finalist set. Repeated runs advance the Stage-1 cursor through the cached operating-equity universe.
@@ -1652,7 +1686,7 @@ However a critical disappearance of evidence can theoretically remain approved u
 
 0.2.12 removes the structural Most Active / Movers universe dependency by maintaining a cached broad operating-equity universe and rotating Stage 1 through it.
 
-The remaining limitation is depth-per-run: shared-hosting/provider discipline means only a bounded finalist set receives SEC Companyfacts and canonical valuation on each scan.
+The remaining limitation is depth-per-run: shared-hosting/provider discipline means only a bounded finalist set receives SEC Companyfacts and canonical valuation on each scan. 0.2.12 now exposes 7/30-day universe touch coverage and a suggested rerun cadence so this limitation is measurable rather than hidden.
 
 **Improvement:** if a licensed whole-market fundamental dataset with appropriate storage/display rights is added later, strengthen Stage-1 cheap dislocation signals without weakening the bounded Stage-2 forensic contract.
 

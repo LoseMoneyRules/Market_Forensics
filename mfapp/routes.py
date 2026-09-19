@@ -578,6 +578,8 @@ def _normalized_market_scan(job: Job | None) -> dict:
                 "data_freshness": raw.get("data_freshness"),
                 "market_freshness": raw.get("market_freshness"),
                 "materialized_at": raw.get("materialized_at"),
+                "freshness": dict(raw.get("freshness") or {}) if isinstance(raw.get("freshness") or {}, dict) else {},
+                "corporate_action_review": list(raw.get("corporate_action_review") or []) if isinstance(raw.get("corporate_action_review") or [], list) else [],
                 "warning": str(raw.get("warning") or ""),
                 "stage1_lanes": list(raw.get("stage1_lanes") or []) if isinstance(raw.get("stage1_lanes") or [], list) else [],
                 "stage2_selection_reason": str(raw.get("stage2_selection_reason") or ""),
@@ -608,8 +610,8 @@ def _normalized_market_scan(job: Job | None) -> dict:
         "stage0_count", "stage0_raw_count", "stage0_excluded_count",
         "stage1_scanned_count", "stage1_qualified_count", "stage1_broad_rotation_count",
         "stage1_quiet_broad_count", "stage1_activity_count", "stage1_cursor_start",
-        "stage1_cursor_end", "stage2_selected_count", "stage2_enriched_count",
-        "provider_call_total", "excluded_count",
+        "stage1_cursor_end", "stage1_snapshot_requested_count", "stage1_snapshot_received_count",
+        "stage2_selected_count", "stage2_enriched_count", "provider_call_total", "excluded_count",
     ):
         scan[key] = as_int(scan.get(key), 0)
     scan["excluded_breakdown"] = dict(scan.get("excluded_breakdown") or {}) if isinstance(scan.get("excluded_breakdown") or {}, dict) else {}
@@ -617,7 +619,40 @@ def _normalized_market_scan(job: Job | None) -> dict:
     scan["provider_calls"] = dict(scan.get("provider_calls") or {}) if isinstance(scan.get("provider_calls") or {}, dict) else {}
     scan["guardrails"] = dict(scan.get("guardrails") or {}) if isinstance(scan.get("guardrails") or {}, dict) else {}
     scan["ranking_basis"] = list(scan.get("ranking_basis") or []) if isinstance(scan.get("ranking_basis") or [], list) else []
+    scan["coverage_progress"] = dict(scan.get("coverage_progress") or {}) if isinstance(scan.get("coverage_progress") or {}, dict) else {}
+    scan["universe_health"] = dict(scan.get("universe_health") or {}) if isinstance(scan.get("universe_health") or {}, dict) else {}
+    scan["scan_cadence"] = dict(scan.get("scan_cadence") or {}) if isinstance(scan.get("scan_cadence") or {}, dict) else {}
+    scan["rejection_log"] = list(scan.get("rejection_log") or []) if isinstance(scan.get("rejection_log") or [], list) else []
     return scan
+
+
+def _discovery_promotion_provenance(user_id: int, ticker: str) -> dict:
+    latest = Job.query.filter_by(
+        user_id=user_id, job_type="DISCOVERY_SCAN", status="DONE"
+    ).order_by(Job.finished_at.desc(), Job.id.desc()).first()
+    scan = _normalized_market_scan(latest)
+    wanted = str(ticker or "").upper()
+    row = next((item for item in scan.get("candidates") or [] if str(item.get("ticker") or "").upper() == wanted), None)
+    if not row:
+        return {}
+    return {
+        "contract_version": scan.get("contract_version"),
+        "scan_job_id": latest.id if latest else None,
+        "scan_finished_at": latest.finished_at.isoformat(timespec="seconds") if latest and latest.finished_at else None,
+        "direction": row.get("direction"),
+        "family": row.get("radar_label"),
+        "price": row.get("price"),
+        "bear": row.get("bear"),
+        "base": row.get("base"),
+        "bull": row.get("bull"),
+        "base_gap_pct": row.get("base_gap_pct"),
+        "fair_value_quality": row.get("fair_value_quality"),
+        "valuation_methods": row.get("valuation_methods"),
+        "operating_confirmation": list(row.get("operating_confirmation") or []),
+        "why_found": list(row.get("why_found") or []),
+        "what_invalidates": row.get("what_invalidates"),
+        "freshness": dict(row.get("freshness") or {}),
+    }
 
 
 @bp.get("/discovery")
@@ -660,6 +695,7 @@ def discovery():
 @role_required("CONTROL")
 def add_coverage():
     require_control_view(); ticker = str(request.form.get("ticker") or "").strip().upper(); validation = validate_ticker(ticker)
+    discovery_provenance = _discovery_promotion_provenance(g.user.id, ticker) if str(request.form.get("origin") or "").lower() == "discovery" else {}
     if not validation.valid:
         flash(validation.message or "Ticker not found / symbol not recognized.", "error"); return redirect(request.referrer or url_for("web.dashboard"))
     security, _ = ensure_security_from_validation(validation)
@@ -669,7 +705,10 @@ def add_coverage():
             existing.status = "MONITOR"
             existing.research_state = existing.research_state if existing.research_state != "ARCHIVED" else "UNDER_REVIEW"
             existing.updated_at = utcnow()
-            audit("coverage.restore", "coverage", existing.id, {"ticker": ticker})
+            restore_meta = {"ticker": ticker}
+            if discovery_provenance:
+                restore_meta["discovery_provenance"] = discovery_provenance
+            audit("coverage.restore", "coverage", existing.id, restore_meta)
             db.session.commit()
             flash(f"{ticker} restored to active Coverage.", "success")
             return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
@@ -677,7 +716,10 @@ def add_coverage():
         return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
     coverage = Coverage(user_id=g.user.id, security_id=security.id, status="MONITOR", research_state="UNRATED")
     db.session.add(coverage); db.session.flush(); ensure_workspace(coverage, g.user.id)
-    audit("coverage.create", "coverage", coverage.id, {"ticker": ticker, "validation_source": validation.source}); db.session.commit()
+    create_meta = {"ticker": ticker, "validation_source": validation.source}
+    if discovery_provenance:
+        create_meta["discovery_provenance"] = discovery_provenance
+    audit("coverage.create", "coverage", coverage.id, create_meta); db.session.commit()
     enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
     enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 3}, priority=35)
     if provider_status(g.user.id).get("sec"):

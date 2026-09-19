@@ -73,6 +73,12 @@ def _stage1(rows):
         "quiet_broad_count": sum("MARKET_ACTIVITY" not in r["stage1_lanes"] for r in rows),
         "activity_count": sum("MARKET_ACTIVITY" in r["stage1_lanes"] for r in rows),
         "cursor_start": 0, "cursor_end": len(rows), "excluded_breakdown": {},
+        "snapshot_requested_count": len(rows), "snapshot_received_count": len(rows),
+        "coverage_progress": {
+            "universe_size": 1000, "seen_7d": len(rows), "seen_30d": len(rows),
+            "pct_7d": round(len(rows) / 10.0, 1), "pct_30d": round(len(rows) / 10.0, 1),
+            "estimated_full_rotation_runs": 5,
+        },
     }
 
 
@@ -366,3 +372,110 @@ def test_0212_final_ranking_is_auditable_not_hidden_composite():
     assert "scan_score" not in discovery_report
     for field in ("Bear", "Base", "Bull", "Gap", "methods", "Invalidation", "Freshness"):
         assert field in template
+
+
+
+def test_0212_tracks_recent_broad_universe_coverage(tmp_path, monkeypatch):
+    import mfapp.discovery_universe as du
+
+    app = _make_app(tmp_path, monkeypatch)
+    user_id = _seed_control(app)
+    members = [
+        {"ticker": f"U{idx:03d}", "name": f"Universe {idx}", "exchange": "NYSE", "shortable": True}
+        for idx in range(300)
+    ]
+    monkeypatch.setattr(du, "_activity_pool", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        du, "_snapshot_map",
+        lambda symbols, *args, **kwargs: {
+            ticker: {
+                "price": 25.0, "daily_volume": 3_000_000, "dollar_volume": 75_000_000,
+                "move_pct": 0.0, "as_of": "2026-09-19T15:00:00Z",
+                "liquidity_basis": "PREVIOUS_COMPLETED_DAILY_BAR",
+            }
+            for ticker in symbols
+        },
+    )
+
+    with app.app_context():
+        first = du.stage1_screen(
+            user_id, {"x": "y"},
+            {"members": members, "generated_at": "2026-09-19T12:00:00"},
+            [], Counter(), known_tickers=set(),
+        )
+        second = du.stage1_screen(
+            user_id, {"x": "y"},
+            {"members": members, "generated_at": "2026-09-19T12:00:00"},
+            [], Counter(), known_tickers=set(),
+        )
+
+    assert first["coverage_progress"]["seen_7d"] == 240
+    assert first["coverage_progress"]["pct_7d"] == 80.0
+    assert second["coverage_progress"]["seen_7d"] == 300
+    assert second["coverage_progress"]["pct_7d"] == 100.0
+    assert second["coverage_progress"]["estimated_full_rotation_runs"] == 2
+
+
+def test_0212_universe_health_detects_collapse_and_snapshot_failure():
+    from mfapp.market_discovery import _discovery_health
+
+    health = _discovery_health(
+        {"member_count": 600, "previous_member_count": 1000, "stale_cache": False},
+        {
+            "snapshot_requested_count": 100, "snapshot_received_count": 50,
+            "excluded_breakdown": {"PRICE UNKNOWN": 10},
+        },
+    )
+    assert health["status"] == "CRITICAL"
+    assert any(">30% drop" in flag for flag in health["flags"])
+    assert any("50/100" in flag for flag in health["flags"])
+
+
+def test_0212_basis_guard_flags_share_discontinuity_and_short_history():
+    from mfapp.discovery_forensics import _basis_review_flags
+
+    flags = _basis_review_flags(
+        {"shares_outstanding": 200},
+        {"shares_outstanding": 100},
+        annual=[{"fiscal_year": 2025}, {"fiscal_year": 2024}],
+    )
+    assert any("Share-count basis changed" in flag for flag in flags)
+    assert any("Short filed history" in flag for flag in flags)
+
+
+def test_0212_corporate_action_review_never_becomes_candidate(monkeypatch):
+    evidence = _evidence(gap=35.0)
+    evidence["corporate_action_review"] = ["Share-count basis changed +100% YoY; basis needs review."]
+    result = _run_scan(monkeypatch, evidence)
+    assert result["candidates"] == []
+    assert result["excluded_breakdown"]["CORPORATE ACTION / BASIS REVIEW"] >= 1
+    assert any(
+        row["ticker"] == "QUIET" and row["reason"] == "CORPORATE ACTION / BASIS REVIEW"
+        for row in result["rejection_log"]
+    )
+
+
+def test_0212_scan_cadence_builds_breadth_then_becomes_weekly():
+    from mfapp.market_discovery import _scan_cadence
+
+    health = {"status": "OK"}
+    early = _scan_cadence(health, {"pct_30d": 10.0})
+    mature = _scan_cadence(health, {"pct_30d": 50.0})
+    retry = _scan_cadence({"status": "WARN"}, {"pct_30d": 50.0})
+    critical = _scan_cadence({"status": "CRITICAL"}, {"pct_30d": 50.0})
+    assert early["recommended_interval_days"] == 3
+    assert mature["recommended_interval_days"] == 7
+    assert retry["recommended_interval_days"] == 3
+    assert critical["recommended_interval_days"] == 1
+
+
+def test_0212_discovery_ui_exposes_health_rejections_freshness_and_provenance():
+    template = Path("mfapp/templates/discovery.html").read_text()
+    routes = Path("mfapp/routes.py").read_text()
+    for text in (
+        "Universe health", "7d breadth", "30d breadth", "Investigated but rejected",
+        "Freshness · Market:", 'name="origin" value="discovery"',
+    ):
+        assert text in template
+    assert "_discovery_promotion_provenance" in routes
+    assert '"discovery_provenance"' in routes
