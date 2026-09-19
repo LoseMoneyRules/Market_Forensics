@@ -222,7 +222,15 @@ def save_valuation_company(ticker):
     model.updated_by = g.user.id
     audit("valuation.model.save", "coverage", ctx["coverage"].id, {"method": model.method, "share_basis_verified": share_verified, "quality": result.get("quality")})
     db.session.commit()
-    flash("Valuation assumptions saved and recalculated.", "success")
+    enqueue_job(
+        "RECALCULATE",
+        user_id=g.user.id,
+        company_id=ctx["company"].id,
+        security_id=ctx["security"].id,
+        payload={"coverage_id": ctx["coverage"].id},
+        priority=95,
+    )
+    flash("Valuation assumptions saved and recalculated. Research cache queued for update.", "success")
     return redirect(url_for("web.valuation_company", ticker=ticker.upper()))
 
 
