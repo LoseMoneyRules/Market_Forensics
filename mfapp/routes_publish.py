@@ -361,8 +361,15 @@ def queue_refresh(ticker, kind):
     job_type = mapping.get(kind)
     if not job_type: abort(404)
     priorities = {"market": 10, "sec": 30, "prices": 35, "recalculate": 45, "prefill": 50, "macro": 55, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
+    payload = {"coverage_id": ctx["coverage"].id}
+    if kind == "prices":
+        payload["lookback_years"] = 3
+    if kind == "management":
+        # A user-requested scan is an explicit re-read, even when this parser
+        # version previously completed with zero extracted promises.
+        payload.update({"force": True, "limit": 60})
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
-                      payload={"coverage_id": ctx["coverage"].id, **({"lookback_years": 3} if kind == "prices" else {})}, priority=priorities.get(kind, 50))
+                      payload=payload, priority=priorities.get(kind, 50))
     audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
