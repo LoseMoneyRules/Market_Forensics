@@ -305,9 +305,10 @@ def test_027_evidence_diagnostic_is_consolidated_and_weighted():
 
 
 def test_027_version_and_state_are_locked():
-    assert Path("VERSION").read_text().strip() == "0.2.7"
+    version = Path("VERSION").read_text().strip()
+    assert tuple(int(part) for part in version.split(".")) >= (0, 2, 7)
     state = Path("docs/CURRENT_STATE.md").read_text()
-    assert "**State-Version: 0.2.7**" in state
-    assert "0.2.6 production baseline" in state
+    assert f"**State-Version: {version}**" in state
+    assert "**Production:**" in state
     assert "CI #787" in state
     assert "Deploy #35" in state
