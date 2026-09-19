@@ -195,7 +195,7 @@
   </div>
 
   {% if position %}
-  <form method="post" action="{{ url_for('web.remove_position', ticker=security.ticker) }}" onsubmit="return confirm('Remove {{ security.ticker }} from Portfolio? Research and risk history will be preserved.');">
+  <form method="post" action="{{ url_for('web.remove_position', ticker=security.ticker) }}" data-confirm="Remove {{ security.ticker }} from Portfolio? Research and risk history will be preserved.">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button class="button danger" type="submit">Remove position</button>
   </form>
