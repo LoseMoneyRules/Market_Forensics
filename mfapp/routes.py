@@ -241,6 +241,10 @@ def _ctx(ticker: str) -> dict:
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     cache = latest_research_cache(coverage.id, company.id)
     valuation = dict((cache or {}).get("valuation") or valuation_result(coverage))
+    if not valuation.get("base_quality"):
+        live_valuation_meta = valuation_result(coverage)
+        for key in ("quality", "base_quality", "decision_grade"):
+            valuation[key] = live_valuation_meta.get(key)
 
     active_recalc = Job.query.filter(
         Job.user_id == g.user.id,
