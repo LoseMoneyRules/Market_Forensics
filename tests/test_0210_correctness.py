@@ -391,6 +391,71 @@ def test_0210_management_parser_recovers_declines_eps_and_qualitative_guidance()
     assert qualitative[0]["target_text"]
 
 
+
+def test_0210_management_html_tables_money_ranges_and_parser_upgrade_are_reconciled(tmp_path):
+    import mfapp.management_promises as mp
+
+    html = """
+    <table><tr><td>Fiscal 2027 outlook</td></tr>
+    <tr><td>Management expects FY2027 revenue of $50 to $51 billion.</td></tr></table>
+    """
+    parsed = mp.extract_promises(mp.html_to_text(html))
+    assert len(parsed) == 1
+    assert parsed[0]["metric"] == "revenue"
+    assert parsed[0]["low"] == 50_000_000_000.0
+    assert parsed[0]["high"] == 51_000_000_000.0
+
+    app = make_app(tmp_path, "management_parser_upgrade")
+    _, company_id, _, _ = seed_workspace(app, "UPG")
+    statement = "Management expects FY2027 revenue decline of 8% to 10%."
+    with app.app_context():
+        source = Source(
+            company_id=company_id,
+            provider="SEC",
+            source_type="FILING",
+            title="UPG 8-K",
+            accession_no="upgrade-test",
+            published_at=datetime(2026, 9, 18),
+            retrieved_at=datetime(2026, 9, 18),
+            meta={"form": "8-K"},
+        )
+        db.session.add(source)
+        db.session.flush()
+        db.session.add(Event(
+            company_id=company_id,
+            source_id=source.id,
+            event_type="MANAGEMENT_PROMISE",
+            title="legacy wrong-sign guidance",
+            event_date=datetime(2026, 9, 18),
+            payload={
+                "metric": "revenue_growth_pct",
+                "target_year": 2027,
+                "target_period": "FY2027",
+                "target_period_type": "FY",
+                "low": 8.0,
+                "high": 10.0,
+                "unit": "%",
+                "basis": "REPORTED",
+                "comparability": "COMPARABLE",
+                "statement": statement,
+                "fingerprint": "legacy-fingerprint",
+                "origin": "AUTO_FILING",
+                "source_id": source.id,
+                "status": "PENDING",
+            },
+        ))
+        db.session.commit()
+
+        corrected = mp.extract_promises(statement, source_id=source.id)
+        assert corrected[0]["low"] == -10.0
+        assert corrected[0]["high"] == -8.0
+        assert mp.store_promises(company_id, corrected, source_id=source.id) == 1
+        rows = Event.query.filter_by(company_id=company_id, event_type="MANAGEMENT_PROMISE").all()
+        assert len(rows) == 1
+        assert (rows[0].payload or {}).get("low") == -10.0
+        assert (rows[0].payload or {}).get("parser_version") == mp.MANAGEMENT_SCAN_VERSION
+
+
 def test_0210_management_original_actual_uses_earliest_public_filing_not_restated_comparative():
     import mfapp.management_promises as mp
 
