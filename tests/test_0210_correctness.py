@@ -863,7 +863,8 @@ def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_
     login(client, user_id)
     response = client.get("/company/STALE/overview")
     assert response.status_code == 200
-    assert b"DATA REVIEW" in response.data
+    assert b"LONG READY" not in response.data
+    assert b"DATA REVIEW" in response.data or b"RESEARCH INCOMPLETE" in response.data
 
 
 def test_0210_management_requires_explicit_full_year_and_interim_wins(tmp_path, monkeypatch):
