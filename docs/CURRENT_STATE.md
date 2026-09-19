@@ -45,9 +45,14 @@
 **Verified 0.2.12 hardening PR CI:** pull-request run `35459077261` / #1094 = completed / success on `405e5510eefd6c0da6c792c7bf5d4c7bbfc5501f`; full release suite and both smoke gates passed.  
 **Accepted 0.2.12 runtime merge:** `1e309fa77b864ed5ccd9831478a54fcdefe05419`.  
 **Verified final post-merge main CI:** run `35459124021` / #1095 = completed / success on `1e309fa77b864ed5ccd9831478a54fcdefe05419`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed.  
-**Main:** VERSION `0.2.12`; accepted runtime merge `1e309fa77b864ed5ccd9831478a54fcdefe05419`; final post-merge CI is green.  
-**0.2.12 production render-fix branch:** `fix/0.2.12-discovery-rejection-render`, created directly from main `6656a7941c1e2d40a87f5318303b28527de859f8`; same VERSION, Discovery-only rendering/normalization fix plus regression test.  
-**Release phase:** 0.2.12 is deployed in production. A same-version hotfix is under verification for the post-scan sparse-rejection rendering error; no analytical threshold/provider/valuation behavior is being changed.  
+**Main:** VERSION `0.2.12`; accepted broad/hardening runtime `1e309fa77b864ed5ccd9831478a54fcdefe05419`; accepted production render-fix merge `28f262da51f768c801d540d4b4d772964cfd7630`; post-merge CI is green.  
+**0.2.12 production render-fix branch:** `fix/0.2.12-discovery-rejection-render`, created directly from main `6656a7941c1e2d40a87f5318303b28527de859f8`; consolidated head `c85157460f7cbc4258760816f68ac3ddfe456f0e`; same VERSION, Discovery-only rendering/normalization fix plus regression test.  
+**0.2.12 render-fix PR:** #42 `0.2.12: Fix sparse Discovery rejection rendering` = merged by squash.  
+**Verified render-fix branch CI:** run `35462668640` / #1100 = completed / success on `c85157460f7cbc4258760816f68ac3ddfe456f0e`.  
+**Verified render-fix PR CI:** run `35462722236` / #1101 = completed / success on `c85157460f7cbc4258760816f68ac3ddfe456f0e`.  
+**Accepted render-fix merge:** `28f262da51f768c801d540d4b4d772964cfd7630`.  
+**Verified post-merge render-fix main CI:** run `35462772554` / #1102 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
+**Release phase:** 0.2.12 render fix is complete in main. Production is still running deploy #50 at pre-fix main `6656a7941c1e2d40a87f5318303b28527de859f8`, so one explicit redeploy is required to put `28f262da51f768c801d540d4b4d772964cfd7630` into production.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
