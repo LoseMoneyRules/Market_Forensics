@@ -115,7 +115,7 @@ def _fallback_readiness() -> dict:
     return {
         "done": 0, "evidence_ready": 0, "total": 13, "gates": [],
         "ready_to_validate": False,
-        "validation": {"state": "NOT RUN", "run_id": None, "status": None, "samples": 0, "reliability": None},
+        "validation": {"state": "NOT RUN", "run_id": None, "status": "NOT RUN", "samples": 0, "reliability": None},
         "bias_flags": [],
     }
 
