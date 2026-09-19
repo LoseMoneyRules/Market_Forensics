@@ -56,7 +56,7 @@
     <div class="research-strip-metric"><span>Bias</span><strong data-status-value="{{ intelligence.bias }}">{{ intelligence.bias }}</strong></div>
     <div class="research-strip-metric"><span>Confidence</span><strong data-status-value="{{ intelligence.confidence }}">{{ intelligence.confidence }}</strong></div>
     <div class="research-strip-metric"><span>Base gap</span><strong>{% if intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(intelligence.base_gap_pct) }}%{% else %}—{% endif %}</strong></div>
-    <div class="research-strip-summary">{% for signal in intelligence.top_signals[:3] %}<span class="signal-dot {{ signal.tone }}" data-status-value="{{ signal.tone }}">{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}{% for warning in intelligence.warnings[:1] %}<span class="signal-dot watch" data-status-value="WATCH">{{ warning }}</span>{% endfor %}</div>
+    <div class="research-strip-summary">{% for signal in intelligence.get('top_signals', [])[:3] %}<span class="signal-dot {{ signal.tone }}" data-status-value="{{ signal.tone }}">{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}{% for warning in intelligence.get('warnings', [])[:1] %}<span class="signal-dot watch" data-status-value="WATCH">{{ warning }}</span>{% endfor %}</div>
   </section>
   {% endif %}
   {% block content %}{% endblock %}
