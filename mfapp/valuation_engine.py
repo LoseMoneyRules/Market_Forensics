@@ -30,6 +30,26 @@ def valuation_base_quality(valuation: dict[str, Any] | None) -> str:
 def valuation_is_decision_grade(valuation: dict[str, Any] | None) -> bool:
     return valuation_base_quality(valuation) in DECISION_GRADE_QUALITIES
 
+
+def stored_model_base_quality(model: Any | None) -> str:
+    """Recover Base quality from already-stored model state without running valuation."""
+    if model is None:
+        return "DATA_WARNING"
+    try:
+        scenarios = {str(row.name or "").upper(): row for row in (model.scenarios or [])}
+    except Exception:
+        scenarios = {}
+    base = scenarios.get("BASE")
+    outputs = dict(getattr(base, "outputs", None) or {}) if base is not None else {}
+    assumptions = dict(getattr(model, "assumptions", None) or {})
+    latest = dict(assumptions.get("latest_engine_result") or {})
+    latest_scenarios = dict(latest.get("scenarios") or {})
+    return canonical_valuation_quality(
+        outputs.get("quality")
+        or (latest_scenarios.get("BASE") or {}).get("quality")
+        or latest.get("quality")
+    )
+
 TYPE_PRIORS = {
     "Generic": {"pe": (12.0, 18.0, 24.0), "ev_sales": (0.8, 1.5, 2.4), "fcf_yield": (0.080, 0.055, 0.040)},
     "Consumer / Brand": {"pe": (15.0, 21.0, 27.0), "ev_sales": (0.9, 1.8, 3.0), "fcf_yield": (0.070, 0.050, 0.035)},
@@ -496,7 +516,7 @@ def evaluate(
 
 __all__ = [
     "ENGINE_VERSION", "TYPE_PRIORS", "DECISION_GRADE_QUALITIES", "canonical_valuation_quality",
-    "valuation_base_quality", "valuation_is_decision_grade", "infer_company_type", "metrics_from_history", "calibrate_multiples",
+    "valuation_base_quality", "valuation_is_decision_grade", "stored_model_base_quality", "infer_company_type", "metrics_from_history", "calibrate_multiples",
     "default_cases", "pe_value", "ev_sales_value", "fcf_yield_value", "dcf_value", "robust_blend",
     "scenario_value", "evaluate", "n", "clamp", "quantile",
 ]
