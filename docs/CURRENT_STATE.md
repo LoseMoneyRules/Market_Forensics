@@ -19,8 +19,13 @@
 **Verified production baseline:** manual deploy run `35448890411` / deploy #49 = completed / success on main event SHA `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; candidate and final production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.11"}`; persistent reporting-vendor rebuild/stage steps were skipped because dependencies were unchanged  
 **Accepted pre-0.2.12 main baseline:** `ff4eb1e96a92610bc3ddd2c21c6e32840a016452` (accepted 0.2.11 runtime `ba5a16783763f8032e3341b2e08eae8566457fbd` plus final 0.2.11 documentation sync)  
 **Latest verified 0.2.11 runtime main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`  
-**0.2.12 source branch:** `release/0.2.12-broad-discovery`, created directly from clean main `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; no old branch is its base  
-**0.2.12 scope:** Discovery only — cached broad operating-equity Stage 0, rotating cheap Stage 1, bounded canonical-valuation/filed-data Stage 2; no Research/Tape/Portfolio/Reports/Auth/Deploy/Settings/Financial-Flows redesign  
+**0.2.12 source branch:** `release/0.2.12-broad-discovery`, created directly from clean main `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; final branch history was collapsed to one clean commit `4226218763c100ec71652f8dffafd4d17a4fa97c` before PR  
+**0.2.12 scope:** Discovery only — cached broad operating-equity Stage 0, rotating cheap Stage 1, bounded canonical-valuation/filed-data Stage 2; no Research/Tape/Portfolio/Auth/Deploy/Settings/Financial-Flows redesign; only the Discovery-specific landscape export is adapted to the new Discovery payload  
+**Verified 0.2.12 branch CI:** push run `35451749159` / #1076 = completed / success on clean head `4226218763c100ec71652f8dffafd4d17a4fa97c`; release suite, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**Verified 0.2.12 PR CI:** pull-request run `35451809157` / #1077 = completed / success on `4226218763c100ec71652f8dffafd4d17a4fa97c`  
+**Pull request:** #40 `0.2.12: Broad Universe Discovery` = merged by squash  
+**0.2.12 merge commit:** `0d6debb6461a6dd7872c55dd5655cf6e921af1c1`  
+**Verified post-merge main CI:** run `35451861271` / #1078 = completed / success on `0d6debb6461a6dd7872c55dd5655cf6e921af1c1`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed  
 **0.2.11 source branch:** `release/0.2.11-position-action`, created directly from clean main `30d2e5cd2da07772235fef8c20e31e952e9fe68a`; no old branch is its base  
 **0.2.11 scope:** Portfolio-owned deterministic Position Action downstream from the canonical Research Conclusion; no Research/Tape/Discovery/Valuation/deploy redesign  
 **Verified 0.2.11 branch CI:** push run `35444349076` / #1035 = completed / success on head `e6d9c8ac7b489bcfc3d670d57262e2b974a0c4d8`; the earlier branch push run `35444308195` / #1034 also completed / success during the same focused implementation  
@@ -34,8 +39,8 @@
 **Portfolio command pull request:** #39 `0.2.11: close Portfolio command layer` = merged by squash  
 **Accepted 0.2.11 runtime merge commit:** `ba5a16783763f8032e3341b2e08eae8566457fbd`  
 **Verified final post-merge main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed  
-**Main before 0.2.12 merge:** VERSION `0.2.11`; head `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; accepted runtime baseline `ba5a16783763f8032e3341b2e08eae8566457fbd`  
-**Release phase:** 0.2.12 is under focused branch validation. Production is independently verified at 0.2.11. No 0.2.12 production deploy is permitted automatically.  
+**Main:** VERSION `0.2.12`; accepted runtime merge `0d6debb6461a6dd7872c55dd5655cf6e921af1c1`; final post-merge CI is green  
+**Release phase:** 0.2.12 is complete in main. Production remains independently verified at 0.2.11; no 0.2.12 Namecheap deploy has been triggered.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
