@@ -1030,9 +1030,19 @@ Current label logic:
 - CAUTION / LOW CONFIDENCE: below 55;
 - INSUFFICIENT EVIDENCE: no usable score.
 
-Management guidance/promises can be extracted from filings and compared with realized filed outcomes.
+Management guidance/promises are extracted from SEC-filed/furnished evidence and compared with realized filed outcomes.
 
-Promise scoring is comparability-first. Every stored promise preserves source/date, metric, target period, basis/definition, comparability and status. PENDING may become MET or MISS only when the target and actual are economically comparable. Automatic scoring requires an explicit full-year target marker such as FY / fiscal year / full-year; a bare year does not prove fiscal-period comparability. Any interim marker such as Q1–Q4, quarter, H1/H2, six months, nine months or YTD wins over an FY token in the same evidence and keeps the promise EVIDENCE_ONLY. Interim/quarterly targets, incompatible fiscal periods, adjusted/non-GAAP basis, management-defined FCF, retrospective guidance, later restatements, ambiguous comparator years, incompatible units/ranges or other unresolved definitions remain EVIDENCE_ONLY / non-comparable rather than receiving a false MET/MISS.
+The Management scan is background-only and bounded. It reads the primary 10-K / 10-Q / 8-K document and, for 8-K filings, also inspects a bounded set of relevant HTML exhibits such as EX-99.1 earnings releases. Successful filing scans carry a parser/scan version. A scan completed by an older parser does not permanently block a newer parser from rereading the filing, and an explicit CONTROL **Scan SEC guidance** action forces a reread. Normal SEC ingest also queues a deduplicated Management scan so guidance capture is part of the ordinary evidence-refresh path.
+
+The automatic parser preserves both numeric and qualitative forward guidance. Current numeric coverage includes Revenue, Revenue Growth, Gross Margin, Operating Margin, Net Margin, canonical FCF when its CFO-minus-CapEx definition is explicit, and diluted EPS. Common decline wording is sign-aware. Qualitative statements such as low/mid/high-single-digit or roughly-flat guidance remain visible as EVIDENCE_ONLY; the system never invents a numeric target from them.
+
+Promise scoring is comparability-first. Every stored promise preserves source/date, filing/accession, source document/exhibit, metric, target period, basis/definition, comparability and status. PENDING may become MET or MISS only when the target and actual are economically comparable. Automatic scoring requires an explicit full-year target marker such as FY / fiscal year / full-year; a bare year does not prove fiscal-period comparability. Any interim marker such as Q1–Q4, quarter, H1/H2, six months, nine months or YTD wins over an FY token in the same evidence and keeps the promise EVIDENCE_ONLY.
+
+Management Delivery uses the **earliest publicly filed annual actual** for the target fiscal year, reconstructed from SEC Companyfacts and stored separately from the current normalized statement view. A later comparative restatement may improve current Fundamentals, but it must not retroactively rewrite whether management originally met or missed a promise. GAAP diluted EPS uses the directly reported SEC EPS fact; it is not recreated from net income divided by a later share count.
+
+Interim/quarterly targets, incompatible fiscal periods, adjusted/non-GAAP basis, unresolved EPS basis, management-defined FCF, retrospective guidance, later/current actuals whose original point-in-time value cannot be verified, ambiguous comparator years, incompatible units/ranges or other unresolved definitions remain EVIDENCE_ONLY / non-comparable rather than receiving a false MET/MISS.
+
+Automatic source scope is intentionally limited to SEC-filed/furnished evidence. A conference-call statement that was not filed or furnished to the SEC is not silently scraped or fabricated into this ledger; CONTROL can add a sourced promise manually until a rights-cleared transcript provider exists.
 
 This is accountability evidence, not an integrity/personality judgment.
 
