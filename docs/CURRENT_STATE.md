@@ -26,7 +26,7 @@
 **Main:** VERSION `0.2.10`; 0.2.10 is the accepted main baseline  
 **0.2.10 audit-closure candidate:** branch `release/0.2.10-audit-closure`, created directly from clean main `1eb92d79a1514da8d5bec53a8f72fae1eee0aa30` after the first 0.2.10 merge; this is not stacked on the original development branch  
 **Verified audit-closure CI:** run `35418011885` / #994 = completed / success at `b719c1344c7965430b87462e9ba55fd0d7b4a166`; full release suite plus dedicated stale-cache/Discovery/Validate consistency regressions passed  
-**Audit findings closed before production:** valuation-model saves now queue RECALCULATE; model-newer-than-cache valuation remains visible but is DATA_WARNING/non-decision-grade until refresh; stale Discovery labels/covered-name qualification/internal cached ranking cannot use the old gap; NOT RUN is canonical in both state and status payloads  
+**Audit findings closed before production:** valuation-model saves now queue RECALCULATE; model-newer-than-cache valuation remains visible but is DATA_WARNING/non-decision-grade until refresh; stale Discovery labels/covered-name qualification/internal cached ranking cannot use the old gap; automatic Management scoring requires explicit full-year period evidence and interim markers win over FY tokens; report exports preserve the true target-period label; NOT RUN is canonical in state/status while raw historical execution status remains separately available  
 **Release phase:** 0.2.10 is merged and verified in main; audit-closure PR/merge pending. Production remains 0.2.9. No 0.2.10 production deploy has been run.  
 
 Production and main remain separate states. Any Namecheap deployment of 0.2.10 requires a separate explicit deploy action.
