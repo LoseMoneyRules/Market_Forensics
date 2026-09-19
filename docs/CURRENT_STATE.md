@@ -46,6 +46,13 @@
 **Accepted 0.2.12 runtime merge:** `1e309fa77b864ed5ccd9831478a54fcdefe05419`.  
 **Verified final post-merge main CI:** run `35459124021` / #1095 = completed / success on `1e309fa77b864ed5ccd9831478a54fcdefe05419`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed.  
 **Main baseline for 0.2.13:** VERSION `0.2.12` at `4f4d7466433eed69d5db7785d6a15b1d4a77522e`; accepted Discovery opportunity-funnel runtime `adfd99593f6db378cf8cf99a41976a2e85c6c49d`; latest release CI #1117 is green on that runtime, and deploy #52 independently re-ran release tests plus production smoke from the later docs-sync main SHA.  
+**0.2.13 source branch:** `release/0.2.13-ui-ux-codebase-consolidation`, created from clean main `4f4d7466433eed69d5db7785d6a15b1d4a77522e`; final branch head `302260dac9003320001286481fb6c893813dd0bb`.  
+**Verified 0.2.13 branch CI:** run `35472086178` / #1166 = completed / success on final branch head; release suite, Python/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed.  
+**0.2.13 pull request:** #44 `0.2.13: UI/UX & Codebase Consolidation` = merged by squash.  
+**Verified 0.2.13 PR CI:** run `35472218120` / #1167 = completed / success on `302260dac9003320001286481fb6c893813dd0bb`; full configured release suite and both production/reporting smoke gates passed.  
+**0.2.13 merge commit:** `8b84873294cee3a4962fd4dd3eace91ef21d6e9b`.  
+**Verified 0.2.13 post-merge main CI:** run `35472279193` / #1168 = completed / success on `8b84873294cee3a4962fd4dd3eace91ef21d6e9b`; release suite, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed.  
+
 **0.2.12 production render-fix branch:** `fix/0.2.12-discovery-rejection-render`, created directly from main `6656a7941c1e2d40a87f5318303b28527de859f8`; consolidated head `c85157460f7cbc4258760816f68ac3ddfe456f0e`; same VERSION, Discovery-only rendering/normalization fix plus regression test.  
 **0.2.12 render-fix PR:** #42 `0.2.12: Fix sparse Discovery rejection rendering` = merged by squash.  
 **Verified render-fix branch CI:** run `35462668640` / #1100 = completed / success on `c85157460f7cbc4258760816f68ac3ddfe456f0e`.  
@@ -59,7 +66,7 @@
 **Verified opportunity-funnel PR CI:** run `35469153142` / #1116 = completed / success on `55f59f3fdc9099491110bfd7c72a16ade52eb281`.  
 **Accepted opportunity-funnel merge:** `adfd99593f6db378cf8cf99a41976a2e85c6c49d`.  
 **Verified opportunity-funnel post-merge main CI:** run `35469221771` / #1117 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
-**Release phase:** 0.2.13 UI/UX & codebase consolidation is in progress on `release/0.2.13-ui-ux-codebase-consolidation`, created directly from clean main `4f4d7466433eed69d5db7785d6a15b1d4a77522e`. Production remains independently verified at 0.2.12 deploy #52; 0.2.13 will not deploy automatically.  
+**Release phase:** 0.2.13 UI/UX & codebase consolidation is complete in `main`. Source branch `release/0.2.13-ui-ux-codebase-consolidation` was created directly from clean main `4f4d7466433eed69d5db7785d6a15b1d4a77522e`; PR #44 merged by squash as `8b84873294cee3a4962fd4dd3eace91ef21d6e9b`. Production remains independently verified at 0.2.12 deploy #52; 0.2.13 has NOT been deployed.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
@@ -69,7 +76,7 @@ Production and main are separately verified states. A merge to main does not imp
 
 Scope is consolidation only. No investment feature or financial-engine behavior may change.
 
-Current branch work:
+Completed consolidation:
 - one mobile navigation path; the obsolete bottom navigation has been removed;
 - the phone/tablet portrait drawer breakpoint is canonicalized so ~768 px no longer loses primary navigation;
 - Research-step toggle markup is server-rendered instead of created by a DOM rewrite;
@@ -78,11 +85,11 @@ Current branch work:
 - wide tables preserve information with controlled horizontal overflow instead of clipping;
 - touch/focus/readability rules are normalized without changing data or calculations;
 - the previously hidden duplicate Decision Brief markup/CSS is removed rather than preserved as dead UI;
-- the full historical regression suite is restored to CI collection (`test_*.py`); later release tests can no longer exist in the repository while being silently excluded.
+- CI collection now explicitly includes every still-live regression contract through 0.2.13 (0.2.0 baseline, 0.2.10 correctness, 0.2.11 Portfolio/Position Action, 0.2.12 Discovery, 0.2.5 UI, 0.2.9 Tape V2 and the 0.2.13 consolidation contract); superseded release-snapshot tests remain in the repository for forensic history but are not treated as current product contracts.
 
 Real bugs found by the cleanup:
 1. the 761–820 px range could hide the desktop sidebar before the mobile drawer controls became available;
-2. `pytest.ini` excluded regression suites added after the older 0.2.8/0.2.9 collection pattern;
+2. `pytest.ini` excluded still-live regression suites added after the older collection pattern; the active correctness suites are now collected explicitly without reviving superseded UI/release snapshots;
 3. `CURRENT_STATE.md` was stale about production: deploy #52 had already placed current 0.2.12 main on Namecheap successfully.
 
 Hard boundaries:
