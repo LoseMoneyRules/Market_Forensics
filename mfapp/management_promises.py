@@ -60,9 +60,14 @@ ORIGINAL_ACTUAL_TAGS: dict[str, tuple[str, ...]] = {
 
 def html_to_text(raw: str) -> str:
     text = re.sub(r"(?is)<script.*?>.*?</script>|<style.*?>.*?</style>", " ", raw or "")
+    # Preserve filing structure before stripping tags. Earnings-release exhibits
+    # frequently use HTML tables; flattening every tag to one space can turn the
+    # entire document into one oversized unparseable "sentence".
+    text = re.sub(r"(?is)<br\s*/?>|</(?:p|div|tr|li|h[1-6])\s*>", ". ", text)
     text = re.sub(r"(?is)<[^>]+>", " ", text)
     text = unescape(text)
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[\t\r\n ]+", " ", text)
+    text = re.sub(r"(?:\s*\.\s*){2,}", ". ", text)
     return text.strip()
 
 
@@ -300,13 +305,23 @@ def extract_promises(
         if not re.search(GUIDANCE_WORDS, sentence, re.I):
             continue
 
+        # Normalize common "$50 to $51 billion" wording into a form where each
+        # endpoint carries its unit, without changing the stored evidence text.
+        parse_sentence = re.sub(
+            r"(\$\s*\d+(?:\.\d+)?)\s*(to|-|–|and)\s*(\$?\s*\d+(?:\.\d+)?)\s*"
+            r"(billion|million|bn|mm|m|thousand|k)\b",
+            lambda m: f"{m.group(1)} {m.group(4)} {m.group(2)} {m.group(3)} {m.group(4)}",
+            sentence,
+            flags=re.I,
+        )
+
         target_year, period_type, target_period, period_issue = _target_period(sentence)
         if not target_period:
             target_period = "UNRESOLVED"
 
         found_numeric = False
         for metric, pattern, unit in specs:
-            match = re.search(pattern, sentence, flags=re.I)
+            match = re.search(pattern, parse_sentence, flags=re.I)
             if not match:
                 continue
             found_numeric = True
