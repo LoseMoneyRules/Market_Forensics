@@ -151,7 +151,7 @@ def _auto_research_sections(
         evidence_rows,
         {"bear": result["scenarios"]["BEAR"].get("fair_value"), "base": result["scenarios"]["BASE"].get("fair_value"), "bull": result["scenarios"]["BULL"].get("fair_value"), "expected_value": result.get("expected_value"), "current_price": current_price},
         market_price=current_price,
-        valuation_quality=str(result.get("quality") or ""),
+        valuation_quality=str(((result.get("scenarios") or {}).get("BASE") or {}).get("quality") or result.get("quality") or ""),
         finra_summary=finra,
     )
 
