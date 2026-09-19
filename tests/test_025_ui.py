@@ -61,7 +61,8 @@ def test_025_settings_version_and_collapsed_jobs(tmp_path, monkeypatch):
     response = client.get("/settings")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert "application-version-value" in html and "v0.2.7" in html
+    assert "application-version-value" in html
+    assert f"v{Path('VERSION').read_text().strip()}" in html
     assert '<details class="panel recent-jobs">' in html
     assert "<summary class=\"recent-jobs-summary\">" in html
     assert "Click to view the job list." in html
