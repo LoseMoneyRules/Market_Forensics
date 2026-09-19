@@ -19,6 +19,7 @@ from .triangulation_engine import apply_peer_valuation_overlay, automatic_triang
 from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
+from .valuation_engine import stored_model_base_quality, valuation_is_decision_grade
 
 
 CACHE_PREFIX = "RESEARCH_CACHE_"
@@ -219,6 +220,12 @@ def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) 
     if all((coverage, security, company, research, risk, model)):
         market = latest_snapshot(security.id)
         valuation = dict(payload.get("valuation") or valuation_result(coverage))
+        if not valuation.get("base_quality"):
+            base_quality = stored_model_base_quality(model)
+            valuation["base_quality"] = base_quality
+            valuation["quality"] = valuation.get("quality") or base_quality
+            valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
+            payload["valuation"] = _jsonable(valuation)
         updated_lenses = build_decision_lenses(
             coverage=coverage,
             company=company,
