@@ -68,3 +68,35 @@ def test_0213_removed_duplicate_decision_brief_is_not_hidden_dead_ui():
     css = (ROOT / "mfapp/static/css/app.css").read_text()
     assert 'class="panel decision-brief"' not in company
     assert ".decision-brief{" not in css
+
+
+def test_0213_mobile_keeps_quote_metadata_and_contains_wide_diagnostics():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    header = (ROOT / "mfapp/templates/_company_header.html").read_text()
+    trace = (ROOT / "mfapp/templates/trace_console.html").read_text()
+
+    assert "Current price · refreshes every 5 min" in header
+    assert "data-live-price-meta" in header
+    assert ".company-actions .company-market{display:none}" not in css
+    assert ".company-market{width:100%;text-align:left}" in css
+    assert ".company-market small{max-width:none;overflow-wrap:anywhere}" in css
+    assert ".table-card,.table-wrap{width:100%;overflow-x:auto" in css
+    assert 'class="table-wrap"' in trace
+    assert ".full-table{min-width:900px}" in css
+    assert ".trace-event" not in css
+    assert ".number-format-form" not in css
+
+
+def test_0213_narrow_phone_layout_stacks_dense_controls_without_hiding_information():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    base = (ROOT / "mfapp/templates/base.html").read_text()
+
+    assert ".kpi-grid.compact{grid-template-columns:1fr}" in css
+    assert ".recent-jobs-summary{align-items:flex-start;flex-direction:column}" in css
+    assert ".discovery-list-row{grid-template-columns:1fr}" in css
+    assert ".discovery-list-action,.discovery-list-action form,.discovery-list-action .button{width:100%}" in css
+    assert ".panel-head{align-items:flex-start;flex-wrap:wrap}" in css
+    assert "max-height:calc(100dvh - 76px);overflow-y:auto" in css
+    assert "padding-bottom:max(18px,env(safe-area-inset-bottom))" in css
+    assert "preview-mode" in base
+    assert ".preview-mode .app-shell{padding-top:" in css
