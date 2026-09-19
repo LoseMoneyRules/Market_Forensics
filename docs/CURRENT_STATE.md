@@ -20,8 +20,9 @@
 **Main baseline before 0.2.10 merge:** VERSION `0.2.9` at `e8ffdd5316f44f37647314aba94950912bd55fd0`  
 **Latest verified main release CI:** run `35394852070` / #927 = completed / success for the 0.2.9 merge; the later `[skip ci]` CURRENT_STATE sync did not change runtime code  
 **0.2.10 candidate:** branch `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch is its base  
-**Verified 0.2.10 code CI before documentation/version commits:** run `35416840585` / #952 = completed / success at `52b470e34fbf59d8ad3d9508e15e0a80af217206`, including the full prior regression suite and dedicated 0.2.10 correctness tests  
-**Release phase:** 0.2.10 candidate; PR/merge pending. Production remains 0.2.9. No 0.2.10 production deploy is authorized by merge alone.  
+**Verified 0.2.10 final branch CI:** push run `35417442009` / #972 and PR run `35417444094` / #973 = completed / success at `5ce46a635c868234008beec4fa22b4cfe9100c4f`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**Pull request:** #35 `0.2.10: close correctness gaps`, open and mergeable at the verified branch head above  
+**Release phase:** 0.2.10 candidate; merge pending. Production remains 0.2.9. No 0.2.10 production deploy is authorized by merge alone.  
 **Branch:** `release/0.2.10-correctness`
 
 Production and main are separate states. The 0.2.10 release must merge and pass post-merge main CI before any explicit Namecheap deploy is considered.
@@ -38,7 +39,7 @@ Production and main are separate states. The 0.2.10 release must merge and pass 
 - PROVISIONAL_STORED_FALLBACK, PROVISIONAL_REFERENCE_FALLBACK and unresolved/mixed data states remain visible but cannot create ATTRACTIVE / EXPENSIVE, POSITIVE / NEGATIVE EDGE, LONG / SHORT READY/WATCH or value-based Discovery qualification.
 - Current market price is comparison/reference data only and cannot prove intrinsic fair value.
 - Old 0.2.9 caches are re-read against stored model quality without running providers or heavy valuation work during normal GET navigation.
-- Discovery external names continue to require intrinsic Base with at least two usable valuation methods; covered names also require decision-grade stored Base quality before local forensic gap logic can qualify them.
+- Discovery external names continue to require INTRINSIC Base with at least two usable valuation methods; covered names also require INTRINSIC stored Base quality before local forensic gap logic can qualify them. MANUAL_OVERRIDE may be decision-grade for Research, but it does not satisfy Discovery's stricter intrinsic-only rule.
 
 ### Management promises
 - Automatic guidance extraction is comparability-first.
