@@ -460,6 +460,7 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
         intelligence = dict(cache.get("intelligence") or _fallback_intelligence(readiness, updating=True))
         lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
         intelligence, lenses = _fail_closed_cached_research(valuation, readiness, intelligence, lenses)
+        discovery_labels = classify_coverage(intelligence, readiness)
         pending = [gate.get("label") for gate in readiness.get("gates", []) if not gate.get("approved")]
         validation_state = str((readiness.get("validation") or {}).get("state") or "NOT RUN")
         conclusion = str(lenses.get("research_conclusion") or "DATA REVIEW")
@@ -481,7 +482,7 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
         rows.append({
             "coverage": coverage, "security": security, "company": company, "market": market,
             "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
-            "decision_lenses": lenses, "discovery_labels": list(cache.get("discovery_labels") or []),
+            "decision_lenses": lenses, "discovery_labels": discovery_labels,
             "next_action": next_action, "freshness_hours": freshness_hours,
         })
     rows.sort(key=lambda row: str(row["security"].ticker or "").upper())
