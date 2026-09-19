@@ -498,36 +498,68 @@ Research and Discovery report downloads are in-memory artifacts and must be retu
 
 ---
 
-## 6. Discovery — forensic contract retained
+## 6. Discovery — broad-universe forensic contract
 
-Discovery result contract remains **FORENSIC_FAIR_VALUE_V1**.
-Legacy pre-0.2.5 Discovery payloads are rejected.
+Discovery result contract is **BROAD_FORENSIC_DISCOVERY_V2**. Older stored Discovery payloads are rejected on read so a legacy mover/activity result cannot silently masquerade as a 0.2.12 result.
 
-Stage 1 only identifies where to investigate using cheap sources:
-- Alpaca Most Active / Movers;
-- IEX snapshot;
-- asset metadata;
-- stored Research cache.
+### Stage 0 — cached universe
 
-Fail-closed universe rules remain:
-- active/tradable operating equity;
-- major US exchange;
-- no warrants, rights, units, ETFs, ETNs, funds, blank-check/SPAC shells, preferreds or notes;
-- new Long >= $5;
-- new Short >= $10;
-- new-name volume >= 500k when available;
-- new-name dollar volume >= $50M;
-- Short must be shortable.
+The source universe is the cached Alpaca active US-equity asset catalog. Qualification is fail-closed:
+- active;
+- tradable;
+- valid ticker syntax;
+- major US exchange only: NASDAQ, NYSE, AMEX, ARCA;
+- exclude warrants, rights, units, ETFs, ETNs, funds, preferreds, note-like securities and blank-check/SPAC-shell name or symbol patterns.
 
-Stage 2 is a bounded forensic enrichment.
-External names use SEC submissions + Companyfacts, actual fiscal-year-end, SIC/company type,
-annual and quarterly filing history, and the same Market Forensics valuation engine.
+The Stage-0 universe is private Discovery material. It does not create Coverage, Research or Portfolio records.
 
-A final Long requires Base gap >= +20% and confirming Long operating evidence.
-A final Short requires Base gap <= -20%, confirming deterioration and shortability/actionability.
-Base must be INTRINSIC with at least two usable valuation methods; no market/reference fallback.
+### Stage 1 — cheap rotating screen
 
-There is no filler quota. Zero candidates is a valid and preferred result when nothing qualifies.
+Stage 1 is background-only and incremental:
+- broad-universe rotating slice: at most 240 names per run;
+- Most Active / Movers: secondary lane only, capped at 160 names;
+- already-materialized Coverage context: capped at 80 names;
+- total snapshot set is hard bounded and fetched sequentially in chunks of 60;
+- previous completed daily-bar volume/liquidity is preferred when available so an early-session run does not become activity-biased;
+- new external names still obey price/volume/dollar-liquidity floors;
+- Stage 1 performs no SEC Companyfacts deep enrichment;
+- the Stage-1 cursor advances only after usable snapshot work succeeds, so failed runs do not silently skip universe slices.
+
+### Stage 2 — bounded forensic enrichment
+
+Stage 2 deeply enriches at most 8 finalists per run. Selection deliberately reserves capacity for quiet liquid broad-universe names so current Most Active/Movers cannot monopolize the SEC budget.
+
+For external finalists:
+- SEC ticker map is fetched at most once per run;
+- submissions and Companyfacts are called sequentially only for the bounded finalists;
+- actual fiscal-year-end and filed-period integrity are respected;
+- current TTM and comparable prior TTM require four coherent fiscal quarters;
+- the canonical valuation_engine is reused;
+- allow_reference_fallback=False;
+- Base quality must be INTRINSIC;
+- at least two canonical valuation methods must be valid.
+
+Final Long:
+- Base gap >= +20%;
+- confirming filed operating evidence.
+
+Final Short:
+- Base gap <= -20%;
+- confirming deterioration;
+- current shortability/actionability.
+
+No raw price move, activity rank or hidden composite score can create a final candidate. Zero candidates is a valid successful run.
+
+Final ranking is auditable and lexicographic:
+1. priority tier;
+2. absolute intrinsic Base gap;
+3. valuation-method count;
+4. operating-confirmation strength;
+5. ticker.
+
+Candidate output exposes Price, Bear/Base/Bull when available, Base gap, valuation quality, method count, operating confirmation, LONG/SHORT direction, why selected, invalidation, freshness and warnings.
+
+Normal GET /discovery is provider-free and reads stored job/cache state. Stage counts, exclusions, provider-call counts and job status are materialized in the completed result. Promote remains explicit; ticker validation runs again before persistence.
 
 ---
 
@@ -644,27 +676,34 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 
 ## 11. Merge / deploy state
 
-**Current phase:** production is 0.2.9 from successful manual deploy #45 (`35395407123`) on main commit `e8ffdd5316f44f37647314aba94950912bd55fd0`. 0.2.10 is a candidate on `release/0.2.10-correctness`; PR, merge and post-merge main CI are pending. No production deploy is part of the 0.2.10 merge workflow.
+**Current phase:** 0.2.12 is complete in main; production remains independently verified at 0.2.11 and has not been advanced to 0.2.12.
 
-CURRENT_STATE transition rule:
-- on PR/branch: document the current production baseline and candidate;
-- immediately when the release is merged to `main`: sync this file on `main` with the real merge commit and post-merge CI;
-- after any later successful Namecheap deploy: sync production version, deploy run and health separately;
-- never infer production from `main`.
+Accepted 0.2.12 release sequence:
+- source baseline: main ff4eb1e96a92610bc3ddd2c21c6e32840a016452;
+- clean branch: release/0.2.12-broad-discovery;
+- clean branch head: 4226218763c100ec71652f8dffafd4d17a4fa97c;
+- branch CI: run 35451749159 / #1076 = success;
+- PR #40 0.2.12: Broad Universe Discovery;
+- PR CI: run 35451809157 / #1077 = success;
+- squash merge: 0d6debb6461a6dd7872c55dd5655cf6e921af1c1;
+- post-merge main CI: run 35451861271 / #1078 = success;
+- final documentation sync follows on main with [skip ci] because it changes documentation only.
 
-Required 0.2.10 sequence:
+Production remains separate:
+- currently deployed version: 0.2.11;
+- last verified deploy: run 35448890411 / deploy #49;
+- verified production health: HTTP 200, status=ok, version=0.2.11, architecture=web-native, database=primary, reports=rich;
+- no 0.2.12 production deploy was triggered by branch, PR, merge or documentation sync.
 
-`0.2.9 production/main baseline verified → clean 0.2.10 branch → focused correctness changes → full tests → HOW/CURRENT_STATE/VERSION → PR CI green → merge main → post-merge main CI green → final CURRENT_STATE sync → deploy remains separate`
-
-Production health remains mandatory for any later deploy:
+For any later explicit 0.2.12 deploy, production health remains mandatory:
 - HTTP 200;
-- `status = ok`;
-- release `version` matches VERSION;
-- `architecture = web-native`;
-- `database = primary`;
-- `reports = rich`.
+- status = ok;
+- version = 0.2.12;
+- architecture = web-native;
+- database = primary;
+- reports = rich.
 
-If candidate health fails, deployment must fail/rollback rather than silently accepting a degraded runtime.
+main != production remains a permanent rule.
 
 ---
 
