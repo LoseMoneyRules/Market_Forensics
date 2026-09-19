@@ -39,9 +39,14 @@
 **Portfolio command pull request:** #39 `0.2.11: close Portfolio command layer` = merged by squash  
 **Accepted 0.2.11 runtime merge commit:** `ba5a16783763f8032e3341b2e08eae8566457fbd`  
 **Verified final post-merge main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed  
-**Main:** VERSION `0.2.12`; accepted runtime merge `0d6debb6461a6dd7872c55dd5655cf6e921af1c1`; final post-merge CI is green  
-**0.2.12 hardening branch:** `release/0.2.12-discovery-hardening`, created directly from current main `25ba14fb5f55060677cd6db77e5c721a1503649a`; VERSION remains `0.2.12` and the scope remains Discovery-only.  
-**Release phase:** 0.2.12 broad-universe runtime is already accepted in main; the same-version Discovery hardening is under verification on the clean branch above. Production remains independently verified at 0.2.11; no 0.2.12 Namecheap deploy has been triggered.  
+**0.2.12 hardening branch:** `release/0.2.12-discovery-hardening`, created directly from current main `25ba14fb5f55060677cd6db77e5c721a1503649a`; history collapsed before PR to one clean commit `405e5510eefd6c0da6c792c7bf5d4c7bbfc5501f`; VERSION remained `0.2.12` and scope remained Discovery-only.  
+**Verified 0.2.12 hardening branch CI:** push run `35458992140` / #1093 = completed / success on clean head `405e5510eefd6c0da6c792c7bf5d4c7bbfc5501f`; release suite, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed.  
+**0.2.12 hardening pull request:** #41 `0.2.12: Discovery observability and guardrails` = merged by squash.  
+**Verified 0.2.12 hardening PR CI:** pull-request run `35459077261` / #1094 = completed / success on `405e5510eefd6c0da6c792c7bf5d4c7bbfc5501f`; full release suite and both smoke gates passed.  
+**Accepted 0.2.12 runtime merge:** `1e309fa77b864ed5ccd9831478a54fcdefe05419`.  
+**Verified final post-merge main CI:** run `35459124021` / #1095 = completed / success on `1e309fa77b864ed5ccd9831478a54fcdefe05419`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed.  
+**Main:** VERSION `0.2.12`; accepted runtime merge `1e309fa77b864ed5ccd9831478a54fcdefe05419`; final post-merge CI is green.  
+**Release phase:** 0.2.12 including same-version Discovery hardening is complete in main. Production remains independently verified at 0.2.11; no 0.2.12 Namecheap deploy has been triggered.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
@@ -687,14 +692,22 @@ The release is blocked by a broken capability even if its page returns HTTP 200.
 **Current phase:** 0.2.12 is complete in main; production remains independently verified at 0.2.11 and has not been advanced to 0.2.12.
 
 Accepted 0.2.12 release sequence:
-- source baseline: main ff4eb1e96a92610bc3ddd2c21c6e32840a016452;
-- clean branch: release/0.2.12-broad-discovery;
-- clean branch head: 4226218763c100ec71652f8dffafd4d17a4fa97c;
-- branch CI: run 35451749159 / #1076 = success;
+- original broad-universe source baseline: main ff4eb1e96a92610bc3ddd2c21c6e32840a016452;
+- original clean branch: release/0.2.12-broad-discovery;
+- original clean branch head: 4226218763c100ec71652f8dffafd4d17a4fa97c;
+- original branch CI: run 35451749159 / #1076 = success;
 - PR #40 0.2.12: Broad Universe Discovery;
-- PR CI: run 35451809157 / #1077 = success;
-- squash merge: 0d6debb6461a6dd7872c55dd5655cf6e921af1c1;
-- post-merge main CI: run 35451861271 / #1078 = success;
+- original PR CI: run 35451809157 / #1077 = success;
+- original squash merge: 0d6debb6461a6dd7872c55dd5655cf6e921af1c1;
+- original post-merge main CI: run 35451861271 / #1078 = success;
+- hardening source baseline: main 25ba14fb5f55060677cd6db77e5c721a1503649a;
+- hardening clean branch: release/0.2.12-discovery-hardening;
+- hardening clean branch head: 405e5510eefd6c0da6c792c7bf5d4c7bbfc5501f;
+- hardening branch CI: run 35458992140 / #1093 = success;
+- PR #41 0.2.12: Discovery observability and guardrails;
+- hardening PR CI: run 35459077261 / #1094 = success;
+- final same-version squash merge: 1e309fa77b864ed5ccd9831478a54fcdefe05419;
+- final post-merge main CI: run 35459124021 / #1095 = success;
 - final documentation sync follows on main with [skip ci] because it changes documentation only.
 
 Production remains separate:
