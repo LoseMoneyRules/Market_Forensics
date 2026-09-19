@@ -76,7 +76,7 @@ def test_025_command_center_compact_contract():
     assert 'class="coverage-fresh-col"' in html
     assert '<th class="coverage-manage-col">Manage</th>' in html
     assert ".coverage-table .coverage-number-col,.coverage-table .coverage-fresh-col{width:1%;white-space:nowrap" in css
-    assert ".coverage-table .coverage-manage-col{width:48px;max-width:48px" in css
+    assert ".coverage-table .coverage-manage-col{width:62px;min-width:62px" in css
     note = html.split('class="command-table-note">', 1)[1].split("</p>", 1)[0]
     assert "<strong>" not in note and "<b>" not in note
     assert "Process = approved Research gates." in note
