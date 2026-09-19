@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .core_models import Coverage, Security, ValuationModel
@@ -141,6 +142,72 @@ def _active_coverage_tickers(user_id: int) -> set[str]:
     }
 
 
+def _discovery_health(universe: dict[str, Any], stage1: dict[str, Any]) -> dict[str, Any]:
+    flags: list[str] = []
+    severity = "OK"
+    current = int(universe.get("member_count") or 0)
+    previous = int(universe.get("previous_member_count") or 0)
+    if not current:
+        severity = "CRITICAL"
+        flags.append("Eligible Stage 0 universe is empty.")
+    if universe.get("stale_cache"):
+        severity = "WARN" if severity == "OK" else severity
+        flags.append("Stage 0 is using stale cached universe data.")
+    if previous and current < int(previous * 0.70):
+        severity = "CRITICAL"
+        flags.append(f"Stage 0 universe fell from {previous} to {current} names (>30% drop).")
+
+    requested = int(stage1.get("snapshot_requested_count") or 0)
+    received = int(stage1.get("snapshot_received_count") or 0)
+    snapshot_pct = (received / requested * 100.0) if requested else 0.0
+    if requested >= 20 and snapshot_pct < 75.0:
+        severity = "WARN" if severity == "OK" else severity
+        flags.append(f"Only {received}/{requested} requested market snapshots were returned.")
+
+    exclusions = dict(stage1.get("excluded_breakdown") or {})
+    total_stage1_rejected = sum(int(v or 0) for v in exclusions.values())
+    if total_stage1_rejected >= 20 and exclusions:
+        dominant_reason, dominant_count = max(exclusions.items(), key=lambda item: int(item[1] or 0))
+        dominant_pct = int(dominant_count or 0) / total_stage1_rejected * 100.0
+        if dominant_pct >= 90.0:
+            severity = "WARN" if severity == "OK" else severity
+            flags.append(f"Stage 1 exclusions are unusually concentrated: {dominant_reason} = {dominant_pct:.0f}%.")
+
+    return {
+        "status": severity,
+        "flags": flags,
+        "stage0_count": current,
+        "previous_stage0_count": previous or None,
+        "snapshot_requested_count": requested,
+        "snapshot_received_count": received,
+        "snapshot_success_pct": round(snapshot_pct, 1),
+    }
+
+
+def _scan_cadence(health: dict[str, Any], coverage_progress: dict[str, Any]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    pct_30d = _n(coverage_progress.get("pct_30d")) or 0.0
+    health_status = str(health.get("status") or "OK")
+    if health_status == "CRITICAL":
+        days = 1
+        reason = "Re-run tomorrow because the last universe/provider health check found a critical anomaly."
+    elif health_status == "WARN":
+        days = 3
+        reason = "Re-run in about 3 days because the last universe/provider health check needs confirmation."
+    elif pct_30d < 25.0:
+        days = 3
+        reason = "Run every ~3 days until the rotating broad-universe baseline has reasonable recent coverage."
+    else:
+        days = 7
+        reason = "Weekly is the normal cadence once broad-universe coverage is established."
+    return {
+        "recommended_interval_days": days,
+        "next_due_at": (now + timedelta(days=days)).isoformat(timespec="seconds"),
+        "reason": reason,
+        "rule": "Sooner after a failed/partial scan; otherwise build breadth first, then weekly.",
+    }
+
+
 def _select_stage2_finalists(
     rows: list[dict[str, Any]],
     local_context: dict[str, dict[str, Any]],
@@ -266,8 +333,10 @@ def market_scan(user_id: int) -> dict[str, Any]:
     local_context = _coverage_context_map(user_id, symbols)
     finalists = _select_stage2_finalists(stage1_rows, local_context)
 
+    rejection_log: list[dict[str, Any]] = []
     forensic_raw = enrich_forensic_candidates(
         user_id, finalists, local_context, errors, provider_calls, limit=FORENSIC_ENRICH_LIMIT,
+        rejection_log=rejection_log,
     )
     if isinstance(forensic_raw, tuple):
         forensic, stage2_excluded = forensic_raw
@@ -276,25 +345,51 @@ def market_scan(user_id: int) -> dict[str, Any]:
     excluded.update(stage2_excluded)
 
     candidates: list[dict[str, Any]] = []
+
+    def reject_final(symbol: str, reason: str, detail: str = "", evidence: dict[str, Any] | None = None) -> None:
+        if len(rejection_log) >= 24:
+            return
+        evidence = evidence or {}
+        rejection_log.append({
+            "ticker": symbol,
+            "stage": "FINAL QUALIFICATION",
+            "reason": reason,
+            "detail": detail,
+            "base": _n(evidence.get("base")),
+            "base_gap_pct": _n(evidence.get("gap_pct")),
+            "quality": str(evidence.get("quality") or ""),
+            "valuation_methods": int(evidence.get("valuation_methods") or 0),
+        })
+
     finalist_map = {str(row.get("ticker") or "").upper(): row for row in finalists}
     for symbol, item in finalist_map.items():
         evidence = dict(forensic.get(symbol) or {})
         if not evidence:
             if symbol not in forensic:
                 excluded["NO FORENSIC FAIR VALUE / DATA"] += 1
+                if not any(row.get("ticker") == symbol for row in rejection_log):
+                    reject_final(symbol, "NO FORENSIC FAIR VALUE / DATA")
             continue
 
+        basis_review = [str(x) for x in evidence.get("corporate_action_review") or [] if x]
+        if basis_review:
+            excluded["CORPORATE ACTION / BASIS REVIEW"] += 1
+            reject_final(symbol, "CORPORATE ACTION / BASIS REVIEW", " ".join(basis_review), evidence)
+            continue
         if str(evidence.get("quality") or "").upper() != "INTRINSIC":
             excluded["BASE QUALITY NOT INTRINSIC"] += 1
+            reject_final(symbol, "BASE QUALITY NOT INTRINSIC", evidence=evidence)
             continue
         methods = int(evidence.get("valuation_methods") or 0)
         if methods < 2:
             excluded["LESS THAN 2 VALUATION METHODS"] += 1
+            reject_final(symbol, "LESS THAN 2 VALUATION METHODS", evidence=evidence)
             continue
 
         decision = forensic_side(evidence)
         if decision is None:
             excluded["FAIR VALUE / OPERATIONS NOT ALIGNED"] += 1
+            reject_final(symbol, "FAIR VALUE / OPERATIONS NOT ALIGNED", evidence=evidence)
             continue
         side, priority, forensic_score = decision
 
@@ -303,12 +398,15 @@ def market_scan(user_id: int) -> dict[str, Any]:
         fair = _n(evidence.get("base"))
         if side == "LONG" and (gap is None or gap < 20.0):
             excluded["LONG GAP BELOW +20%"] += 1
+            reject_final(symbol, "LONG GAP BELOW +20%", evidence=evidence)
             continue
         if side == "SHORT" and (gap is None or gap > -20.0):
             excluded["SHORT GAP ABOVE -20%"] += 1
+            reject_final(symbol, "SHORT GAP ABOVE -20%", evidence=evidence)
             continue
         if side == "SHORT" and (price is None or price < MIN_SHORT_PRICE or not item.get("shortable")):
             excluded["SHORT NOT ACTIONABLE"] += 1
+            reject_final(symbol, "SHORT NOT ACTIONABLE", evidence=evidence)
             continue
 
         operating_signals = [
@@ -317,6 +415,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
         ][:4]
         if not operating_signals:
             excluded["NO CONFIRMING OPERATING SIGNAL"] += 1
+            reject_final(symbol, "NO CONFIRMING OPERATING SIGNAL", evidence=evidence)
             continue
 
         warning_parts = [str(x) for x in evidence.get("warnings") or [] if x]
@@ -358,6 +457,13 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "data_freshness": evidence.get("data_freshness"),
             "market_freshness": item.get("snapshot_as_of"),
             "materialized_at": evidence.get("materialized_at"),
+            "freshness": {
+                "market": item.get("snapshot_as_of"),
+                "fundamentals": evidence.get("data_freshness"),
+                "valuation": evidence.get("materialized_at"),
+                "universe": universe.get("generated_at"),
+            },
+            "corporate_action_review": basis_review,
             "warning": " ".join(warning_parts),
             "known_context": context,
             "in_coverage": bool(context),
@@ -375,6 +481,10 @@ def market_scan(user_id: int) -> dict[str, Any]:
     long_candidates = [row for row in candidates if row["research_side"] == "LONG"][:MAX_PER_SIDE]
     short_candidates = [row for row in candidates if row["research_side"] == "SHORT"][:MAX_PER_SIDE]
     final = long_candidates + short_candidates
+
+    health = _discovery_health(universe, stage1)
+    coverage_progress = dict(stage1.get("coverage_progress") or {})
+    cadence = _scan_cadence(health, coverage_progress)
 
     stage0_excluded = dict(universe.get("excluded_breakdown") or {})
     stage1_excluded = dict(stage1.get("excluded_breakdown") or {})
@@ -402,6 +512,11 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "stage1_activity_count": int(stage1.get("activity_count") or 0),
         "stage1_cursor_start": int(stage1.get("cursor_start") or 0),
         "stage1_cursor_end": int(stage1.get("cursor_end") or 0),
+        "stage1_snapshot_requested_count": int(stage1.get("snapshot_requested_count") or 0),
+        "stage1_snapshot_received_count": int(stage1.get("snapshot_received_count") or 0),
+        "coverage_progress": coverage_progress,
+        "universe_health": health,
+        "scan_cadence": cadence,
         "stage2_selected_count": len(finalists),
         "stage2_enriched_count": len(forensic),
         "candidate_count": len(final),
@@ -412,6 +527,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "p2_count": sum(1 for row in final if row.get("priority") == "P2"),
         "excluded_count": sum(combined_excluded.values()),
         "excluded_breakdown": dict(combined_excluded),
+        "rejection_log": rejection_log,
         "provider_calls": dict(provider_calls),
         "provider_call_total": sum(provider_calls.values()),
         "guardrails": {

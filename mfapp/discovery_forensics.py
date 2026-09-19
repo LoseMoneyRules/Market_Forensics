@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
@@ -242,6 +242,41 @@ def _operating_snapshot(current: dict[str, Any] | None, prior: dict[str, Any] | 
     }
 
 
+def _basis_review_flags(
+    current: dict[str, Any] | None,
+    prior: dict[str, Any] | None,
+    annual: list[dict[str, Any]] | None = None,
+    submission: dict[str, Any] | None = None,
+) -> list[str]:
+    """Conservative pre-candidate guard for split/listing/share-basis discontinuities."""
+    current = current or {}
+    prior = prior or {}
+    flags: list[str] = []
+    current_shares = _num(current.get("shares_outstanding")) or _num(current.get("diluted_shares"))
+    prior_shares = _num(prior.get("shares_outstanding")) or _num(prior.get("diluted_shares"))
+    if current_shares not in (None, 0) and prior_shares not in (None, 0):
+        ratio = current_shares / prior_shares
+        if ratio >= 1.5 or ratio <= (2.0 / 3.0):
+            flags.append(f"Share-count basis changed {(ratio - 1.0) * 100.0:+.0f}% YoY; split/issuance/buyback basis needs review.")
+    if annual is not None and len(annual) < 3:
+        flags.append("Short filed history (<3 annual periods); recent listing/reorganization basis needs review.")
+
+    recent = dict(((submission or {}).get("filings") or {}).get("recent") or {})
+    forms = list(recent.get("form") or [])
+    dates = list(recent.get("filingDate") or [])
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=550)
+    for form, filing_date in zip(forms, dates):
+        if str(form or "").upper() not in {"S-1", "S-1/A", "F-1", "F-1/A", "10-12B", "10-12G"}:
+            continue
+        try:
+            if date.fromisoformat(str(filing_date)[:10]) >= cutoff:
+                flags.append(f"Recent registration/listing filing {str(form).upper()} ({str(filing_date)[:10]}); price/share basis needs review.")
+                break
+        except Exception:
+            continue
+    return flags
+
+
 def _signals(snapshot: dict[str, Any], day_move: float | None) -> tuple[list[dict[str, Any]], int, int]:
     signals: list[dict[str, Any]] = []
     long_score = short_score = 0
@@ -370,6 +405,7 @@ def _local_forensics(
     company_id = int(context.get("company_id") or 0)
     if not company_id:
         return None, "LOCAL CONTEXT MISSING"
+    annual = list(reversed(annual_rows(company_id, 8)))
     quarters = list(reversed(quarterly_rows(company_id, 12)))
     current = _ttm(quarters, 0)
     prior = _ttm(quarters, 4)
@@ -403,6 +439,7 @@ def _local_forensics(
         "data_freshness": current.get("period_end"),
         "materialized_at": context.get("cache_generated_at"),
         "warnings": list(stored_valuation.get("warnings") or []),
+        "corporate_action_review": _basis_review_flags(current, prior, annual),
     }, ""
 
 def _external_forensics(
@@ -457,6 +494,7 @@ def _external_forensics(
         "data_freshness": current.get("period_end"),
         "materialized_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
         "warnings": list(valuation.get("warnings") or []),
+        "corporate_action_review": _basis_review_flags(current, prior, annual, submission),
     }, ""
 
 def enrich_forensic_candidates(
@@ -467,6 +505,7 @@ def enrich_forensic_candidates(
     provider_calls: dict[str, int] | None = None,
     *,
     limit: int = FORENSIC_ENRICH_LIMIT,
+    rejection_log: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
     """Stage 2: enrich exactly the bounded Stage-1 finalists.
 
@@ -479,9 +518,17 @@ def enrich_forensic_candidates(
     known = [row for row in selected if local_context.get(str(row.get("ticker") or "").upper())]
     unknown = [row for row in selected if not local_context.get(str(row.get("ticker") or "").upper())]
     diagnostics: dict[str, int] = {}
+    rejection_log = rejection_log if rejection_log is not None else []
 
-    def reject(reason: str) -> None:
+    def reject(symbol: str, reason: str, detail: str = "") -> None:
         diagnostics[reason] = diagnostics.get(reason, 0) + 1
+        if len(rejection_log) < 24:
+            rejection_log.append({
+                "ticker": str(symbol or "").upper(),
+                "stage": "STAGE2 ENRICHMENT",
+                "reason": reason,
+                "detail": detail,
+            })
 
     headers = _sec_headers(user_id)
     ticker_map: dict[str, dict[str, str]] = {}
@@ -499,26 +546,26 @@ def enrich_forensic_candidates(
         symbol = str(row.get("ticker") or "").upper()
         price = _num(row.get("price"))
         if price is None:
-            reject("PRICE UNKNOWN")
+            reject(symbol, "PRICE UNKNOWN")
             continue
         result, reason = _local_forensics(local_context.get(symbol) or {}, price, _num(row.get("move_pct")))
         if result:
             out[symbol] = result
         else:
-            reject(reason or "LOCAL FORENSIC DATA INSUFFICIENT")
+            reject(symbol, reason or "LOCAL FORENSIC DATA INSUFFICIENT")
 
     for row in unknown:
         symbol = str(row.get("ticker") or "").upper()
         price = _num(row.get("price"))
         meta = ticker_map.get(symbol)
         if price is None:
-            reject("PRICE UNKNOWN")
+            reject(symbol, "PRICE UNKNOWN")
             continue
         if not headers:
-            reject("SEC NOT CONFIGURED")
+            reject(symbol, "SEC NOT CONFIGURED")
             continue
         if not meta:
-            reject("SEC TICKER UNRESOLVED")
+            reject(symbol, "SEC TICKER UNRESOLVED")
             continue
         try:
             result, reason = _external_forensics(
@@ -526,13 +573,13 @@ def enrich_forensic_candidates(
             )
         except Exception as exc:
             errors.append(f"{symbol} forensic enrichment: {type(exc).__name__}")
-            reject("SEC ENRICHMENT ERROR")
+            reject(symbol, "SEC ENRICHMENT ERROR")
             continue
         if result:
             result["sec_name"] = meta.get("name") or symbol
             out[symbol] = result
         else:
-            reject(reason or "FORENSIC DATA INSUFFICIENT")
+            reject(symbol, reason or "FORENSIC DATA INSUFFICIENT")
     return out, diagnostics
 
 def forensic_side(result: dict[str, Any]) -> tuple[str, str, int] | None:
@@ -552,5 +599,5 @@ def forensic_side(result: dict[str, Any]) -> tuple[str, str, int] | None:
 
 __all__ = [
     "FORENSIC_EDGE_PCT", "FORENSIC_ENRICH_LIMIT", "FORENSIC_ENRICH_PER_SIDE",
-    "enrich_forensic_candidates", "forensic_side",
+    "enrich_forensic_candidates", "forensic_side", "_basis_review_flags",
 ]

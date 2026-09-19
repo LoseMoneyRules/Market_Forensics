@@ -12,6 +12,7 @@ from .models import UserPreference
 
 STAGE0_CACHE_KEY = "discovery_stage0_v2"
 STAGE0_CURSOR_KEY = "discovery_stage0_cursor_v2"
+STAGE1_SEEN_KEY = "discovery_stage1_seen_v1"
 STAGE0_CACHE_HOURS = 24
 STAGE1_BATCH_SIZE = 240
 STAGE1_ACTIVITY_LIMIT = 160
@@ -155,6 +156,7 @@ def stage0_universe(
                 continue
             members.append(_compact_asset(raw or {}))
         members.sort(key=lambda row: row["ticker"])
+        previous_member_count = int(cached.get("member_count") or 0)
         payload = {
             "contract": "BROAD_US_OPERATING_EQUITY_V1",
             "generated_at": _iso(),
@@ -166,6 +168,9 @@ def stage0_universe(
             "excluded_breakdown": dict(excluded),
             "cache_hours": STAGE0_CACHE_HOURS,
             "cache_hit": False,
+            "previous_member_count": previous_member_count or None,
+            "previous_generated_at": cached.get("generated_at"),
+            "stale_cache": False,
         }
         _save_preference(user_id, STAGE0_CACHE_KEY, payload)
         return payload
@@ -187,6 +192,9 @@ def stage0_universe(
             "excluded_breakdown": {},
             "cache_hours": STAGE0_CACHE_HOURS,
             "cache_hit": False,
+            "previous_member_count": int(cached.get("member_count") or 0) or None,
+            "previous_generated_at": cached.get("generated_at"),
+            "stale_cache": False,
         }
 
 
@@ -299,6 +307,57 @@ def _snapshot_map(
     return out
 
 
+def _stage1_coverage_progress(
+    user_id: int,
+    universe: dict[str, Any],
+    reviewed_symbols: set[str],
+) -> dict[str, Any]:
+    """Track how much of the broad universe was actually touched recently."""
+    members = {
+        str(row.get("ticker") or "").upper()
+        for row in list(universe.get("members") or [])
+        if row.get("ticker")
+    }
+    state = _preference(user_id, STAGE1_SEEN_KEY)
+    seen = dict(state.get("seen") or {}) if isinstance(state.get("seen") or {}, dict) else {}
+    now = _utcnow()
+    now_iso = _iso(now)
+
+    # Keep the persisted map bounded to the current eligible universe and only
+    # stamp names for which Stage 1 actually received market data.
+    seen = {ticker: stamp for ticker, stamp in seen.items() if ticker in members}
+    for ticker in reviewed_symbols:
+        if ticker in members:
+            seen[ticker] = now_iso
+    _save_preference(user_id, STAGE1_SEEN_KEY, {
+        "seen": seen,
+        "updated_at": now_iso,
+        "universe_generated_at": universe.get("generated_at"),
+    })
+
+    def count_recent(days: int) -> int:
+        cutoff = now - timedelta(days=days)
+        total = 0
+        for stamp in seen.values():
+            parsed = _parse_dt(stamp)
+            if parsed and parsed >= cutoff:
+                total += 1
+        return total
+
+    universe_size = len(members)
+    seen_7d = count_recent(7)
+    seen_30d = count_recent(30)
+    return {
+        "universe_size": universe_size,
+        "seen_7d": seen_7d,
+        "seen_30d": seen_30d,
+        "pct_7d": round((seen_7d / universe_size) * 100.0, 1) if universe_size else 0.0,
+        "pct_30d": round((seen_30d / universe_size) * 100.0, 1) if universe_size else 0.0,
+        "estimated_full_rotation_runs": ((universe_size + STAGE1_BATCH_SIZE - 1) // STAGE1_BATCH_SIZE) if universe_size else 0,
+        "tracked_at": now_iso,
+    }
+
+
 def stage1_screen(
     user_id: int,
     headers: dict[str, str],
@@ -322,6 +381,8 @@ def stage1_screen(
             "rows": [], "scanned_count": 0, "qualified_count": 0,
             "cursor_start": 0, "cursor_end": 0, "broad_rotation_count": 0,
             "activity_count": 0, "excluded_breakdown": {},
+            "snapshot_requested_count": 0, "snapshot_received_count": 0,
+            "coverage_progress": {"universe_size": 0, "seen_7d": 0, "seen_30d": 0, "pct_7d": 0.0, "pct_30d": 0.0, "estimated_full_rotation_runs": 0},
         }
 
     by_symbol = {str(row.get("ticker") or "").upper(): dict(row) for row in members if row.get("ticker")}
@@ -429,6 +490,16 @@ def stage1_screen(
     else:
         cursor_end = cursor_start
 
+    reviewed_rotation = {
+        str(row.get("ticker") or "").upper()
+        for row in rotation
+        if str(row.get("ticker") or "").upper() in snapshots
+    }
+    # A failed snapshot run must not erase previously accumulated breadth history.
+    # Passing an empty reviewed set preserves history while still leaving the
+    # broad-universe cursor unchanged.
+    coverage_progress = _stage1_coverage_progress(user_id, universe, reviewed_rotation if snapshots else set())
+
     return {
         "rows": rows,
         "scanned_count": len(symbols),
@@ -439,6 +510,9 @@ def stage1_screen(
         "quiet_broad_count": sum(1 for row in rows if "BROAD_ROTATION" in row.get("stage1_lanes", []) and "MARKET_ACTIVITY" not in row.get("stage1_lanes", [])),
         "activity_count": sum(1 for row in rows if "MARKET_ACTIVITY" in row.get("stage1_lanes", [])),
         "excluded_breakdown": dict(excluded),
+        "snapshot_requested_count": len(symbols),
+        "snapshot_received_count": len(snapshots),
+        "coverage_progress": coverage_progress,
         "batch_size": STAGE1_BATCH_SIZE,
         "activity_limit": STAGE1_ACTIVITY_LIMIT,
         "coverage_limit": STAGE1_COVERAGE_LIMIT,
@@ -448,6 +522,6 @@ def stage1_screen(
 
 __all__ = [
     "MAJOR_EXCHANGES", "STAGE0_CACHE_HOURS", "STAGE1_BATCH_SIZE",
-    "STAGE1_ACTIVITY_LIMIT", "STAGE1_COVERAGE_LIMIT", "SNAPSHOT_CHUNK_SIZE",
+    "STAGE1_ACTIVITY_LIMIT", "STAGE1_COVERAGE_LIMIT", "SNAPSHOT_CHUNK_SIZE", "STAGE1_SEEN_KEY",
     "stage0_universe", "stage1_screen", "_asset_is_operating_equity",
 ]
