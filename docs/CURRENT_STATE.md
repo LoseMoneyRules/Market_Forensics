@@ -15,8 +15,8 @@
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.10 on Namecheap — audit-closure runtime LIVE  
-**Verified production baseline:** deploy run `35418234654` / deploy #47 = completed / success from main commit `b447d1ce0f1af71536ac2cae5bb67ec4a5223f0d`; pre-upload release tests and production-minimal smoke passed; `_reporting_vendor` rebuild/staging were skipped because dependencies were unchanged and its backup exclusion preflight passed; upload/restart, candidate production health, cleanup and post-cleanup health all completed successfully  
+**Production:** 0.2.10 on Namecheap — Management autofill repair LIVE  
+**Verified production baseline:** deploy run `35418234654` / deploy #47 attempt 2 = completed / success; the rerun metadata retains the original workflow event SHA, but the deployment log proves `Checkout main` resolved to accepted main commit `250b8092d66495533d3406f8bd711725c0ffdd8d`; pre-upload release tests and production-minimal smoke passed; persistent `_reporting_vendor` was a cache hit with `MF_REPORTING_VENDOR_UPLOAD=0`, rebuild/staging were skipped and backup exclusion passed; upload/restart, candidate production health, cleanup and post-cleanup health all completed successfully  
 **Main baseline before 0.2.10 merge:** VERSION `0.2.9` at `e8ffdd5316f44f37647314aba94950912bd55fd0`  
 **0.2.10 source branch:** `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch was its base  
 **Verified 0.2.10 final branch CI:** push run `35417497708` / #974 and PR run `35417499925` / #975 = completed / success at `ed8a0c726975ebe886de30ea6bf062b19c7bcb3b`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
@@ -30,10 +30,14 @@
 **Audit-closure pull request:** #36 `0.2.10: close Local-parity audit findings` = merged  
 **Audit-closure merge commit:** `cfc11aa1a57e007604593243708776800b08e6dd`  
 **Latest verified main release CI:** run `35418175253` / #1007 = completed / success on `cfc11aa1a57e007604593243708776800b08e6dd`; full regression suite and all production/reporting smoke checks passed  
-**Main:** VERSION `0.2.10`; audit-closure code is the accepted main baseline  
-**Release phase:** 0.2.10 audit closure is merged, CI-verified and deployed to Namecheap through successful deploy #47. Main and production now contain the same accepted audit-closure runtime.  
+**Management autofill pull request:** #37 `0.2.10: repair Management SEC autofill` = merged by squash  
+**Management autofill merge commit:** `250b8092d66495533d3406f8bd711725c0ffdd8d`  
+**Verified Management autofill branch/PR CI:** push run `35419888084` / #1031 and PR run `35419980484` / #1032 = completed / success on head `715b1963041b650eae5def23db7b3e69cb0f481d`; full regression suite, dedicated Management correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**Latest verified main release CI:** run `35420028622` / #1033 = completed / success on `250b8092d66495533d3406f8bd711725c0ffdd8d`; full release suite and all production/reporting smoke checks passed  
+**Main:** VERSION `0.2.10`; Management autofill repair is the accepted main baseline  
+**Release phase:** 0.2.10 Management autofill repair is merged, main-CI verified and LIVE on Namecheap through deploy #47 attempt 2. Main and production contain the same accepted runtime code.  
 
-Production and main are separately verified states even when they are on the same release. For the current 0.2.10 closure, main CI and the explicit Namecheap deploy have both passed.
+Production and main are separately verified states even when they are on the same release. For the current 0.2.10 closure, branch/PR CI, post-merge main CI and the explicit Namecheap deploy have all passed.
 ---
 
 ## 0.2.10 release scope — correctness closure
@@ -67,7 +71,7 @@ Production and main are separately verified states even when they are on the sam
 - Parser upgrades reconcile matching automatic promises in place so corrected extraction does not leave contradictory duplicate rows.
 - Research cache, Management UI and PDF/DOCX/text exports preserve qualitative target text, source exhibit/document provenance and original-actual provenance.
 - Automatic evidence scope remains SEC-filed/furnished material; non-SEC conference-call statements are not silently scraped.
-- Production remains the previously verified 0.2.10 deploy #47 until this corrective branch is merged, main CI is green and a separate Namecheap deploy succeeds.
+- PR #37 is merged by squash at `250b8092d66495533d3406f8bd711725c0ffdd8d`; main CI #1033 is green and deploy #47 attempt 2 is successful. The Management autofill repair is LIVE on Namecheap while VERSION remains `0.2.10`.
 
 ### Validate canonical policy
 - `mfapp/validation_policy.py` is the single threshold policy.
