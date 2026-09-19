@@ -15,7 +15,7 @@ from mfapp.extensions import db
 from mfapp.models import User
 from mfapp.readiness import research_readiness
 from mfapp.services import ensure_workspace, valuation_result
-from mfapp.validation_policy import state_for_run, validation_state
+from mfapp.validation_policy import state_for_run, validation_payload, validation_state
 from mfapp.valuation_engine import evaluate
 
 
@@ -346,6 +346,8 @@ def test_0210_management_retroactive_guidance_is_not_scored(tmp_path, monkeypatc
 
 def test_0210_validation_policy_is_single_and_conservative():
     assert validation_state(exists=False) == "NOT RUN"
+    assert validation_payload(None)["state"] == "NOT RUN"
+    assert validation_payload(None)["status"] == "NOT RUN"
     assert validation_state(exists=True, sample_size=3, reliability=90) == "LIMITED"
     assert validation_state(exists=True, sample_size=5, reliability=64.99) == "LIMITED"
     assert validation_state(exists=True, sample_size=5, reliability=65) == "VALIDATED"
