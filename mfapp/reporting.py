@@ -1106,14 +1106,36 @@ def render_pdf_safe(data: dict[str, Any]) -> BytesIO:
 
 def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
     branding = dict(branding or {})
+    candidates = list(scan.get("candidates") or [])[:60]
+
+    def _number(value, digits=2):
+        try:
+            return f"{float(value):,.{digits}f}"
+        except (TypeError, ValueError, ArithmeticError):
+            return "—"
+
+    def _gap(value):
+        try:
+            return f"{float(value):+.1f}%"
+        except (TypeError, ValueError, ArithmeticError):
+            return "—"
+
     if not _load_report_libs():
-        lines=[str(branding.get("title") or "Market Forensics")+" · Discovery",
-               "Market-wide lightweight screen · candidates require deep research before valuation or portfolio use.",""]
-        for idx,row in enumerate(list(scan.get("candidates") or [])[:60], start=1):
-            move=f"{float(row.get('move_pct')):+.1f}%" if row.get("move_pct") is not None else "—"
-            lines.append(f"{idx}. {row.get('ticker') or ''} · score {float(row.get('scan_score') or 0):.1f} · move {move} · {' · '.join(row.get('lenses') or [])}")
+        lines = [
+            str(branding.get("title") or "Market Forensics") + " · Discovery",
+            "Broad-universe staged forensic screen · final names require intrinsic Base plus filed operating confirmation.",
+            "",
+        ]
+        for idx, row in enumerate(candidates, start=1):
+            lines.append(
+                f"{idx}. {row.get('ticker') or ''} · {row.get('research_side') or 'RESEARCH'} · "
+                f"price {_number(row.get('price'))} · Base {_number(row.get('base') if row.get('base') is not None else row.get('fair_value'))} · "
+                f"gap {_gap(row.get('base_gap_pct'))} · {int(row.get('valuation_methods') or 0)} methods · "
+                f"{row.get('radar_label') or ''}"
+            )
         lines += ["", str(branding.get("footer") or "Lose Money Rules")]
         return _fallback_pdf(lines, landscape_page=True)
+
     out = BytesIO()
     doc = SimpleDocTemplate(
         out,
@@ -1128,21 +1150,33 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     if logo:
         story += [RLImage(logo, width=1.0*inch, height=.34*inch), Spacer(1,3)]
     story += [
-        Paragraph(escape(str(branding.get("title") or "Market Forensics"))+" · Discovery", styles["MFDiscTitle"]),
-        Paragraph("Market-wide lightweight screen · candidates require deep research before valuation or portfolio use.", styles["MFDiscBody"]),
+        Paragraph(escape(str(branding.get("title") or "Market Forensics")) + " · Discovery", styles["MFDiscTitle"]),
+        Paragraph("Broad-universe staged forensic screen · intrinsic Base and filed operating confirmation required.", styles["MFDiscBody"]),
     ]
-    candidates = list(scan.get("candidates") or [])[:60]
-    rows = [["#","Ticker","Score","Move","Activity","Evidence lenses"]]
-    for idx,row in enumerate(candidates, start=1):
-        move = f"{float(row.get('move_pct')):+.1f}%" if row.get("move_pct") is not None else "—"
-        activity = f"#{row.get('activity_rank')}" if row.get("activity_rank") else "—"
-        rows.append([str(idx), str(row.get("ticker") or ""), f"{float(row.get('scan_score') or 0):.1f}", move, activity, " · ".join(row.get("lenses") or [])])
-    table = Table(rows, colWidths=[.35*inch,.65*inch,.65*inch,.7*inch,.65*inch,7.25*inch], repeatRows=1)
+    rows = [["#","Ticker","Side","Price","Bear","Base","Bull","Gap","Methods","Forensic reason"]]
+    for idx, row in enumerate(candidates, start=1):
+        rows.append([
+            str(idx),
+            str(row.get("ticker") or ""),
+            str(row.get("research_side") or ""),
+            _number(row.get("price")),
+            _number(row.get("bear")),
+            _number(row.get("base") if row.get("base") is not None else row.get("fair_value")),
+            _number(row.get("bull")),
+            _gap(row.get("base_gap_pct")),
+            str(int(row.get("valuation_methods") or 0)),
+            str(row.get("radar_label") or "") + (" · " + str((row.get("forensic_signals") or [{}])[0].get("detail") or "") if row.get("forensic_signals") else ""),
+        ])
+    table = Table(
+        rows,
+        colWidths=[.28*inch,.55*inch,.52*inch,.62*inch,.60*inch,.60*inch,.60*inch,.62*inch,.55*inch,4.1*inch],
+        repeatRows=1,
+    )
     table.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),
         ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),
         ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-        ("FONTSIZE",(0,0),(-1,-1),8.8),
+        ("FONTSIZE",(0,0),(-1,-1),8.2),
         ("GRID",(0,0),(-1,-1),.25,colors.HexColor("#c7d1da")),
         ("VALIGN",(0,0),(-1,-1),"TOP"),
         ("LEFTPADDING",(0,0),(-1,-1),3),
@@ -1158,7 +1192,6 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     out.seek(0)
     return out
 
-
 def render_discovery_pdf_safe(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
     try:
         return render_discovery_pdf(scan, branding)
@@ -1167,10 +1200,13 @@ def render_discovery_pdf_safe(scan: dict[str, Any], branding: dict[str, str] | N
         lines = [str(branding.get("title") or "Market Forensics")+" · Discovery", ""]
         for idx, row in enumerate(list(scan.get("candidates") or [])[:60], start=1):
             try:
-                score = float(row.get("scan_score") or 0)
-            except (TypeError, ValueError):
-                score = 0.0
-            lines.append(f"{idx}. {row.get('ticker') or ''} · score {score:.1f} · {row.get('research_side') or 'RESEARCH'}")
+                gap = f"{float(row.get('base_gap_pct')):+.1f}%" if row.get("base_gap_pct") is not None else "—"
+            except (TypeError, ValueError, ArithmeticError):
+                gap = "—"
+            lines.append(
+                f"{idx}. {row.get('ticker') or ''} · {row.get('research_side') or 'RESEARCH'} · "
+                f"Base gap {gap} · {int(row.get('valuation_methods') or 0)} methods"
+            )
         lines += ["", str(branding.get("footer") or "Lose Money Rules")]
         return _fallback_pdf(lines, landscape_page=True)
 

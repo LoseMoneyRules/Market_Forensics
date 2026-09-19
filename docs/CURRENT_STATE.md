@@ -11,14 +11,16 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.2.11**  
+**State-Version: 0.2.12**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.10 on Namecheap; production has NOT been advanced to 0.2.11  
-**Verified production baseline:** manual deploy run `35433235128` / deploy #48 = completed / success on main event SHA `30d2e5cd2da07772235fef8c20e31e952e9fe68a`; production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.10"}`  
-**Accepted pre-0.2.11 main baseline:** `30d2e5cd2da07772235fef8c20e31e952e9fe68a` (0.2.10 runtime at `250b8092d66495533d3406f8bd711725c0ffdd8d` plus production-state documentation sync)  
-**Latest verified 0.2.10 runtime main CI:** run `35420028622` / #1033 = completed / success on `250b8092d66495533d3406f8bd711725c0ffdd8d`  
+**Production:** 0.2.11 on Namecheap; production has NOT been advanced to 0.2.12  
+**Verified production baseline:** manual deploy run `35448890411` / deploy #49 = completed / success on main event SHA `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; candidate and final production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.11"}`; persistent reporting-vendor rebuild/stage steps were skipped because dependencies were unchanged  
+**Accepted pre-0.2.12 main baseline:** `ff4eb1e96a92610bc3ddd2c21c6e32840a016452` (accepted 0.2.11 runtime `ba5a16783763f8032e3341b2e08eae8566457fbd` plus final 0.2.11 documentation sync)  
+**Latest verified 0.2.11 runtime main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`  
+**0.2.12 source branch:** `release/0.2.12-broad-discovery`, created directly from clean main `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; no old branch is its base  
+**0.2.12 scope:** Discovery only — cached broad operating-equity Stage 0, rotating cheap Stage 1, bounded canonical-valuation/filed-data Stage 2; no Research/Tape/Portfolio/Reports/Auth/Deploy/Settings/Financial-Flows redesign  
 **0.2.11 source branch:** `release/0.2.11-position-action`, created directly from clean main `30d2e5cd2da07772235fef8c20e31e952e9fe68a`; no old branch is its base  
 **0.2.11 scope:** Portfolio-owned deterministic Position Action downstream from the canonical Research Conclusion; no Research/Tape/Discovery/Valuation/deploy redesign  
 **Verified 0.2.11 branch CI:** push run `35444349076` / #1035 = completed / success on head `e6d9c8ac7b489bcfc3d670d57262e2b974a0c4d8`; the earlier branch push run `35444308195` / #1034 also completed / success during the same focused implementation  
@@ -32,10 +34,32 @@
 **Portfolio command pull request:** #39 `0.2.11: close Portfolio command layer` = merged by squash  
 **Accepted 0.2.11 runtime merge commit:** `ba5a16783763f8032e3341b2e08eae8566457fbd`  
 **Verified final post-merge main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed  
-**Main:** VERSION `0.2.11`; Position Action + Portfolio command closure at `ba5a16783763f8032e3341b2e08eae8566457fbd` is the accepted runtime baseline  
-**Release phase:** 0.2.11 is complete in main and final post-merge CI is verified green. Production intentionally remains 0.2.10; no 0.2.11 Namecheap deploy has been triggered.  
+**Main before 0.2.12 merge:** VERSION `0.2.11`; head `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; accepted runtime baseline `ba5a16783763f8032e3341b2e08eae8566457fbd`  
+**Release phase:** 0.2.12 is under focused branch validation. Production is independently verified at 0.2.11. No 0.2.12 production deploy is permitted automatically.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
+
+---
+
+## 0.2.12 release scope — Broad Universe Discovery
+
+- Discovery now follows Stage 0 → Stage 1 → Stage 2 rather than treating Most Active / Movers as the effective market universe.
+- Stage 0 caches the Alpaca active US-equity catalog and fail-closes on active/tradable status, major US exchanges, ticker syntax and non-operating security patterns.
+- Stage 0 is CONTROL-private and does not create Coverage, Research or Portfolio records.
+- Stage 1 advances through a bounded 240-name rotating universe slice, caps the secondary Most Active / Movers lane at 160 and stored Coverage context at 80, chunks snapshot work in groups of 60 and checkpoints the next cursor only after snapshot work succeeds.
+- Stage 1 performs no SEC Companyfacts work.
+- Stage 2 has a hard 8-finalist deep-enrichment cap. It gives meaningful budget to quiet broad-rotation names, then performs sequential SEC/filed enrichment only on those finalists.
+- Stage 2 reuses the canonical valuation engine with reference-price fallback disabled; Discovery has no duplicate valuation model.
+- Final qualification requires INTRINSIC Base quality, at least 2 usable valuation methods, valid current and prior filed TTM evidence, and aligned operating confirmation.
+- Long requires Base gap >= +20%; Short requires Base gap <= -20% plus current short actionability.
+- Zero candidates remains a valid successful result; thresholds are not relaxed to fill the screen.
+- Final ranking is auditable/lexicographic rather than a hidden composite score.
+- Candidate UI shows Price, Bear/Base/Bull, Base gap, quality, method count, operating confirmation, direction, why found, invalidation, filed/market freshness, warning and explicit Promote; the Discovery-only landscape PDF is aligned to the same fields without reintroducing scan_score.
+- Normal Discovery GET remains provider-free. Job status, Stage-0/1/2 counts, exclusions and provider-call counts are stored/displayed.
+- Promotion remains explicit and ticker validation runs again before persistence.
+- No dependency or deploy-workflow change is required.
+- Dedicated regressions live in `tests/test_0212_discovery.py`; `docs/LOCAL_WEB_PARITY_0_2_12.md` records Local/Web parity and the remaining incremental-breadth limitation.
+- Production remains 0.2.11 until an explicit post-merge deploy.
 
 ---
 

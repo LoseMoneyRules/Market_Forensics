@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.2.11  
+**Current product line:** 0.2.12  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -348,58 +348,110 @@ Private Position, private money-risk and private Decision Journal data do not cr
 
 Discovery is an investigation funnel, not a BUY/SELL engine.
 
-Any ticker entering Coverage or Portfolio must be validated before persistence. Unknown/unresolvable symbols are rejected with a clear “Ticker not found / symbol not recognized” style error rather than creating placeholder records.
+Any ticker entering Coverage or Portfolio must be validated again before persistence. Unknown or unresolvable symbols are rejected rather than creating placeholders. Discovery candidates do not create Coverage, full Research, Portfolio positions or thesis mutations automatically; **Promote** remains an explicit CONTROL action.
 
-It has two stages.
+Discovery 0.2.12 has three stages.
 
-### Stage 1 — cheap market funnel
+### Stage 0 — cached broad operating-equity universe
 
-Current screen begins with Alpaca Most Active / Movers and validates candidate securities.
+The engine maintains a CONTROL-private cached universe from the Alpaca active US-equity asset catalog.
 
-For a new external candidate:
+Stage 0 is fail-closed:
 
-- security must be active and tradable;
+- status must be active;
+- security must be tradable;
 - major US exchange only: NASDAQ, NYSE, AMEX, ARCA;
-- exclude warrants, rights, units, ETFs, ETNs, funds, blank-check/SPAC shells, preferred securities and note-like instruments;
-- Long candidate price must be at least $5;
-- Short candidate price must be at least $10;
-- new-name daily volume must be at least 500k when available;
-- new-name dollar volume must be at least $50M;
-- a Short candidate must be shortable.
+- ticker syntax must be valid;
+- warrants, rights, units, ETFs, ETNs, funds, preferreds, note-like securities and name/symbol patterns associated with blank-check/SPAC shells are excluded;
+- the universe cache is refreshed on a bounded cadence rather than rebuilt on every page load.
 
-Existing Coverage names may use already-materialized research context rather than being rejected solely for missing cheap-screen liquidity fields.
+The universe is materialized separately from Coverage. Being present in Stage 0 does not create a company Research record.
 
-### Stage 2 — forensic enrichment
+### Stage 1 — cheap rotating forensic screen
 
-A candidate must have a calculable intrinsic Base fair value and confirming operating evidence.
+Stage 1 is background-only and intentionally cheap.
 
-For external names:
+It advances through the cached Stage-0 universe in a bounded rotating batch and uses only market metadata/snapshots plus already-materialized Coverage clues when they exist.
 
-- SEC submissions and Companyfacts are used;
+Current bounded controls:
+
+- one rotating broad-universe slice of at most 240 names per run;
+- Most Active and Movers are retained only as a secondary activity lane capped at 160 names;
+- stored Coverage context is capped at 80 names per run;
+- snapshot requests are chunked sequentially in groups of 60;
+- liquidity qualification uses the previous completed daily bar when available, so an early-session run does not become activity-biased merely because the current day's volume is incomplete;
+- new external names must satisfy the configured price, daily-volume and dollar-liquidity floors before deep enrichment;
+- already-materialized intrinsic Coverage gaps may be used as a cheap prioritization clue;
+- Stage 1 never calls SEC Companyfacts.
+
+The deep-enrichment budget deliberately reserves capacity for quiet liquid names from the broad rotation. This prevents current market activity from monopolizing Discovery.
+
+The Stage-1 cursor is checkpointed. Repeated scans therefore advance through the broad universe over time instead of repeatedly rescanning only the same movers.
+
+### Stage 2 — bounded forensic enrichment
+
+Only a small Stage-1 finalist set may spend SEC/filed-data budget.
+
+For external finalists:
+
+- SEC ticker resolution is performed once per run;
+- SEC submissions and Companyfacts are called only for bounded finalists;
 - fiscal-year end must be respected;
-- annual/quarterly history is reconstructed;
-- current TTM is used when valid;
-- the valuation engine runs with reference-price fallback disabled.
+- four coherent filed quarters are required for current TTM;
+- a comparable prior TTM is required for operating confirmation;
+- the **canonical valuation engine** is reused; Discovery does not own a duplicate valuation model;
+- reference-price fallback is disabled.
 
 A Discovery Base is accepted only if:
 
-- valuation quality is INTRINSIC;
-- at least two valuation methods are usable.
+- Base quality is INTRINSIC;
+- at least two canonical valuation methods are usable;
+- Bear/Base/Bull remain auditable where available.
 
 Final direction requires:
 
-- Long: Base gap at least +20% plus confirming Long operating evidence;
-- Short: Base gap at most −20% plus confirming deterioration and short actionability.
+- Long: intrinsic Base gap at least +20% plus confirming filed TTM operating evidence;
+- Short: intrinsic Base gap at most −20% plus confirming filed deterioration and current short actionability.
 
-A raw price move alone can never create the final Long/Short candidate.
+A raw price move, Most Active rank or generic score can never create a final Long/Short candidate.
 
-There is no filler quota.
+Final ranking is lexicographic and visible rather than a hidden composite: priority tier, absolute intrinsic Base gap, valuation-method count, operating-confirmation strength, then ticker.
 
-Zero candidates is a valid output.
+Candidate output must expose at least:
+
+- ticker and current price;
+- Bear / Base / Bull where available;
+- Base fair-value gap;
+- valuation quality and method count;
+- operating confirmation;
+- direction;
+- why the name entered;
+- what would invalidate the Discovery setup;
+- data freshness;
+- warnings.
+
+Evidence-grounded family labels may include Valuation Dislocation, Quality at Discount, Fundamental Inflection, Forensic Divergence and Deterioration / Short Setup. Labels are derived from the underlying gap/operating signals; they are not marketing categories.
+
+There is no final filler quota. Zero candidates is a valid successful run.
+
+### Discovery hosting / provider discipline
+
+Discovery is designed for shared hosting:
+
+- normal Discovery GET is provider-free and reads stored job/cache state;
+- execution happens in the existing background job system;
+- Stage 0 is cached;
+- Stage 1 is chunked, checkpointed and incremental;
+- Stage 2 has a hard finalist cap and runs SEC work sequentially;
+- provider-call counts, Stage-0/1/2 counts, exclusions and job status are visible in the stored result/UI;
+- a stale prior successful result remains readable while a new scan is queued/running;
+- no deploy workflow change or new dependency is required by 0.2.12.
 
 ### Discovery limitation to remember
 
-The current Stage-1 universe is activity-driven. Quiet, liquid, materially mispriced companies that are not currently active/moving can be missed. This is a known structural limitation, not a feature.
+Broad coverage is **incremental**, not a synchronous full-market deep valuation pass. A single run deeply enriches only a bounded finalist set. Repeated runs advance the Stage-1 cursor through the cached operating-equity universe.
+
+This is deliberate: it trades scan latency for provider discipline and shared-hosting reliability. Stage 1 still has no licensed whole-market fundamental/consensus dataset, so unknown names without stored evidence are prefiltered mainly by security validity, liquidity, broad rotation and current market metadata before Stage 2 performs the real forensic test.
 
 ---
 
@@ -1596,11 +1648,13 @@ However a critical disappearance of evidence can theoretically remain approved u
 
 **Improvement:** distinguish ordinary evidence change from a critical evidence-invalid state without silently erasing human approval.
 
-### 24.3 Discovery is activity-biased
+### 24.3 Discovery breadth is incremental
 
-Most Active / Movers is efficient but not a true broad valuation universe.
+0.2.12 removes the structural Most Active / Movers universe dependency by maintaining a cached broad operating-equity universe and rotating Stage 1 through it.
 
-**Improvement:** add a broad scheduled operating-equity universe scan, with Stage 1 designed around business/valuation dislocation rather than only current market activity.
+The remaining limitation is depth-per-run: shared-hosting/provider discipline means only a bounded finalist set receives SEC Companyfacts and canonical valuation on each scan.
+
+**Improvement:** if a licensed whole-market fundamental dataset with appropriate storage/display rights is added later, strengthen Stage-1 cheap dislocation signals without weakening the bounded Stage-2 forensic contract.
 
 ### 24.4 Peer triangulation is database-limited
 

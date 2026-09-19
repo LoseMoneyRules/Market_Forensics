@@ -10,99 +10,117 @@
   <div class="panel market-scan">
     <div class="panel-head">
       <div>
-        <p class="eyebrow">MARKET-WIDE RADAR</p>
+        <p class="eyebrow">BROAD UNIVERSE DISCOVERY</p>
         <h2>Fair-value forensic radar</h2>
-        <p class="muted">The broad screen only decides where to investigate. Final names require a calculable Market Forensics Base fair value plus operating evidence that confirms the Long or Short divergence.</p>
+        <p class="muted">Stage 0 maintains the operating-equity universe. Stage 1 cheaply rotates through it. Only a bounded shortlist may spend SEC/filed-data budget in Stage 2. Most Active and Movers are secondary inputs, not the universe.</p>
       </div>
       <div class="button-row">
-        <form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Run market scan</button></form>
+        <form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Run Discovery</button></form>
         {% if market_scan.candidates %}<a class="button" href="{{ url_for('web.discovery_report') }}">Landscape PDF</a>{% endif %}
       </div>
     </div>
 
+    {% if market_scan_attempt and market_scan_attempt.status in ['QUEUED','RUNNING'] %}
+      <div class="notice"><strong>DISCOVERY {{ market_scan_attempt.status }}.</strong> Job #{{ market_scan_attempt.id }} is background-only. The last completed result remains readable while this run advances the universe checkpoint.</div>
+    {% endif %}
     {% if scan_failure %}<div class="notice amber"><strong>LAST SCAN FAILED.</strong> {{ scan_failure }}. Any prior successful scan remains visible below.</div>{% endif %}
-    {% if market_scan.stale_contract %}<div class="notice amber"><strong>OLD DISCOVERY RESULT IGNORED.</strong> The last stored scan predates the fair-value forensic contract. Run a new market scan; legacy mover-only candidates are intentionally not displayed.</div>{% endif %}
+    {% if market_scan.stale_contract %}<div class="notice amber"><strong>OLD DISCOVERY RESULT IGNORED.</strong> The stored result predates the broad-universe contract. Run Discovery again; mover-only results are intentionally not displayed.</div>{% endif %}
 
-    {% if market_scan.candidates %}
+    {% if market_scan.contract_version == 'BROAD_FORENSIC_DISCOVERY_V2' %}
       <div class="scan-summary">
-        <span class="status-chip">{{ market_scan.candidate_count }} qualified</span>
+        <span class="status-chip">Stage 0 · {{ market_scan.stage0_count }} names</span>
+        <span class="status-chip">Stage 1 · {{ market_scan.stage1_scanned_count }} scanned / {{ market_scan.stage1_qualified_count }} passed</span>
+        <span class="status-chip">Stage 2 · {{ market_scan.stage2_selected_count }} selected / {{ market_scan.stage2_enriched_count }} enriched</span>
+        <span class="status-chip">{{ market_scan.candidate_count }} final</span>
         <span class="status-chip" data-status-value="LONG">{{ market_scan.long_count }} long</span>
         <span class="status-chip" data-status-value="SHORT">{{ market_scan.short_count }} short</span>
-        <span class="status-chip">{{ market_scan.p1_count or 0 }} P1</span>
-        <span class="status-chip">{{ market_scan.p2_count or 0 }} P2</span>
-        <span class="status-chip">{{ market_scan.excluded_count or 0 }} filtered out</span>
-        {% if market_scan_job %}<small>Last scan {{ market_scan_job.finished_at }}</small>{% endif %}
+        {% if market_scan_job %}<small>Completed {{ market_scan_job.finished_at }}</small>{% endif %}
       </div>
 
       <div class="discovery-method">
-        <strong>Guardrails</strong>
-        <span>Unknown Long ≥ ${{ '%.0f'|format(market_scan.guardrails.get('min_long_price',5)) }}</span>
-        <span>Unknown Short ≥ ${{ '%.0f'|format(market_scan.guardrails.get('min_short_price',10)) }}</span>
-        <span>Dollar volume ≥ ${{ '%.0f'|format((market_scan.guardrails.get('min_dollar_volume',50000000)|float)/1000000) }}M for new names</span>
-        <span>Base edge ≥ {{ '%.0f'|format(market_scan.guardrails.get('fair_value_edge_pct',20)) }}%</span>
-        <span>Fair value + operating confirmation required</span>
-        <span>Major US exchange · Short must be shortable</span>
-        <span>No quota · weak evidence = no candidate</span>
+        <span>Universe: active + tradable operating equities on major US exchanges</span>
+        <span>Quiet broad rotation: {{ market_scan.stage1_quiet_broad_count }}</span>
+        <span>Activity lane: {{ market_scan.stage1_activity_count }}</span>
+        <span>Intrinsic Base edge ≥ ±{{ '%.0f'|format(market_scan.guardrails.get('fair_value_edge_pct',20)) }}%</span>
+        <span>≥ {{ market_scan.guardrails.get('final_requires_valuation_methods',2) }} valuation methods</span>
+        <span>Valid filed TTM + operating confirmation required</span>
+        <span>Reference-price fallback off</span>
+        <span>No final filler quota</span>
       </div>
 
       <div class="discovery-side-grid">
         <section class="discovery-side long-side">
-          <div class="discovery-side-head"><div><p class="eyebrow">LONG RADAR</p><h3>Qualified research leads</h3></div><span class="status-chip" data-status-value="LONG">{{ market_scan.long_count }}</span></div>
+          <div class="discovery-side-head"><div><p class="eyebrow">LONG</p><h3>Qualified research leads</h3></div><span class="status-chip" data-status-value="LONG">{{ market_scan.long_count }}</span></div>
           <div class="discovery-list">
             {% for item in market_scan.long_candidates %}
             <div class="discovery-list-row">
               <div class="discovery-list-main">
                 <div class="discovery-list-title"><span class="priority-badge priority-{{ item.priority|lower }}">{{ item.priority }}</span><strong>{{ item.ticker }}</strong><span>{{ item.name }}</span></div>
                 <div class="discovery-list-metrics">
-                  <span>{{ item.exchange }}</span>
-                  <span>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
-                  <span>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}% day{% else %}move —{% endif %}</span>
-                  <span>{% if item.fair_value is not none %}Base ${{ '%.2f'|format(item.fair_value) }}{% else %}Base —{% endif %}</span>
+                  <span>Price {% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
+                  <span>Bear {% if item.bear is not none %}${{ '%.2f'|format(item.bear) }}{% else %}—{% endif %}</span>
+                  <span>Base {% if item.base is not none %}${{ '%.2f'|format(item.base) }}{% else %}—{% endif %}</span>
+                  <span>Bull {% if item.bull is not none %}${{ '%.2f'|format(item.bull) }}{% else %}—{% endif %}</span>
                   <span>{% if item.base_gap_pct is not none %}Gap {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Gap —{% endif %}</span>
+                  <span>{{ item.fair_value_quality }} · {{ item.valuation_methods }} methods</span>
                 </div>
-                <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.fair_value_quality }} · forensic score {{ item.forensic_score }}</span></div>
-                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span><b>{{ signal.label }}</b> · {{ signal.detail }}</span>{% endfor %}</div>
+                <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.priority_reason }}</span></div>
+                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>
+                <p class="muted">{{ item.stage2_selection_reason }}</p>
+                <p><span class="muted">Invalidation:</span> {{ item.what_invalidates }}</p>
+                <p class="muted">Filed TTM through: {{ item.data_freshness or 'unknown' }} · Market snapshot: {{ item.market_freshness or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
               </div>
               <div class="discovery-list-action">
                 {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
               </div>
             </div>
-            {% else %}<div class="empty-state compact"><h3>No qualified Long lead</h3><p>No screened name currently has both enough upside to our Base and confirming operating improvement. The engine does not fill the list.</p></div>{% endfor %}
+            {% else %}<div class="empty-state compact"><h3>No qualified Long lead</h3><p>Zero is valid. No investigated name currently has both intrinsic upside of at least +20% and filed TTM operating confirmation.</p></div>{% endfor %}
           </div>
         </section>
 
         <section class="discovery-side short-side">
-          <div class="discovery-side-head"><div><p class="eyebrow">SHORT RADAR</p><h3>Qualified research leads</h3></div><span class="status-chip" data-status-value="SHORT">{{ market_scan.short_count }}</span></div>
+          <div class="discovery-side-head"><div><p class="eyebrow">SHORT</p><h3>Qualified research leads</h3></div><span class="status-chip" data-status-value="SHORT">{{ market_scan.short_count }}</span></div>
           <div class="discovery-list">
             {% for item in market_scan.short_candidates %}
             <div class="discovery-list-row">
               <div class="discovery-list-main">
                 <div class="discovery-list-title"><span class="priority-badge priority-{{ item.priority|lower }}">{{ item.priority }}</span><strong>{{ item.ticker }}</strong><span>{{ item.name }}</span></div>
                 <div class="discovery-list-metrics">
-                  <span>{{ item.exchange }}</span>
-                  <span>{% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
-                  <span>{% if item.move_pct is not none %}{{ '%+.1f'|format(item.move_pct) }}% day{% else %}move —{% endif %}</span>
-                  <span>{% if item.fair_value is not none %}Base ${{ '%.2f'|format(item.fair_value) }}{% else %}Base —{% endif %}</span>
+                  <span>Price {% if item.price is not none %}${{ '%.2f'|format(item.price) }}{% else %}—{% endif %}</span>
+                  <span>Bear {% if item.bear is not none %}${{ '%.2f'|format(item.bear) }}{% else %}—{% endif %}</span>
+                  <span>Base {% if item.base is not none %}${{ '%.2f'|format(item.base) }}{% else %}—{% endif %}</span>
+                  <span>Bull {% if item.bull is not none %}${{ '%.2f'|format(item.bull) }}{% else %}—{% endif %}</span>
                   <span>{% if item.base_gap_pct is not none %}Gap {{ '%+.1f'|format(item.base_gap_pct) }}%{% else %}Gap —{% endif %}</span>
+                  <span>{{ item.fair_value_quality }} · {{ item.valuation_methods }} methods</span>
                 </div>
-                <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.fair_value_quality }} · forensic score {{ item.forensic_score }}</span></div>
-                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span><b>{{ signal.label }}</b> · {{ signal.detail }}</span>{% endfor %}</div>
+                <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.priority_reason }}</span></div>
+                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>
+                <p class="muted">{{ item.stage2_selection_reason }}</p>
+                <p><span class="muted">Invalidation:</span> {{ item.what_invalidates }}</p>
+                <p class="muted">Filed TTM through: {{ item.data_freshness or 'unknown' }} · Market snapshot: {{ item.market_freshness or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
               </div>
               <div class="discovery-list-action">
                 {% if item.in_coverage %}<a class="button micro" href="{{ url_for('web.company_section', ticker=item.ticker, section='overview') }}">Research</a>{% else %}<form method="post" action="{{ url_for('web.add_coverage') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="ticker" value="{{ item.ticker }}"><button class="button micro positive" type="submit">Promote</button></form>{% endif %}
               </div>
             </div>
-            {% else %}<div class="empty-state compact"><h3>No qualified Short lead</h3><p>No screened name currently has both enough downside to our Base and confirming operating deterioration. Penny, invalid and weak-liquidity names are filtered first.</p></div>{% endfor %}
+            {% else %}<div class="empty-state compact"><h3>No qualified Short lead</h3><p>Zero is valid. No investigated name currently has both intrinsic downside of at least -20%, filed deterioration and current short actionability.</p></div>{% endfor %}
           </div>
         </section>
       </div>
 
-      {% if market_scan.excluded_breakdown %}
-      <details class="discovery-filter-audit"><summary><strong>Filtered universe audit</strong></summary><div class="discovery-tags">{% for reason,count in market_scan.excluded_breakdown.items() %}<span class="status-chip">{{ reason }} · {{ count }}</span>{% endfor %}</div></details>
-      {% endif %}
+      <details class="discovery-filter-audit">
+        <summary>Run audit</summary>
+        <div class="discovery-tags">
+          <span class="status-chip">Provider calls · {{ market_scan.provider_call_total }}</span>
+          {% for provider,count in market_scan.provider_calls.items() %}<span class="status-chip">{{ provider }} · {{ count }}</span>{% endfor %}
+          <span class="status-chip">Stage 0 cache {% if market_scan.universe_cache_hit %}hit{% else %}refresh{% endif %}</span>
+          <span class="status-chip">Cursor {{ market_scan.stage1_cursor_start }} → {{ market_scan.stage1_cursor_end }}</span>
+        </div>
+        {% if market_scan.excluded_breakdown %}<div class="discovery-tags">{% for reason,count in market_scan.excluded_breakdown.items() %}<span class="status-chip">{{ reason }} · {{ count }}</span>{% endfor %}</div>{% endif %}
+      </details>
       {% if market_scan.errors %}<div class="notice amber"><strong>PARTIAL SCAN.</strong> {{ market_scan.errors|join(' ') }}</div>{% endif %}
     {% else %}
-      <div class="empty-state"><h2>No forensic edge found yet</h2><p>Run the scan. A blank radar is valid: names are shown only after security validation, liquidity checks, intrinsic Base calculation and operating confirmation.</p></div>
+      <div class="empty-state"><h2>No broad-universe result yet</h2><p>Run Discovery. The scan is background-only; normal page loads read stored state and do not call providers.</p></div>
     {% endif %}
   </div>
 

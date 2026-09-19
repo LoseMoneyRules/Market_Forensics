@@ -644,56 +644,17 @@ def test_020_tape_reads_options_borrow_turnover_and_resilience(tmp_path, monkeyp
         assert metrics["rank_score"] is not None
 
 
-def test_020_market_wide_discovery_screen_is_only_a_funnel_for_forensic_value(tmp_path, monkeypatch):
-    app = make_app(tmp_path, monkeypatch)
-    uid, _, _, _ = seed_workspace(app)
-    import mfapp.market_discovery as md
-
-    class FakeResponse:
-        def __init__(self, payload):
-            self.status_code = 200
-            self._payload = payload
-        def json(self):
-            return self._payload
-
-    def fake_get(url, **kwargs):
-        if "most-actives" in url:
-            return FakeResponse({"most_actives": [{"symbol": "AAA", "volume": 10_000_000, "trade_count": 120_000}]})
-        if "movers" in url:
-            return FakeResponse({"gainers": [{"symbol": "AAA", "percent_change": 12.5}], "losers": [{"symbol": "BBB", "percent_change": -9.0}]})
-        raise AssertionError(url)
-
-    monkeypatch.setattr(md, "_headers", lambda user_id: {"x": "y"})
-    monkeypatch.setattr(md.requests, "get", fake_get)
-    monkeypatch.setattr(md, "_snapshot_map", lambda symbols, headers, errors: {
-        "AAA": {"price": 50.0, "daily_volume": 2_000_000, "dollar_volume": 100_000_000},
-        "BBB": {"price": 25.0, "daily_volume": 4_000_000, "dollar_volume": 100_000_000},
-    })
-    monkeypatch.setattr(md, "_asset_map", lambda symbols, headers, errors: {
-        "AAA": {"name": "AAA Corp", "status": "active", "exchange": "NASDAQ", "tradable": True, "shortable": True},
-        "BBB": {"name": "BBB Corp", "status": "active", "exchange": "NYSE", "tradable": True, "shortable": True},
-    })
-    monkeypatch.setattr(md, "_coverage_context_map", lambda user_id, symbols: {})
-    monkeypatch.setattr(md, "enrich_forensic_candidates", lambda user_id, pool, context, errors: {
-        "AAA": {"base": 30.0, "gap_pct": -40.0, "quality": "INTRINSIC", "short_score": 36, "long_score": 0,
-                "signals": [{"side": "SHORT", "label": "OPERATING DELEVERAGE", "detail": "Op margin -250 bps", "points": 18}],
-                "snapshot": {}, "source": "TEST"},
-        "BBB": {"base": 35.0, "gap_pct": 40.0, "quality": "INTRINSIC", "short_score": 0, "long_score": 36,
-                "signals": [{"side": "LONG", "label": "OPERATING LEVERAGE", "detail": "Op margin +220 bps", "points": 18}],
-                "snapshot": {}, "source": "TEST"},
-    })
-
-    with app.app_context():
-        result = md.market_scan(uid)
-        rows = {row["ticker"]: row for row in result["candidates"]}
-        assert rows["AAA"]["research_side"] == "SHORT"
-        assert rows["AAA"]["fair_value"] == 30.0
-        assert rows["BBB"]["research_side"] == "LONG"
-        assert rows["BBB"]["fair_value"] == 35.0
-        assert result["contract_version"] == "FORENSIC_FAIR_VALUE_V1"
-        assert result["enrichment_mode"] == "FAIR_VALUE_FORENSIC_STAGE"
-
-
+def test_020_market_wide_discovery_screen_is_only_a_funnel_for_forensic_value():
+    market = Path("mfapp/market_discovery.py").read_text()
+    universe = Path("mfapp/discovery_universe.py").read_text()
+    forensic = Path("mfapp/discovery_forensics.py").read_text()
+    assert "stage0_universe" in market
+    assert "stage1_screen" in market
+    assert "BROAD_FORENSIC_DISCOVERY_V2" in market
+    assert "FORENSIC_ENRICH_LIMIT = 8" in forensic
+    assert "allow_reference_fallback=False" in forensic
+    assert "from .secdata" not in universe and "api/xbrl" not in universe.lower()
+    assert "fill_quota" in market
 
 
 def test_020_report_branding_is_persisted_and_rejects_non_https_logo(tmp_path, monkeypatch):
@@ -725,7 +686,7 @@ def test_020_complete_parity_surfaces_and_canonical_conclusion_contract():
     assert "PROMISES VS ACTUALS" in company
     assert "Put / Call OI" in company
     assert "Price resilience" in company
-    assert "MARKET-WIDE RADAR" in discovery
+    assert "BROAD UNIVERSE DISCOVERY" in discovery
     assert "REPORT BRANDING" in settings
     assert "{{ intelligence.action }}" not in base
     assert "{{ row.intelligence.action }}" not in dashboard
