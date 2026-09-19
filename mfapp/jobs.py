@@ -60,6 +60,16 @@ def enqueue_job(job_type: str, *, user_id: int, company_id: int | None = None, s
     kind = str(job_type).upper()
     existing = _active_job_query(kind, user_id=user_id, company_id=company_id, security_id=security_id).order_by(Job.id.asc()).first()
     if existing is not None:
+        # An explicit CONTROL Management scan must not silently lose its force
+        # semantics just because an unattended scan is already queued.
+        if kind == "MANAGEMENT_SCAN" and bool((payload or {}).get("force")):
+            merged = dict(existing.payload or {})
+            merged.update(payload or {})
+            merged["force"] = True
+            merged["limit"] = max(int(merged.get("limit") or 0), int((payload or {}).get("limit") or 0), 36)
+            existing.payload = merged
+            existing.priority = min(int(existing.priority or priority), int(priority))
+            db.session.commit()
         existing._mf_reused = True
         return existing
     job = Job(job_type=kind, status="QUEUED", priority=priority, user_id=user_id, company_id=company_id,
