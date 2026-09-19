@@ -348,6 +348,9 @@ def test_0210_validation_policy_is_single_and_conservative():
     assert validation_state(exists=False) == "NOT RUN"
     assert validation_payload(None)["state"] == "NOT RUN"
     assert validation_payload(None)["status"] == "NOT RUN"
+    from mfapp.routes import _fallback_readiness
+    assert _fallback_readiness()["validation"]["state"] == "NOT RUN"
+    assert _fallback_readiness()["validation"]["status"] == "NOT RUN"
     assert validation_state(exists=True, sample_size=3, reliability=90) == "LIMITED"
     assert validation_state(exists=True, sample_size=5, reliability=64.99) == "LIMITED"
     assert validation_state(exists=True, sample_size=5, reliability=65) == "VALIDATED"
