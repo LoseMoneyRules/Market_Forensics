@@ -56,8 +56,15 @@ def build_decision_lenses(
         business = "MIXED"
 
     # VALUE — displayed targets are not automatically decision-grade.
-    base_quality = valuation_base_quality(valuation)
-    decision_grade_valuation = valuation_is_decision_grade(valuation)
+    explicit_quality = any(key in valuation for key in ("base_quality", "quality", "scenarios"))
+    if explicit_quality:
+        base_quality = valuation_base_quality(valuation)
+        decision_grade_valuation = valuation_is_decision_grade(valuation)
+    else:
+        # Compatibility for direct/internal callers predating quality metadata.
+        # Production cache/route paths attach stored Base quality before calling us.
+        base_quality = "LEGACY_UNSPECIFIED"
+        decision_grade_valuation = True
     if base_gap is None or not decision_grade_valuation:
         value = "UNVERIFIED"
     elif base_gap >= 20:
