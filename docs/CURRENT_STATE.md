@@ -21,7 +21,13 @@
 **Latest verified 0.2.10 runtime main CI:** run `35420028622` / #1033 = completed / success on `250b8092d66495533d3406f8bd711725c0ffdd8d`  
 **0.2.11 source branch:** `release/0.2.11-position-action`, created directly from clean main `30d2e5cd2da07772235fef8c20e31e952e9fe68a`; no old branch is its base  
 **0.2.11 scope:** Portfolio-owned deterministic Position Action downstream from the canonical Research Conclusion; no Research/Tape/Discovery/Valuation/deploy redesign  
-**Release phase:** 0.2.11 candidate implementation in progress on its clean release branch. PR/merge/post-merge main CI are not yet recorded in this candidate snapshot. Production remains 0.2.10 and no automatic deploy is part of this release sequence.  
+**Verified 0.2.11 branch CI:** push run `35444349076` / #1035 = completed / success on head `e6d9c8ac7b489bcfc3d670d57262e2b974a0c4d8`; the earlier branch push run `35444308195` / #1034 also completed / success during the same focused implementation  
+**Verified 0.2.11 PR CI:** pull-request run `35444408562` / #1036 = completed / success on `e6d9c8ac7b489bcfc3d670d57262e2b974a0c4d8`; release suite, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**Pull request:** #38 `0.2.11: Portfolio Position Action` = merged by squash  
+**0.2.11 merge commit:** `b74057261b53986462da37e5b62164733032a38a`  
+**Verified post-merge main CI:** run `35444994019` / #1037 = completed / success on `b74057261b53986462da37e5b62164733032a38a`; release suite, production-minimal smoke and reporting-vendor smoke all passed  
+**Main:** VERSION `0.2.11`; Position Action is the accepted main runtime baseline  
+**Release phase:** 0.2.11 is merged and post-merge main CI verified. Production intentionally remains 0.2.10; no 0.2.11 Namecheap deploy has been triggered.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
