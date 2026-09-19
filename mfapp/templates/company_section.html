@@ -9,20 +9,6 @@
   {% set section=section %}{% include "_research_tabs.html" %}
 
   {% if section == 'overview' %}
-    <div class="panel decision-brief">
-      <div class="panel-head"><div><p class="eyebrow">DECISION BRIEF</p><h2>What the evidence says now</h2></div><span class="status-chip">{{ brief.confidence }} confidence</span></div>
-      <div class="decision-brief-grid">
-        <div class="action-block"><span>Research conclusion</span><strong data-research-conclusion>{{ decision_lenses.research_conclusion }}</strong><small>{{ decision_lenses.value }} value · {{ decision_lenses.path }} path · {{ decision_lenses.model_confidence }} model confidence</small></div>
-        <div class="brief-metric"><span>Market</span><strong>{{ money(brief.price) }}</strong><small>5-minute refresh while open</small></div>
-        <div class="brief-metric"><span>Bear</span><strong>{{ money(brief.bear) }}</strong></div>
-        <div class="brief-metric"><span>Base</span><strong>{{ money(brief.base) }}</strong><small>{% if brief.base_gap_pct is not none %}{{ '%+.1f'|format(brief.base_gap_pct) }}% vs market{% else %}Gap pending{% endif %}</small></div>
-        <div class="brief-metric"><span>Bull</span><strong>{{ money(brief.bull) }}</strong><small>~{{ brief.horizon_years }}Y horizon · {{ brief.target_year }}</small></div>
-        <div class="brief-metric accent"><span>Expected Value</span><strong>{{ money(valuation.expected_value) }}</strong><small>Probability weighted · scenario model</small></div>
-      </div>
-      {% if brief.reasons %}<ul class="brief-reasons">{% for reason in brief.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% endif %}
-      {% if intelligence.warnings %}<div class="notice amber"><strong>Review before relying on the read.</strong> {{ intelligence.warnings|join(' ') }}</div>{% endif %}
-    </div>
-
     <div class="panel decision-map">
       <div class="panel-head"><div><p class="eyebrow">DECISION MAP</p><h2>From evidence to validation</h2></div><span class="status-chip">{{ decision_lenses.research_conclusion }}</span></div>
       <div class="lens-grid mature-lenses">
