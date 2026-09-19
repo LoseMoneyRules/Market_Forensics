@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 import signal
@@ -21,7 +22,14 @@ from .extensions import db
 from .finra import FINRA_DAILY_CDN, refresh_bundle as refresh_finra_bundle
 from .historical_data import refresh_historical_prices
 from .historical_engine import run_historical_test
-from .management_promises import extract_promises, html_to_text, store_promises
+from .management_promises import (
+    MANAGEMENT_SCAN_VERSION,
+    extract_promises,
+    html_to_text,
+    original_actuals_from_companyfacts,
+    store_original_actuals,
+    store_promises,
+)
 from .macro_context import refresh_macro_context
 from .market_discovery import market_scan
 from .positioning import refresh_positioning_bundle
@@ -52,6 +60,16 @@ def enqueue_job(job_type: str, *, user_id: int, company_id: int | None = None, s
     kind = str(job_type).upper()
     existing = _active_job_query(kind, user_id=user_id, company_id=company_id, security_id=security_id).order_by(Job.id.asc()).first()
     if existing is not None:
+        # An explicit CONTROL Management scan must not silently lose its force
+        # semantics just because an unattended scan is already queued.
+        if kind == "MANAGEMENT_SCAN" and bool((payload or {}).get("force")):
+            merged = dict(existing.payload or {})
+            merged.update(payload or {})
+            merged["force"] = True
+            merged["limit"] = max(int(merged.get("limit") or 0), int((payload or {}).get("limit") or 0), 36)
+            existing.payload = merged
+            existing.priority = min(int(existing.priority or priority), int(priority))
+            db.session.commit()
         existing._mf_reused = True
         return existing
     job = Job(job_type=kind, status="QUEUED", priority=priority, user_id=user_id, company_id=company_id,
@@ -264,7 +282,66 @@ def _deep_validation(company_id: int, coverage_id: int | None) -> dict[str, Any]
     db.session.commit(); return {"checked_periods": checked, "issues": issues, "recalculation": recalc}
 
 
-def _management_scan(company: Company, security: Security, user_id: int, limit: int = 24) -> dict[str, Any]:
+def _management_filing_documents(cik: str, accn: str, primary: str, form: str, ua: str) -> list[dict[str, str]]:
+    """Return a bounded set of SEC filing documents worth parsing for guidance."""
+    cik_number = str(int(cik))
+    accession_path = str(accn).replace("-", "")
+    base = f"https://www.sec.gov/Archives/edgar/data/{cik_number}/{accession_path}"
+    docs: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(name: str, kind: str) -> None:
+        clean = str(name or "").strip()
+        if not clean or clean in seen:
+            return
+        if not re.search(r"\.(?:html?|txt)$", clean, re.I):
+            return
+        seen.add(clean)
+        docs.append({"name": clean, "url": f"{base}/{clean}", "kind": kind})
+
+    add(primary, "PRIMARY")
+    if str(form).upper() != "8-K":
+        return docs[:1]
+
+    # Earnings guidance is often filed as EX-99.1 rather than in the 8-K shell.
+    try:
+        response = requests.get(
+            f"{base}/index.json",
+            headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate"},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            items = (((response.json() or {}).get("directory") or {}).get("item") or [])
+            candidates: list[tuple[int, str]] = []
+            for item in items:
+                name = str((item or {}).get("name") or "")
+                low = name.lower()
+                if not re.search(r"\.(?:html?)$", low):
+                    continue
+                score = 0
+                if re.search(r"(?:ex(?:hibit)?[-_]?99(?:[-_.]?1)?|ex99|99[-_.]?1)", low):
+                    score += 100
+                if any(token in low for token in ("earn", "release", "press", "results", "guidance")):
+                    score += 40
+                if score:
+                    candidates.append((-score, name))
+            for _, name in sorted(candidates)[:4]:
+                add(name, "EXHIBIT")
+    except Exception:
+        # Primary filing scan can still succeed. A later forced/versioned scan can
+        # retry exhibit discovery without poisoning the filing permanently.
+        pass
+    return docs[:5]
+
+
+def _management_scan(
+    company: Company,
+    security: Security,
+    user_id: int,
+    limit: int = 24,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
     ua = sec_user_agent(user_id)
     meta = sec_ticker_meta(security.ticker, ua)
     submissions = sec_json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", ua)
@@ -273,7 +350,23 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
     accns = recent.get("accessionNumber") or []
     filed = recent.get("filingDate") or []
     docs = recent.get("primaryDocument") or []
-    stored = promises_stored = guidance_scanned = 0
+    stored = promises_stored = guidance_scanned = documents_scanned = promises_found = 0
+    skipped_current = scan_errors = 0
+
+    original_actuals_stored = 0
+    original_actuals_found = 0
+    try:
+        companyfacts = sec_json(f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json", ua)
+        original_rows = original_actuals_from_companyfacts(
+            companyfacts,
+            str(meta.get("fiscal_year_end") or ""),
+        )
+        original_actuals_found = len(original_rows)
+        original_actuals_stored = store_original_actuals(company.id, original_rows)
+    except Exception:
+        # Promise extraction should still run if Companyfacts is transiently
+        # unavailable. Scoring will remain PENDING/EVIDENCE_ONLY until verified.
+        scan_errors += 1
 
     for i, form in enumerate(forms[:max(1, min(limit, 100))]):
         if form not in {"10-K", "10-Q", "8-K", "DEF 14A"}:
@@ -281,65 +374,143 @@ def _management_scan(company: Company, security: Security, user_id: int, limit: 
         accn = str(accns[i] if i < len(accns) else "")
         if not accn:
             continue
-        doc = str(docs[i] if i < len(docs) else "")
+        primary_doc = str(docs[i] if i < len(docs) else "")
         filing_date = str(filed[i] if i < len(filed) else "")
         accession_path = accn.replace("-", "")
-        url = f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/{accession_path}/{doc}" if doc else ""
+        primary_url = (
+            f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/{accession_path}/{primary_doc}"
+            if primary_doc else ""
+        )
 
         source = Source.query.filter_by(company_id=company.id, provider="SEC", accession_no=accn).first()
         if source is None:
             source = Source(
-                company_id=company.id, provider="SEC", source_type="FILING",
-                title=f"{security.ticker} {form} {filing_date}", url=url, accession_no=accn,
+                company_id=company.id,
+                provider="SEC",
+                source_type="FILING",
+                title=f"{security.ticker} {form} {filing_date}",
+                url=primary_url,
+                accession_no=accn,
                 published_at=datetime.fromisoformat(filing_date) if filing_date else None,
-                retrieved_at=utcnow(), meta={"form": form, "cik": meta["cik"]},
+                retrieved_at=utcnow(),
+                meta={"form": form, "cik": meta["cik"]},
             )
             db.session.add(source)
             db.session.flush()
             db.session.add(Event(
-                company_id=company.id, source_id=source.id,
+                company_id=company.id,
+                source_id=source.id,
                 event_type=f"SEC_{form.replace(' ','_').replace('-','_')}",
-                title=source.title, event_date=source.published_at or utcnow(),
-                payload={"form": form, "accession_no": accn, "url": url},
+                title=source.title,
+                event_date=source.published_at or utcnow(),
+                payload={"form": form, "accession_no": accn, "url": primary_url},
             ))
             stored += 1
+        else:
+            source.url = source.url or primary_url
+            source.meta = dict(source.meta or {}) | {"form": form, "cik": meta["cik"]}
 
-        already_scanned = Event.query.filter_by(
-            company_id=company.id, source_id=source.id, event_type="MANAGEMENT_GUIDANCE_SCAN"
-        ).first()
-        if already_scanned or not url or form not in {"10-K", "10-Q", "8-K"}:
+        prior_scans = Event.query.filter_by(
+            company_id=company.id,
+            source_id=source.id,
+            event_type="MANAGEMENT_GUIDANCE_SCAN",
+        ).order_by(Event.id.desc()).all()
+        already_current = next(
+            (
+                row for row in prior_scans
+                if str((row.payload or {}).get("scan_version") or "") == MANAGEMENT_SCAN_VERSION
+            ),
+            None,
+        )
+        if already_current is not None and not force:
+            skipped_current += 1
+            continue
+        if form not in {"10-K", "10-Q", "8-K"}:
             continue
 
-        try:
-            response = requests.get(
-                url,
-                headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate"},
-                timeout=12,
-            )
-            if response.status_code != 200:
+        filing_docs = _management_filing_documents(
+            str(meta["cik"]), accn, primary_doc, form, ua
+        )
+        if not filing_docs:
+            scan_errors += 1
+            continue
+
+        filing_extracted: list[dict[str, Any]] = []
+        successful_docs: list[str] = []
+        for document in filing_docs:
+            try:
+                response = requests.get(
+                    document["url"],
+                    headers={"User-Agent": ua, "Accept-Encoding": "gzip, deflate"},
+                    timeout=12,
+                )
+                if response.status_code != 200:
+                    continue
+                successful_docs.append(document["name"])
+                documents_scanned += 1
+                filing_extracted.extend(extract_promises(
+                    html_to_text(response.text),
+                    source_id=source.id,
+                    document_url=document["url"],
+                    document_name=document["name"],
+                ))
+            except Exception:
+                scan_errors += 1
                 continue
-            extracted = extract_promises(html_to_text(response.text), source_id=source.id)
-            count = store_promises(company.id, extracted, source_id=source.id)
-            promises_stored += count
-            guidance_scanned += 1
-            db.session.add(Event(
-                company_id=company.id, source_id=source.id,
-                event_type="MANAGEMENT_GUIDANCE_SCAN",
-                title=f"{security.ticker} guidance scan · {accn}",
-                event_date=source.published_at or source.retrieved_at or utcnow(),
-                payload={"form": form, "accession_no": accn, "promises_found": len(extracted), "promises_stored": count},
-            ))
-        except Exception:
-            # No completion marker: a later scan may retry a transient filing fetch/parser failure.
+
+        if not successful_docs:
+            # Never write a completion marker for an unfetched filing; it must be
+            # eligible for retry after a transient SEC/network failure.
             continue
+
+        # Deduplicate the same sentence/target copied into both the 8-K shell and
+        # Exhibit 99.1 before storage.
+        deduped: list[dict[str, Any]] = []
+        fingerprints: set[str] = set()
+        for row in filing_extracted:
+            fp = str(row.get("fingerprint") or "")
+            if fp and fp in fingerprints:
+                continue
+            if fp:
+                fingerprints.add(fp)
+            deduped.append(row)
+
+        count = store_promises(company.id, deduped, source_id=source.id)
+        promises_stored += count
+        promises_found += len(deduped)
+        guidance_scanned += 1
+        db.session.add(Event(
+            company_id=company.id,
+            source_id=source.id,
+            event_type="MANAGEMENT_GUIDANCE_SCAN",
+            title=f"{security.ticker} guidance scan · {accn}",
+            event_date=source.published_at or source.retrieved_at or utcnow(),
+            payload={
+                "form": form,
+                "accession_no": accn,
+                "scan_version": MANAGEMENT_SCAN_VERSION,
+                "forced": bool(force),
+                "documents_scanned": successful_docs,
+                "promises_found": len(deduped),
+                "promises_stored": count,
+            },
+        ))
 
     db.session.commit()
     return {
+        "scan_version": MANAGEMENT_SCAN_VERSION,
         "filings_stored": stored,
         "guidance_filings_scanned": guidance_scanned,
+        "documents_scanned": documents_scanned,
+        "promises_found": promises_found,
         "promises_stored": promises_stored,
+        "original_actuals_found": original_actuals_found,
+        "original_actuals_stored": original_actuals_stored,
+        "skipped_current_version": skipped_current,
+        "scan_errors": scan_errors,
+        "forced": bool(force),
         "cik": meta["cik"],
-        "forms_scanned": min(len(forms), limit),
+        "forms_considered": min(len(forms), limit),
     }
 
 def _discovery(user_id: int) -> dict[str, Any]:
@@ -553,6 +724,15 @@ def _execute(job: Job) -> dict[str, Any]:
         if not security or not company: raise RuntimeError("Company/security not found")
         result = refresh_company_fundamentals(company, security, job.user_id); result["recalculation"] = recalculate_company(company.id, coverage_id)
         if coverage_id: result["autofill"] = prefill_coverage(coverage_id, job.user_id)
+        management_job = enqueue_job(
+            "MANAGEMENT_SCAN",
+            user_id=job.user_id,
+            company_id=company.id,
+            security_id=security.id,
+            payload={"coverage_id": coverage_id, "limit": 36, "force": False},
+            priority=80,
+        )
+        result["management_scan_job_id"] = management_job.id
         return result
     if kind == "MACRO_REFRESH":
         if not job.company_id: raise RuntimeError("company_id is required")
@@ -599,7 +779,13 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "MANAGEMENT_SCAN":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
-        payload = _management_scan(company, security, job.user_id, int((job.payload or {}).get("limit") or 24))
+        payload = _management_scan(
+            company,
+            security,
+            job.user_id,
+            int((job.payload or {}).get("limit") or 36),
+            force=bool((job.payload or {}).get("force")),
+        )
         payload["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         return payload
     if kind == "DISCOVERY_SCAN": return _discovery(job.user_id)

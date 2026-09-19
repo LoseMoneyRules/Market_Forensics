@@ -573,12 +573,29 @@ def test_020_management_promises_parse_and_score_met_miss(tmp_path, monkeypatch)
     assert parsed[0]["high"] == 10
     with app.app_context():
         mp.store_promises(company_id, parsed)
-        monkeypatch.setattr(mp, "annual_rows", lambda company_id, limit=20: [
-            {"fiscal_year": 2027, "metrics": {"revenue_growth_pct": 9.0}}
-        ])
+        db.session.add(Event(
+            company_id=company_id,
+            event_type="MANAGEMENT_ACTUAL_ORIGINAL",
+            title="revenue_growth_pct original actual FY2027",
+            event_date=datetime(2028, 2, 1),
+            payload={
+                "metric": "revenue_growth_pct",
+                "fiscal_year": 2027,
+                "value": 9.0,
+                "period_type": "FY",
+                "period_end": "2027-12-31",
+                "filed_at": "2028-02-01",
+                "source_accession": "original-2027",
+                "source_provider": "SEC_COMPANYFACTS",
+                "point_in_time_original": True,
+                "actual_version": "1",
+            },
+        ))
+        db.session.commit()
         rows = mp.evaluate_promises(company_id)
         assert rows[0]["actual"] == 9.0
         assert rows[0]["status"] == "MET"
+        assert rows[0]["actual_provenance"]["point_in_time_original"] is True
 
 
 def test_020_tape_reads_options_borrow_turnover_and_resilience(tmp_path, monkeypatch):

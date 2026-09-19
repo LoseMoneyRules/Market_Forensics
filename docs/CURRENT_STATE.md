@@ -56,6 +56,19 @@ Production and main are separately verified states even when they are on the sam
 - Non-comparable evidence remains EVIDENCE_ONLY; comparable unresolved promises remain PENDING; only economically comparable actuals may produce MET or MISS.
 - Management remains execution/accountability evidence, not personality or integrity scoring.
 
+### Management autofill repair — same 0.2.10 release identity
+- Corrective branch: `fix/0.2.10-management-autofill`, created directly from the accepted 0.2.10 main baseline; VERSION remains `0.2.10`.
+- Root cause addressed: a successful old `MANAGEMENT_GUIDANCE_SCAN` marker could permanently skip the same filing even when the old parser stored zero promises, and the scanner read only the filing primary document.
+- Management scans are now versioned. Old-version completion markers are eligible for re-read; an explicit CONTROL scan is forceful even when a queued unattended scan is reused.
+- 8-K scans inspect a bounded set of relevant HTML exhibits (including EX-99.1-style earnings releases) in addition to the primary document.
+- SEC ingest automatically queues a deduplicated Management scan; the scan still remains background-only and normal GET navigation remains provider-free.
+- Parser coverage now includes diluted EPS, sign-correct revenue declines, common money-range wording and qualitative guidance. Qualitative/ambiguous evidence is displayed but remains EVIDENCE_ONLY.
+- Management actuals are reconstructed from earliest-public SEC Companyfacts and stored as point-in-time original actuals. Current/later comparative values cannot independently create MET/MISS.
+- Parser upgrades reconcile matching automatic promises in place so corrected extraction does not leave contradictory duplicate rows.
+- Research cache, Management UI and PDF/DOCX/text exports preserve qualitative target text, source exhibit/document provenance and original-actual provenance.
+- Automatic evidence scope remains SEC-filed/furnished material; non-SEC conference-call statements are not silently scraped.
+- Production remains the previously verified 0.2.10 deploy #47 until this corrective branch is merged, main CI is green and a separate Namecheap deploy succeeds.
+
 ### Validate canonical policy
 - `mfapp/validation_policy.py` is the single threshold policy.
 - VALIDATED requires at least 5 valid scored samples and reliability >= 65.

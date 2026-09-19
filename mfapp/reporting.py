@@ -140,9 +140,14 @@ def _plain_research_lines(data: dict[str, Any]) -> list[str]:
             lines += ["", "MANAGEMENT PROMISES VS ACTUALS"]
             for row in promises[:30]:
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
-                promise=str(lo) if lo==hi else f"{lo}–{hi}"
-                period = row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "—")
-                lines.append(f"{period} · {row.get('metric')} · {promise} {unit} · actual {row.get('actual') if row.get('actual') is not None else '—'} · {row.get('status') or ''}")
+                if row.get("target_text"):
+                    promise=str(row.get("target_text"))
+                elif lo is None or hi is None:
+                    promise="—"
+                else:
+                    promise=(str(lo) if lo==hi else f"{lo}–{hi}") + (f" {unit}" if unit else "")
+                period = row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "UNRESOLVED")
+                lines.append(f"{period} · {row.get('metric')} · {promise} · actual {row.get('actual') if row.get('actual') is not None else '—'} · {row.get('status') or ''}")
         lines += ["", "SOURCES"]
         for row in data.get("sources") or []:
             lines.append(f"• {row.get('provider')} · {row.get('type')} · {row.get('title')} · {row.get('retrieved_at')}")
@@ -376,7 +381,8 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
         "management_promises": [{
             "metric": p.get("metric"), "target_year": p.get("target_year"),
             "target_period": p.get("target_period"), "target_period_type": p.get("target_period_type"),
-            "low": p.get("low"), "high": p.get("high"), "unit": p.get("unit"),
+            "low": p.get("low"), "high": p.get("high"), "target_text": p.get("target_text"),
+            "unit": p.get("unit"), "operator": p.get("operator"),
             "basis": p.get("basis"), "definition": p.get("definition"),
             "comparability": p.get("comparability"), "comparability_reason": p.get("comparability_reason"),
             "actual": p.get("actual"), "actual_provenance": p.get("actual_provenance") or {},
@@ -384,6 +390,7 @@ def research_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: d
             "source_id": p.get("source_id"), "source_provider": p.get("source_provider"),
             "source_title": p.get("source_title"), "source_accession": p.get("source_accession"),
             "source_form": p.get("source_form"), "source_date": p.get("source_date"),
+            "document_name": p.get("document_name"), "document_url": p.get("document_url"),
         } for p in management_promises],
         "tape_metrics": dict(tape.get("metrics") or {}),
         "diagnostic_action": intelligence.get("action") or "WAIT",
@@ -800,8 +807,13 @@ def render_docx(data: dict[str, Any]) -> BytesIO:
             for row in promises[:20]:
                 cells=t_prom.add_row().cells
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
-                promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
-                vals=[str(row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "")),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")]
+                if row.get("target_text"):
+                    promise=str(row.get("target_text"))
+                elif lo is None or hi is None:
+                    promise="—"
+                else:
+                    promise=(str(lo) if lo==hi else f"{lo} – {hi}")+(f" {unit}" if unit else "")
+                vals=[str(row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "UNRESOLVED")),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")]
                 for i,v in enumerate(vals): _docx_cell(cells[i],v,size=9)
 
         tape=data.get("tape_metrics") or {}
@@ -1009,8 +1021,13 @@ def render_pdf(data: dict[str, Any]) -> BytesIO:
             rows=[["Period","Metric","Promise","Actual","Status"]]
             for row in promises[:20]:
                 lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
-                promise=(str(lo) if lo==hi else f"{lo} – {hi}")+" "+unit
-                rows.append([str(row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "")),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")])
+                if row.get("target_text"):
+                    promise=str(row.get("target_text"))
+                elif lo is None or hi is None:
+                    promise="—"
+                else:
+                    promise=(str(lo) if lo==hi else f"{lo} – {hi}")+(f" {unit}" if unit else "")
+                rows.append([str(row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "UNRESOLVED")),str(row.get("metric") or ""),promise,str(row.get("actual") if row.get("actual") is not None else "—"),str(row.get("status") or "")])
             tt=Table(rows,colWidths=[.5*inch,1.35*inch,1.8*inch,1.1*inch,1.0*inch],repeatRows=1)
             tt.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.3,colors.HexColor("#c7d1da")),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8.7),("VALIGN",(0,0),(-1,-1),"TOP")]))
             story += [tt,Spacer(1,5)]

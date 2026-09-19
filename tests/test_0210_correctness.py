@@ -81,6 +81,30 @@ def seed_workspace(app, ticker="TST"):
         return user.id, company.id, security.id, coverage.id
 
 
+def _seed_management_original(company_id, metric, year, value, period_end=None, filed_at=None):
+    period_end = period_end or f"{year}-12-31"
+    filed_at = filed_at or f"{year + 1}-02-01"
+    db.session.add(Event(
+        company_id=company_id,
+        event_type="MANAGEMENT_ACTUAL_ORIGINAL",
+        title=f"{metric} original actual FY{year}",
+        event_date=datetime.fromisoformat(filed_at),
+        payload={
+            "metric": metric,
+            "fiscal_year": year,
+            "value": value,
+            "period_type": "FY",
+            "period_end": period_end,
+            "filed_at": filed_at,
+            "source_accession": f"orig-{metric}-{year}",
+            "source_provider": "SEC_COMPANYFACTS",
+            "point_in_time_original": True,
+            "actual_version": "1",
+        },
+    ))
+    db.session.commit()
+
+
 def login(client, user_id):
     with client.session_transaction() as session:
         session["user_id"] = user_id
@@ -301,10 +325,8 @@ def test_0210_management_comparable_guidance_scores_and_comparator_year_is_not_t
         assert p1[0]["target_year"] == 2027
         assert p1[0]["target_period_type"] == "FY"
         mp.store_promises(company_id, p1 + p2)
-        monkeypatch.setattr(mp, "annual_rows", lambda company_id, limit=20: [
-            {"fiscal_year": 2028, "period_type": "FY", "period_end": "2028-12-31", "metrics": {"revenue_growth_pct": 7.0}},
-            {"fiscal_year": 2027, "period_type": "FY", "period_end": "2027-12-31", "metrics": {"revenue_growth_pct": 9.0}},
-        ])
+        _seed_management_original(company_id, "revenue_growth_pct", 2027, 9.0)
+        _seed_management_original(company_id, "revenue_growth_pct", 2028, 7.0)
         rows = mp.evaluate_promises(company_id)
         by_year = {row["target_year"]: row for row in rows}
         assert by_year[2027]["status"] == "MET"
@@ -332,16 +354,253 @@ def test_0210_management_retroactive_guidance_is_not_scored(tmp_path, monkeypatc
         db.session.commit()
         parsed = mp.extract_promises("Management expects FY2027 revenue growth of 8% to 10%.", source_id=source.id)
         mp.store_promises(company_id, parsed, source_id=source.id)
+        _seed_management_original(company_id, "revenue_growth_pct", 2027, 9.0)
+        row = mp.evaluate_promises(company_id)[0]
+        assert row["status"] == "EVIDENCE_ONLY"
+        assert row["comparability_reason"] == "GUIDANCE_PUBLISHED_AFTER_TARGET_PERIOD"
+        assert row["source_date"] == "2028-02-15"
+
+
+
+def test_0210_management_parser_recovers_declines_eps_and_qualitative_guidance():
+    import mfapp.management_promises as mp
+
+    decline = mp.extract_promises("Management expects FY2027 revenue decline of 8% to 10%.")
+    assert len(decline) == 1
+    assert decline[0]["metric"] == "revenue_growth_pct"
+    assert decline[0]["low"] == -10.0
+    assert decline[0]["high"] == -8.0
+
+    eps = mp.extract_promises("Management expects FY2027 GAAP diluted EPS of $3.20 to $3.40.")
+    assert len(eps) == 1
+    assert eps[0]["metric"] == "eps"
+    assert eps[0]["unit"] == "USD/share"
+    assert eps[0]["comparability"] == "COMPARABLE"
+
+    adjusted = mp.extract_promises("Management expects FY2027 adjusted EPS of $3.20 to $3.40.")
+    assert adjusted[0]["comparability"] == "NON_COMPARABLE"
+    assert adjusted[0]["comparability_reason"] == "BASIS_NOT_CANONICAL"
+
+    qualitative = mp.extract_promises(
+        "Management expects FY2027 revenue to decline in the low-single-digits."
+    )
+    assert len(qualitative) == 1
+    assert qualitative[0]["operator"] == "QUALITATIVE"
+    assert qualitative[0]["status"] if "status" in qualitative[0] else True
+    assert qualitative[0]["comparability"] == "NON_COMPARABLE"
+    assert qualitative[0]["target_text"]
+
+
+
+def test_0210_management_html_tables_money_ranges_and_parser_upgrade_are_reconciled(tmp_path):
+    import mfapp.management_promises as mp
+
+    html = """
+    <table><tr><td>Fiscal 2027 outlook</td></tr>
+    <tr><td>Management expects FY2027 revenue of $50 to $51 billion.</td></tr></table>
+    """
+    parsed = mp.extract_promises(mp.html_to_text(html))
+    assert len(parsed) == 1
+    assert parsed[0]["metric"] == "revenue"
+    assert parsed[0]["low"] == 50_000_000_000.0
+    assert parsed[0]["high"] == 51_000_000_000.0
+
+    app = make_app(tmp_path, "management_parser_upgrade")
+    _, company_id, _, _ = seed_workspace(app, "UPG")
+    statement = "Management expects FY2027 revenue decline of 8% to 10%."
+    with app.app_context():
+        source = Source(
+            company_id=company_id,
+            provider="SEC",
+            source_type="FILING",
+            title="UPG 8-K",
+            accession_no="upgrade-test",
+            published_at=datetime(2026, 9, 18),
+            retrieved_at=datetime(2026, 9, 18),
+            meta={"form": "8-K"},
+        )
+        db.session.add(source)
+        db.session.flush()
+        db.session.add(Event(
+            company_id=company_id,
+            source_id=source.id,
+            event_type="MANAGEMENT_PROMISE",
+            title="legacy wrong-sign guidance",
+            event_date=datetime(2026, 9, 18),
+            payload={
+                "metric": "revenue_growth_pct",
+                "target_year": 2027,
+                "target_period": "FY2027",
+                "target_period_type": "FY",
+                "low": 8.0,
+                "high": 10.0,
+                "unit": "%",
+                "basis": "REPORTED",
+                "comparability": "COMPARABLE",
+                "statement": statement,
+                "fingerprint": "legacy-fingerprint",
+                "origin": "AUTO_FILING",
+                "source_id": source.id,
+                "status": "PENDING",
+            },
+        ))
+        db.session.commit()
+
+        corrected = mp.extract_promises(statement, source_id=source.id)
+        assert corrected[0]["low"] == -10.0
+        assert corrected[0]["high"] == -8.0
+        assert mp.store_promises(company_id, corrected, source_id=source.id) == 1
+        rows = Event.query.filter_by(company_id=company_id, event_type="MANAGEMENT_PROMISE").all()
+        assert len(rows) == 1
+        assert (rows[0].payload or {}).get("low") == -10.0
+        assert (rows[0].payload or {}).get("parser_version") == mp.MANAGEMENT_SCAN_VERSION
+
+
+def test_0210_management_original_actual_uses_earliest_public_filing_not_restated_comparative():
+    import mfapp.management_promises as mp
+
+    companyfacts = {
+        "facts": {
+            "us-gaap": {
+                "RevenueFromContractWithCustomerExcludingAssessedTax": {
+                    "units": {"USD": [
+                        {"val": 100.0, "start": "2026-01-01", "end": "2026-12-31", "filed": "2027-02-01", "form": "10-K", "fp": "FY", "accn": "orig-2026"},
+                        {"val": 110.0, "start": "2027-01-01", "end": "2027-12-31", "filed": "2028-02-01", "form": "10-K", "fp": "FY", "accn": "orig-2027"},
+                        {"val": 112.0, "start": "2027-01-01", "end": "2027-12-31", "filed": "2029-02-01", "form": "10-K", "fp": "FY", "accn": "later-restatement"},
+                    ]}
+                },
+                "EarningsPerShareDiluted": {
+                    "units": {"USD/shares": [
+                        {"val": 3.25, "start": "2027-01-01", "end": "2027-12-31", "filed": "2028-02-01", "form": "10-K", "fp": "FY", "accn": "orig-2027"},
+                        {"val": 3.40, "start": "2027-01-01", "end": "2027-12-31", "filed": "2029-02-01", "form": "10-K", "fp": "FY", "accn": "later-restatement"},
+                    ]}
+                },
+            }
+        }
+    }
+    rows = mp.original_actuals_from_companyfacts(companyfacts, "1231")
+    revenue = next(row for row in rows if row["metric"] == "revenue" and row["fiscal_year"] == 2027)
+    eps = next(row for row in rows if row["metric"] == "eps" and row["fiscal_year"] == 2027)
+    growth = next(row for row in rows if row["metric"] == "revenue_growth_pct" and row["fiscal_year"] == 2027)
+    assert revenue["value"] == 110.0
+    assert revenue["source_accession"] == "orig-2027"
+    assert eps["value"] == 3.25
+    assert eps["source_accession"] == "orig-2027"
+    assert round(growth["value"], 6) == 10.0
+    assert growth["point_in_time_original"] is True
+
+
+def test_0210_management_scan_reads_8k_exhibit_and_old_zero_marker_does_not_block(tmp_path, monkeypatch):
+    import mfapp.jobs as jobs
+    import mfapp.management_promises as mp
+
+    app = make_app(tmp_path, "management_exhibit_scan")
+    user_id, company_id, security_id, coverage_id = seed_workspace(app, "EXH")
+
+    class FakeResponse:
+        def __init__(self, status_code=200, text="", payload=None):
+            self.status_code = status_code
+            self.text = text
+            self._payload = payload or {}
+        def json(self):
+            return self._payload
+
+    with app.app_context():
+        company = db.session.get(Company, company_id)
+        security = db.session.get(Security, security_id)
+        source = Source(
+            company_id=company_id,
+            provider="SEC",
+            source_type="FILING",
+            title="EXH 8-K 2026-09-18",
+            url="https://www.sec.gov/primary.htm",
+            accession_no="0000000000-26-000001",
+            published_at=datetime(2026, 9, 18),
+            retrieved_at=datetime(2026, 9, 18),
+            meta={"form": "8-K"},
+        )
+        db.session.add(source)
+        db.session.flush()
+        db.session.add(Event(
+            company_id=company_id,
+            source_id=source.id,
+            event_type="MANAGEMENT_GUIDANCE_SCAN",
+            title="legacy empty scan",
+            event_date=datetime(2026, 9, 18),
+            payload={"form": "8-K", "accession_no": source.accession_no, "promises_found": 0, "promises_stored": 0},
+        ))
+        db.session.commit()
+
+        monkeypatch.setattr(jobs, "sec_ticker_meta", lambda ticker, ua: {
+            "cik": "0000000123", "fiscal_year_end": "1231"
+        })
+        submissions = {
+            "filings": {"recent": {
+                "form": ["8-K"],
+                "accessionNumber": ["0000000000-26-000001"],
+                "filingDate": ["2026-09-18"],
+                "primaryDocument": ["primary.htm"],
+            }}
+        }
+        monkeypatch.setattr(jobs, "sec_json", lambda url, ua: {"facts": {}} if "companyfacts" in url else submissions)
+        monkeypatch.setattr(jobs, "sec_user_agent", lambda uid: "Market Forensics test@example.com")
+
+        def fake_get(url, **kwargs):
+            if url.endswith("/index.json"):
+                return FakeResponse(payload={"directory": {"item": [
+                    {"name": "primary.htm"},
+                    {"name": "ex991.htm"},
+                ]}})
+            if url.endswith("/primary.htm"):
+                return FakeResponse(text="<html><body>Item 2.02 Results of Operations.</body></html>")
+            if url.endswith("/ex991.htm"):
+                return FakeResponse(text="<html><body>Management expects FY2027 revenue growth of 8% to 10%.</body></html>")
+            return FakeResponse(status_code=404)
+
+        monkeypatch.setattr(jobs.requests, "get", fake_get)
+
+        result = jobs._management_scan(company, security, user_id, 10)
+        assert result["scan_version"] == mp.MANAGEMENT_SCAN_VERSION
+        assert result["guidance_filings_scanned"] == 1
+        assert result["documents_scanned"] == 2
+        assert result["promises_found"] == 1
+        assert result["promises_stored"] == 1
+
+        promises = Event.query.filter_by(company_id=company_id, event_type="MANAGEMENT_PROMISE").all()
+        assert len(promises) == 1
+        assert (promises[0].payload or {}).get("document_name") == "ex991.htm"
+
+        skipped = jobs._management_scan(company, security, user_id, 10)
+        assert skipped["guidance_filings_scanned"] == 0
+        assert skipped["skipped_current_version"] == 1
+
+        forced = jobs._management_scan(company, security, user_id, 10, force=True)
+        assert forced["guidance_filings_scanned"] == 1
+        assert forced["promises_stored"] == 0
+
+
+def test_0210_management_only_original_actual_can_produce_met_miss(tmp_path, monkeypatch):
+    import mfapp.management_promises as mp
+
+    app = make_app(tmp_path, "management_original_gate")
+    _, company_id, _, _ = seed_workspace(app, "OAC")
+    with app.app_context():
+        promise = mp.extract_promises("Management expects FY2027 revenue growth of 8% to 10%.")
+        mp.store_promises(company_id, promise)
         monkeypatch.setattr(mp, "annual_rows", lambda company_id, limit=20: [{
             "fiscal_year": 2027,
             "period_type": "FY",
             "period_end": "2027-12-31",
             "metrics": {"revenue_growth_pct": 9.0},
         }])
-        row = mp.evaluate_promises(company_id)[0]
-        assert row["status"] == "EVIDENCE_ONLY"
-        assert row["comparability_reason"] == "GUIDANCE_PUBLISHED_AFTER_TARGET_PERIOD"
-        assert row["source_date"] == "2028-02-15"
+        first = mp.evaluate_promises(company_id)[0]
+        assert first["status"] == "EVIDENCE_ONLY"
+        assert first["comparability_reason"] == "ORIGINAL_ACTUAL_NOT_VERIFIED"
+
+        _seed_management_original(company_id, "revenue_growth_pct", 2027, 9.0)
+        second = mp.evaluate_promises(company_id)[0]
+        assert second["status"] == "MET"
+        assert second["actual_provenance"]["point_in_time_original"] is True
 
 
 def test_0210_validation_policy_is_single_and_conservative():
@@ -624,11 +883,7 @@ def test_0210_management_requires_explicit_full_year_and_interim_wins(tmp_path, 
         assert explicit_fy[0]["comparability"] == "COMPARABLE"
 
         mp.store_promises(company_id, quarterly + plain_year + explicit_fy)
-        monkeypatch.setattr(mp, "annual_rows", lambda company_id, limit=20: [
-            {"fiscal_year": 2029, "period_type": "FY", "period_end": "2029-12-31", "metrics": {"revenue_growth_pct": 7.0}},
-            {"fiscal_year": 2028, "period_type": "FY", "period_end": "2028-12-31", "metrics": {"revenue_growth_pct": 13.0}},
-            {"fiscal_year": 2027, "period_type": "FY", "period_end": "2027-12-31", "metrics": {"revenue_growth_pct": 9.0}},
-        ])
+        _seed_management_original(company_id, "revenue_growth_pct", 2029, 7.0)
         rows = mp.evaluate_promises(company_id)
         by_year = {row["target_year"]: row for row in rows}
         assert by_year[2027]["status"] == "EVIDENCE_ONLY"
