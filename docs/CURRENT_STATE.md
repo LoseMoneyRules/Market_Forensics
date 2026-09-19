@@ -26,8 +26,14 @@
 **Pull request:** #38 `0.2.11: Portfolio Position Action` = merged by squash  
 **0.2.11 merge commit:** `b74057261b53986462da37e5b62164733032a38a`  
 **Verified post-merge main CI:** run `35444994019` / #1037 = completed / success on `b74057261b53986462da37e5b62164733032a38a`; release suite, production-minimal smoke and reporting-vendor smoke all passed  
-**Main:** VERSION `0.2.11`; Position Action is the accepted main runtime baseline  
-**Release phase:** 0.2.11 is merged and post-merge main CI verified. Production intentionally remains 0.2.10; no 0.2.11 Namecheap deploy has been triggered.  
+**0.2.11 Portfolio command closure branch:** `fix/0.2.11-portfolio-command`, created directly from accepted main `ca02f06b4d1a179632778d19371c7d51c87d85b2`; VERSION remains `0.2.11`  
+**Verified Portfolio command branch CI:** push run `35448487351` / #1038 = completed / success on head `ecb30d0037bd848a39ba96c2d9a7e7a39986772c`; full release suite and both production smoke gates passed  
+**Verified Portfolio command PR CI:** pull-request run `35448502577` / #1039 = completed / success on `ecb30d0037bd848a39ba96c2d9a7e7a39986772c`  
+**Portfolio command pull request:** #39 `0.2.11: close Portfolio command layer` = merged by squash  
+**Accepted 0.2.11 runtime merge commit:** `ba5a16783763f8032e3341b2e08eae8566457fbd`  
+**Verified final post-merge main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`; release suite, production-minimal startup/rich-report smoke and reporting-vendor smoke all passed  
+**Main:** VERSION `0.2.11`; Position Action + Portfolio command closure at `ba5a16783763f8032e3341b2e08eae8566457fbd` is the accepted runtime baseline  
+**Release phase:** 0.2.11 is complete in main and final post-merge CI is verified green. Production intentionally remains 0.2.10; no 0.2.11 Namecheap deploy has been triggered.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
