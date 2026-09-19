@@ -13,7 +13,7 @@ from .secdata import (
     _annual_duration, _annual_instant, _as_decimal,
     _quarter_duration_values, _quarter_instants,
 )
-from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history
+from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, valuation_is_decision_grade
 
 FORENSIC_EDGE_PCT = 20.0
 FORENSIC_ENRICH_PER_SIDE = 8
@@ -353,14 +353,15 @@ def _local_forensics(context: dict[str, Any], price: float, day_move: float | No
         current, prior = annual[-1], annual[-2]
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
-    stored_base = _num((context.get("valuation") or {}).get("base"))
+    stored_valuation = dict(context.get("valuation") or {})
+    stored_base = _num(stored_valuation.get("base"))
     base_gap = _num(context.get("base_gap_pct"))
-    if stored_base is None or base_gap is None:
+    if stored_base is None or base_gap is None or not valuation_is_decision_grade(stored_valuation):
         return None
     return {
         "base": stored_base,
         "gap_pct": base_gap,
-        "quality": "RESEARCH BASE",
+        "quality": stored_valuation.get("base_quality") or stored_valuation.get("quality") or "INTRINSIC",
         "snapshot": snapshot,
         "signals": signals,
         "long_score": long_score,
