@@ -521,7 +521,7 @@ def test_0210_valuation_model_save_queues_research_cache_refresh(tmp_path):
         assert (jobs[0].payload or {}).get("coverage_id") == coverage_id
 
 
-def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_path):
+def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_path, monkeypatch):
     from mfapp.core_models import Job
     from mfapp.research_cache import cache_event_type
     from mfapp.routes import _cached_coverage_rows
@@ -586,6 +586,14 @@ def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_
         assert discovery_context["valuation"]["decision_grade"] is False
         assert "LONG DISLOCATION" not in discovery_context["discovery_labels"]
         assert "QUALITY AT DISCOUNT" not in discovery_context["discovery_labels"]
+
+        monkeypatch.setattr("mfapp.jobs.market_scan", lambda user_id: {"contract_version": "FORENSIC_FAIR_VALUE_V1", "candidates": []})
+        from mfapp.jobs import _discovery
+        ranked = _discovery(user_id)["ranked"]
+        stale_rank = next(item for item in ranked if item["ticker"] == "STALE")
+        assert stale_rank["base_gap_pct"] == 40.0
+        assert stale_rank["score"] == 65.0  # 13 approved gates; stale/non-intrinsic gap contributes zero.
+
         assert Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").count() == 1
 
     client = app.test_client()
