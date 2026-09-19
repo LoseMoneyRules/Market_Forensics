@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from mfapp import create_app
@@ -469,3 +469,115 @@ def test_0210_legacy_cache_missing_quality_is_normalized_fail_closed(tmp_path):
         assert cache is not None
         assert "LONG DISLOCATION" not in cache["discovery_labels"]
         assert "QUALITY AT DISCOUNT" not in cache["discovery_labels"]
+
+
+
+def test_0210_valuation_model_save_queues_research_cache_refresh(tmp_path):
+    from mfapp.core_models import Job
+    from mfapp.research_cache import cache_event_type
+
+    app = make_app(tmp_path, "valuation_save_recalc")
+    user_id, company_id, _, coverage_id = seed_workspace(app, "SAVE")
+    with app.app_context():
+        model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).first()
+        cache_time = datetime.now() + timedelta(seconds=5)
+        db.session.add(Event(
+            company_id=company_id,
+            event_type=cache_event_type(coverage_id),
+            title="SAVE current research cache",
+            event_date=cache_time,
+            payload={
+                "valuation": {
+                    "current_price": 100.0, "bear": 85.0, "base": 120.0, "bull": 150.0,
+                    "base_quality": "INTRINSIC", "quality": "INTRINSIC",
+                },
+                "readiness": {"ready_to_validate": False, "gates": [], "validation": {"state": "NOT RUN"}},
+                "intelligence": {"valuation_base_quality": "INTRINSIC"},
+                "decision_lenses": {"value": "FAIR", "variant": "POSSIBLE", "research_conclusion": "RESEARCH INCOMPLETE", "rows": []},
+            },
+        ))
+        model.updated_at = cache_time - timedelta(seconds=1)
+        db.session.commit()
+        assert Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").count() == 0
+
+    client = app.test_client()
+    login(client, user_id)
+    response = client.post("/company/SAVE/valuation/model", data={
+        "company_type": "Industrial",
+        "current_shares": "1000000",
+        "share_basis_verified": "1",
+        "weight_pe": "0.40",
+        "weight_ev_sales": "0.25",
+        "weight_fcf_yield": "0.35",
+        "horizon_years": "5",
+    })
+    assert response.status_code == 302
+
+    with app.app_context():
+        jobs = Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").all()
+        assert len(jobs) == 1
+        assert (jobs[0].payload or {}).get("coverage_id") == coverage_id
+
+
+def test_0210_stale_intrinsic_cache_is_immediately_fail_closed_and_requeued(tmp_path):
+    from mfapp.core_models import Job
+    from mfapp.research_cache import cache_event_type
+    from mfapp.routes import _cached_coverage_rows
+
+    app = make_app(tmp_path, "stale_cache_guard")
+    user_id, company_id, _, coverage_id = seed_workspace(app, "STALE")
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).first()
+        old_time = datetime(2026, 1, 1, 12, 0, 0)
+        db.session.add(Event(
+            company_id=company_id,
+            event_type=cache_event_type(coverage_id),
+            title="STALE research cache",
+            event_date=old_time,
+            payload={
+                "valuation": {
+                    "current_price": 100.0, "bear": 90.0, "base": 140.0, "bull": 175.0,
+                    "base_quality": "INTRINSIC", "quality": "INTRINSIC", "decision_grade": True,
+                },
+                "readiness": {
+                    "ready_to_validate": True,
+                    "done": 13, "total": 13, "gates": [],
+                    "validation": {"state": "VALIDATED", "samples": 5, "reliability": 75.0},
+                },
+                "intelligence": {
+                    "valuation_base_quality": "INTRINSIC",
+                    "valuation_decision_grade": True,
+                    "base_gap_pct": 40.0,
+                    "warnings": [],
+                },
+                "decision_lenses": {
+                    "value": "ATTRACTIVE",
+                    "variant": "POSITIVE EDGE",
+                    "research_conclusion": "LONG READY",
+                    "rows": [
+                        {"key": "value", "state": "ATTRACTIVE"},
+                        {"key": "variant", "state": "POSITIVE EDGE"},
+                    ],
+                },
+            },
+        ))
+        model.updated_at = datetime(2026, 9, 18, 12, 0, 0)
+        coverage.updated_at = datetime(2026, 9, 18, 12, 0, 0)
+        db.session.commit()
+
+        rows, _ = _cached_coverage_rows(user_id)
+        row = next(item for item in rows if item["coverage"].id == coverage_id)
+        assert row["valuation"]["base"] == 140.0
+        assert row["valuation"]["base_quality"] == "DATA_WARNING"
+        assert row["valuation"]["decision_grade"] is False
+        assert row["decision_lenses"]["value"] == "UNVERIFIED"
+        assert row["decision_lenses"]["variant"] == "DEFINED · UNPROVEN"
+        assert row["decision_lenses"]["research_conclusion"] == "DATA REVIEW"
+        assert Job.query.filter_by(user_id=user_id, job_type="RECALCULATE").count() == 1
+
+    client = app.test_client()
+    login(client, user_id)
+    response = client.get("/company/STALE/overview")
+    assert response.status_code == 200
+    assert b"DATA REVIEW" in response.data
