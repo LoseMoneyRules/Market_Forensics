@@ -436,13 +436,276 @@ def store_promises(company_id: int, promises: list[dict[str, Any]], *, source_id
     return stored
 
 
-def _actual_for_year(company_id: int, metric: str, year: int) -> dict[str, Any] | None:
+def _duration_days(row: dict[str, Any]) -> int | None:
+    try:
+        return (date.fromisoformat(str(row.get("end") or "")[:10]) - date.fromisoformat(str(row.get("start") or "")[:10])).days
+    except (TypeError, ValueError):
+        return None
+
+
+def _fiscal_year_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> int | None:
+    try:
+        end = date.fromisoformat(str(row.get("end") or "")[:10])
+    except (TypeError, ValueError):
+        return None
+    fye = str(fiscal_year_end or "").strip()
+    if len(fye) == 4 and fye.isdigit():
+        month, day = int(fye[:2]), int(fye[2:])
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return end.year + (1 if (end.month, end.day) > (month, day) else 0)
+    return end.year
+
+
+def _companyfact_rows(companyfacts: dict[str, Any], tags: tuple[str, ...]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    facts = companyfacts.get("facts") or {}
+    priority = {tag: index for index, tag in enumerate(tags)}
+    for namespace, concepts in facts.items():
+        for tag in tags:
+            node = (concepts or {}).get(tag) or {}
+            for unit, rows in (node.get("units") or {}).items():
+                for row in rows or []:
+                    item = dict(row)
+                    item["_mf_tag"] = tag
+                    item["_mf_namespace"] = namespace
+                    item["_mf_unit"] = unit
+                    item["_mf_priority"] = priority.get(tag, 999)
+                    out.append(item)
+    return out
+
+
+def _original_annual_record(
+    companyfacts: dict[str, Any],
+    tags: tuple[str, ...],
+    year: int,
+    fiscal_year_end: str,
+) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    for row in _companyfact_rows(companyfacts, tags):
+        if str(row.get("form") or "").upper() not in {"10-K", "10-K/A"}:
+            continue
+        if str(row.get("fp") or "").upper() != "FY":
+            continue
+        days = _duration_days(row)
+        if days is None or not 300 <= days <= 430:
+            continue
+        if _fiscal_year_from_end(row, fiscal_year_end) != int(year):
+            continue
+        try:
+            value = float(row.get("val"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value):
+            continue
+        candidates.append(row)
+    if not candidates:
+        return None
+    # Earliest public filing wins. Later comparative restatements must never
+    # rewrite Management Delivery history.
+    return sorted(
+        candidates,
+        key=lambda row: (
+            str(row.get("filed") or "9999-12-31"),
+            int(row.get("_mf_priority") or 999),
+            str(row.get("accn") or ""),
+        ),
+    )[0]
+
+
+def _actual_payload(
+    metric: str,
+    year: int,
+    value: float,
+    records: list[dict[str, Any]],
+    *,
+    definition: str,
+) -> dict[str, Any]:
+    filed = sorted(str(row.get("filed") or "") for row in records if row.get("filed"))
+    ends = sorted(str(row.get("end") or "") for row in records if row.get("end"))
+    accessions = list(dict.fromkeys(str(row.get("accn") or "") for row in records if row.get("accn")))
+    tags = list(dict.fromkeys(str(row.get("_mf_tag") or "") for row in records if row.get("_mf_tag")))
+    return {
+        "metric": metric,
+        "fiscal_year": int(year),
+        "value": float(value),
+        "period_type": "FY",
+        "period_end": ends[-1][:10] if ends else None,
+        "filed_at": filed[-1][:10] if filed else None,
+        "source_accession": " + ".join(accessions),
+        "source_tags": tags,
+        "source_provider": "SEC_COMPANYFACTS",
+        "definition": definition,
+        "point_in_time_original": True,
+        "actual_version": ORIGINAL_ACTUAL_VERSION,
+    }
+
+
+def original_actuals_from_companyfacts(
+    companyfacts: dict[str, Any],
+    fiscal_year_end: str = "",
+) -> list[dict[str, Any]]:
+    """Build earliest-public FY actuals used by Management Delivery.
+
+    This is intentionally separate from the current normalized statement view:
+    current Fundamentals may prefer a later corrected filing, while Management
+    accountability must compare the promise with what was first reported.
+    """
+    years: set[int] = set()
+    all_tags = tuple(dict.fromkeys(tag for tags in ORIGINAL_ACTUAL_TAGS.values() for tag in tags))
+    for row in _companyfact_rows(companyfacts, all_tags):
+        if str(row.get("form") or "").upper() not in {"10-K", "10-K/A"}:
+            continue
+        fy = _fiscal_year_from_end(row, fiscal_year_end)
+        if fy is not None:
+            years.add(fy)
+
+    base: dict[int, dict[str, dict[str, Any]]] = {}
+    for year in sorted(years):
+        fields: dict[str, dict[str, Any]] = {}
+        for field, tags in ORIGINAL_ACTUAL_TAGS.items():
+            record = _original_annual_record(companyfacts, tags, year, fiscal_year_end)
+            if record is None:
+                continue
+            try:
+                value = float(record.get("val"))
+            except (TypeError, ValueError):
+                continue
+            fields[field] = {"value": value, "record": record}
+        if fields:
+            base[year] = fields
+
+    out: list[dict[str, Any]] = []
+    for year, fields in sorted(base.items()):
+        revenue = fields.get("revenue")
+        if revenue:
+            out.append(_actual_payload(
+                "revenue", year, revenue["value"], [revenue["record"]],
+                definition="SEC-reported annual revenue as first publicly filed.",
+            ))
+        eps = fields.get("eps")
+        if eps:
+            out.append(_actual_payload(
+                "eps", year, eps["value"], [eps["record"]],
+                definition="SEC-reported GAAP diluted EPS as first publicly filed.",
+            ))
+
+        if revenue and revenue["value"] not in (0, None):
+            for metric, field in (
+                ("gross_margin_pct", "gross_profit"),
+                ("operating_margin_pct", "operating_income"),
+                ("net_margin_pct", "net_income"),
+            ):
+                item = fields.get(field)
+                if item:
+                    out.append(_actual_payload(
+                        metric,
+                        year,
+                        item["value"] / revenue["value"] * 100.0,
+                        [item["record"], revenue["record"]],
+                        definition=f"Derived from first-public SEC annual {field} / revenue.",
+                    ))
+
+        prior_revenue = (base.get(year - 1) or {}).get("revenue")
+        if revenue and prior_revenue and prior_revenue["value"] not in (0, None):
+            out.append(_actual_payload(
+                "revenue_growth_pct",
+                year,
+                (revenue["value"] / prior_revenue["value"] - 1.0) * 100.0,
+                [revenue["record"], prior_revenue["record"]],
+                definition="Derived from first-public SEC annual revenue for consecutive fiscal years.",
+            ))
+
+        cfo, capex = fields.get("cfo"), fields.get("capex")
+        if cfo and capex:
+            out.append(_actual_payload(
+                "fcf",
+                year,
+                cfo["value"] - capex["value"],
+                [cfo["record"], capex["record"]],
+                definition="Canonical Market Forensics FCF = first-public SEC CFO - CapEx.",
+            ))
+    return out
+
+
+def store_original_actuals(company_id: int, rows: list[dict[str, Any]]) -> int:
+    stored = 0
+    for row in rows:
+        metric = str(row.get("metric") or "")
+        year = int(row.get("fiscal_year") or 0)
+        if not metric or not year:
+            continue
+        existing = Event.query.filter_by(
+            company_id=company_id,
+            event_type="MANAGEMENT_ACTUAL_ORIGINAL",
+        ).all()
+        event = next(
+            (
+                item for item in existing
+                if str((item.payload or {}).get("metric") or "") == metric
+                and int((item.payload or {}).get("fiscal_year") or 0) == year
+            ),
+            None,
+        )
+        payload = dict(row)
+        payload["actual_version"] = ORIGINAL_ACTUAL_VERSION
+        payload["fingerprint"] = hashlib.sha256(
+            f"{company_id}|{metric}|{year}|{payload.get('value')}|{payload.get('filed_at')}|{payload.get('source_accession')}".encode()
+        ).hexdigest()[:24]
+        if event is None:
+            filed = _iso_day(payload.get("filed_at"))
+            db.session.add(Event(
+                company_id=company_id,
+                event_type="MANAGEMENT_ACTUAL_ORIGINAL",
+                title=f"{metric} original actual FY{year}",
+                event_date=datetime.fromisoformat(filed) if filed else utcnow(),
+                payload=payload,
+            ))
+            stored += 1
+        elif dict(event.payload or {}) != payload:
+            event.payload = payload
+            stored += 1
+    if stored:
+        db.session.commit()
+    return stored
+
+
+def _original_actual_for_year(company_id: int, metric: str, year: int) -> dict[str, Any] | None:
+    events = Event.query.filter_by(
+        company_id=company_id,
+        event_type="MANAGEMENT_ACTUAL_ORIGINAL",
+    ).order_by(Event.event_date.asc(), Event.id.asc()).all()
+    for event in events:
+        payload = dict(event.payload or {})
+        if str(payload.get("metric") or "") != metric:
+            continue
+        if int(payload.get("fiscal_year") or 0) != int(year):
+            continue
+        return {
+            "value": payload.get("value"),
+            "period_type": "FY",
+            "fiscal_year": year,
+            "period_end": payload.get("period_end"),
+            "filed_at": payload.get("filed_at"),
+            "is_restated": False,
+            "source_id": event.source_id,
+            "source_accession": payload.get("source_accession") or "",
+            "source_title": "Original point-in-time SEC annual actual",
+            "source_tags": payload.get("source_tags") or [],
+            "definition": payload.get("definition") or "",
+            "point_in_time_original": True,
+        }
+    return None
+
+
+def _current_actual_for_year(company_id: int, metric: str, year: int) -> dict[str, Any] | None:
     rows = annual_rows(company_id, 20)
     row = next((r for r in rows if int(r.get("fiscal_year") or 0) == int(year)), None)
     if not row:
         return None
     if metric in {"revenue", "fcf"}:
         value = row.get(metric)
+    elif metric == "eps":
+        value = None
     else:
         value = (row.get("metrics") or {}).get(metric)
     try:
@@ -462,8 +725,12 @@ def _actual_for_year(company_id: int, metric: str, year: int) -> dict[str, Any] 
         "source_id": period.source_id if period else None,
         "source_accession": period.accession_no if period else "",
         "source_title": actual_source.title if actual_source else "",
+        "point_in_time_original": False,
     }
 
+
+def _actual_for_year(company_id: int, metric: str, year: int) -> dict[str, Any] | None:
+    return _original_actual_for_year(company_id, metric, year) or _current_actual_for_year(company_id, metric, year)
 
 def _expected_unit(metric: str) -> str:
     return "%" if metric.endswith("_pct") else "USD"
