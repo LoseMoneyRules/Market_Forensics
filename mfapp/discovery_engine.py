@@ -109,14 +109,18 @@ def classify_coverage(intelligence: dict[str, Any], readiness: dict[str, Any]) -
     negatives = int(intelligence.get("negatives") or 0)
     positives = int(intelligence.get("positives") or 0)
     ready_ratio = (readiness.get("done", 0) / readiness.get("total", 1)) if readiness.get("total") else 0
+    raw_base_quality = intelligence.get("valuation_base_quality")
+    # Legacy direct callers predate valuation-quality provenance. Runtime/cache
+    # paths normalize missing provenance to DATA_WARNING before calling here.
+    intrinsic_discovery = True if raw_base_quality is None else str(raw_base_quality).upper() == "INTRINSIC"
 
-    if gap is not None and gap >= 20 and confidence in {"MEDIUM", "HIGH"} and negatives <= positives:
+    if intrinsic_discovery and gap is not None and gap >= 20 and confidence in {"MEDIUM", "HIGH"} and negatives <= positives:
         labels.append("QUALITY AT DISCOUNT")
-    if gap is not None and gap >= 25 and bias == "LONG":
+    if intrinsic_discovery and gap is not None and gap >= 25 and bias == "LONG":
         labels.append("LONG DISLOCATION")
-    if gap is not None and gap <= -15 and bias == "SHORT":
+    if intrinsic_discovery and gap is not None and gap <= -15 and bias == "SHORT":
         labels.append("SHORT DISLOCATION")
-    if gap is not None and gap >= 25 and negatives > positives:
+    if intrinsic_discovery and gap is not None and gap >= 25 and negatives > positives:
         labels.append("POTENTIAL VALUE TRAP")
     if negatives >= 2 and abs(float(gap or 0)) < 20:
         labels.append("FORENSIC DIVERGENCE")

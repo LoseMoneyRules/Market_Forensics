@@ -19,6 +19,7 @@ from .triangulation_engine import apply_peer_valuation_overlay, automatic_triang
 from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
+from .valuation_engine import stored_model_base_quality, valuation_is_decision_grade
 
 
 CACHE_PREFIX = "RESEARCH_CACHE_"
@@ -44,6 +45,21 @@ def cache_event_type(coverage_id: int) -> str:
     return f"{CACHE_PREFIX}{int(coverage_id)}"[:48]
 
 
+def _canonical_discovery_labels(payload: dict[str, Any]) -> list[str]:
+    intelligence = dict(payload.get("intelligence") or {})
+    if intelligence.get("valuation_base_quality") is None:
+        valuation = dict(payload.get("valuation") or {})
+        intelligence["valuation_base_quality"] = (
+            valuation.get("base_quality")
+            or valuation.get("quality")
+            or "DATA_WARNING"
+        )
+    return classify_coverage(
+        intelligence,
+        dict(payload.get("readiness") or {}),
+    )
+
+
 def latest_research_cache(coverage_id: int, company_id: int | None = None) -> dict[str, Any] | None:
     query = Event.query.filter_by(event_type=cache_event_type(coverage_id))
     if company_id is not None:
@@ -52,6 +68,9 @@ def latest_research_cache(coverage_id: int, company_id: int | None = None) -> di
     if row is None:
         return None
     payload = dict(row.payload or {})
+    # Recompute Discovery labels from current fail-closed policy on read. Old
+    # materialized labels must not preserve a value signal after quality rules tighten.
+    payload["discovery_labels"] = _canonical_discovery_labels(payload)
     payload["_event_id"] = row.id
     payload["_generated_at"] = row.event_date.isoformat() if row.event_date else None
     return payload
@@ -72,6 +91,7 @@ def latest_cache_map(coverage_ids: list[int]) -> dict[int, dict[str, Any]]:
         if coverage_id not in ids or coverage_id in out:
             continue
         payload = dict(row.payload or {})
+        payload["discovery_labels"] = _canonical_discovery_labels(payload)
         payload["_event_id"] = row.id
         payload["_generated_at"] = row.event_date.isoformat() if row.event_date else None
         out[coverage_id] = payload
@@ -153,9 +173,17 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
         "management": management,
         "management_accountability": management_accountability_rows,
         "management_promises": [{
-            "metric": row.get("metric"), "target_year": row.get("target_year"), "low": row.get("low"),
-            "high": row.get("high"), "unit": row.get("unit"), "statement": row.get("statement"),
-            "origin": row.get("origin"), "actual": row.get("actual"), "status": row.get("status"),
+            "metric": row.get("metric"), "target_year": row.get("target_year"),
+            "target_period": row.get("target_period"), "target_period_type": row.get("target_period_type"),
+            "low": row.get("low"), "high": row.get("high"), "unit": row.get("unit"),
+            "basis": row.get("basis"), "definition": row.get("definition"),
+            "comparability": row.get("comparability"), "comparability_reason": row.get("comparability_reason"),
+            "statement": row.get("statement"), "origin": row.get("origin"),
+            "source_id": row.get("source_id"), "source_provider": row.get("source_provider"),
+            "source_title": row.get("source_title"), "source_accession": row.get("source_accession"),
+            "source_form": row.get("source_form"), "source_date": row.get("source_date"),
+            "actual": row.get("actual"), "actual_provenance": row.get("actual_provenance") or {},
+            "status": row.get("status"),
         } for row in management_promises],
         "tape": tape,
         "tape_metrics": (tape.get("metrics") or {}),
@@ -211,6 +239,12 @@ def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) 
     if all((coverage, security, company, research, risk, model)):
         market = latest_snapshot(security.id)
         valuation = dict(payload.get("valuation") or valuation_result(coverage))
+        if not valuation.get("base_quality"):
+            base_quality = stored_model_base_quality(model)
+            valuation["base_quality"] = base_quality
+            valuation["quality"] = valuation.get("quality") or base_quality
+            valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
+            payload["valuation"] = _jsonable(valuation)
         updated_lenses = build_decision_lenses(
             coverage=coverage,
             company=company,

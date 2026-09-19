@@ -11,21 +11,51 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.2.9**  
+**State-Version: 0.2.10**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.8 on Namecheap  
-**Verified production baseline:** deploy run `35385879326` / deploy #42 = completed / success on main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; candidate health + post-cleanup health passed with `version = 0.2.8`, `architecture = web-native`, `database = primary`, `reports = rich`  
-**Persistent report vendor verification:** deploy #42 detected `MF_REPORTING_VENDOR_PRESENT=1` and `MF_REPORTING_VENDOR_UPLOAD=0`; normal deploy did not retransmit the reporting vendor and vendor exclusions passed before backup  
-**Main release:** 0.2.9 merged through PR #34 at `352dce5410e930b70b4dc9e7edff12eb676c4223`; 0.2.9 restores Tape Engine V2 / Large-Whale positioning / Tape charts while preserving the accepted 0.2.8 UI outside Tape  
-**Latest verified main CI:** run `35394852070` / #927 = completed / success on `352dce5410e930b70b4dc9e7edff12eb676c4223`; Python syntax, workflow YAML, JavaScript syntax, 0.2.8 baseline + 0.2.9 Tape regression contracts, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
-**0.2.8 production deploy:** deploy #42 remains the authoritative production baseline through main commit `81218981f7b30ff8e3dabd2be6fb72d58a5fc362`; PR #31, PR #32, PR #33 and PR #34 are not yet deployed  
-**Release phase:** 0.2.9 is complete and validated on main; production remains 0.2.8 until one explicit Namecheap deploy  
-**Branch:** `main`
+**Production:** 0.2.9 on Namecheap  
+**Verified production baseline:** deploy run `35395407123` / deploy #45 = completed / success on main commit `e8ffdd5316f44f37647314aba94950912bd55fd0`; pre-upload tests, startup smoke, candidate health and post-cleanup health passed; persistent reporting-vendor rebuild/upload was skipped because it was unchanged  
+**Main baseline before 0.2.10 merge:** VERSION `0.2.9` at `e8ffdd5316f44f37647314aba94950912bd55fd0`  
+**Latest verified main release CI:** run `35394852070` / #927 = completed / success for the 0.2.9 merge; the later `[skip ci]` CURRENT_STATE sync did not change runtime code  
+**0.2.10 candidate:** branch `release/0.2.10-correctness`, created directly from clean main `e8ffdd5316f44f37647314aba94950912bd55fd0`; no old development branch is its base  
+**Verified 0.2.10 final branch CI:** push run `35417497708` / #974 and PR run `35417499925` / #975 = completed / success at `ed8a0c726975ebe886de30ea6bf062b19c7bcb3b`; full prior regression suite, dedicated 0.2.10 correctness tests, syntax/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed  
+**Pull request:** #35 `0.2.10: close correctness gaps`, open and mergeable after the verified branch head above; the final CURRENT_STATE synchronization is documentation-only and uses `[skip ci]`  
+**Release phase:** 0.2.10 candidate; merge pending. Production remains 0.2.9. No 0.2.10 production deploy is authorized by merge alone.  
+**Branch:** `release/0.2.10-correctness`
 
-Deploy #42 is the authoritative production baseline. PR #31 does not change VERSION or architecture. After the next deploy, existing old/partial peer-overlay cache payloads must render safely without requiring a recalculation; future recalculations also write the complete peer-overlay schema.
+Production and main are separate states. The 0.2.10 release must merge and pass post-merge main CI before any explicit Namecheap deploy is considered.
 ---
+
+## 0.2.10 release scope — correctness closure
+
+0.2.10 is deliberately limited to three correctness gaps. It adds no unrelated feature work.
+
+### Valuation fail-closed
+- Bear / Base / Bull remain visible whenever mathematically available.
+- Stored Base-quality provenance is carried into materialized valuation output.
+- INTRINSIC and MANUAL_OVERRIDE are decision-grade.
+- PROVISIONAL_STORED_FALLBACK, PROVISIONAL_REFERENCE_FALLBACK and unresolved/mixed data states remain visible but cannot create ATTRACTIVE / EXPENSIVE, POSITIVE / NEGATIVE EDGE, LONG / SHORT READY/WATCH or value-based Discovery qualification.
+- Current market price is comparison/reference data only and cannot prove intrinsic fair value.
+- Old 0.2.9 caches are re-read against stored model quality without running providers or heavy valuation work during normal GET navigation.
+- Discovery external names continue to require INTRINSIC Base with at least two usable valuation methods; covered names also require INTRINSIC stored Base quality before local forensic gap logic can qualify them. MANUAL_OVERRIDE may be decision-grade for Research, but it does not satisfy Discovery's stricter intrinsic-only rule.
+
+### Management promises
+- Automatic guidance extraction is comparability-first.
+- Promise provenance preserves source/provider, source date, accession/form when available, metric, target period, basis/definition, comparability reason and status.
+- Interim/quarterly guidance, incompatible periods/units/ranges, adjusted/non-GAAP definitions, management-defined FCF, retrospective guidance, later restatements and unresolved target-year/comparator ambiguity are not forced into MET/MISS.
+- Non-comparable evidence remains EVIDENCE_ONLY; comparable unresolved promises remain PENDING; only economically comparable actuals may produce MET or MISS.
+- Management remains execution/accountability evidence, not personality or integrity scoring.
+
+### Validate canonical policy
+- `mfapp/validation_policy.py` is the single threshold policy.
+- VALIDATED requires at least 5 valid scored samples and reliability >= 65.
+- Insufficient samples are LIMITED even with a high score; very weak/failed runs are REVIEW; no run is NOT RUN.
+- Historical-run result state, Validate page, Process Readiness, Decision Lenses, Research Conclusion and report/cache consumers use that canonical state rather than independent hardcoded thresholds.
+- Legacy stored run rows are canonicalized on read, so a historical `VALIDATED` label cannot contradict current LIMITED policy for the same run.
+
+Dedicated regression coverage lives in `tests/test_0210_correctness.py`. No deploy workflow, authentication/security, reporting-vendor mechanism, navigation, Tape, Portfolio or Financial Flows implementation is changed.
 
 ## 0.2.9 release scope — Tape / Positioning parity recovery
 
@@ -438,6 +468,14 @@ A 405 is a release blocker.
 
 The old `numbers` gate key is migrated non-destructively to canonical `fundamentals`.
 
+Validate is separate from human Research gate approval. Its canonical user-facing policy is:
+- NOT RUN: no historical run;
+- LIMITED: fewer than 5 valid scored samples, missing reliability, or an otherwise inconclusive result;
+- VALIDATED: at least 5 valid scored samples and reliability >= 65;
+- REVIEW: failed/error execution or very weak reliability.
+
+These thresholds are defined only in `mfapp/validation_policy.py`; Process Readiness does not maintain a second policy.
+
 ---
 
 ## 8. Additive 0.2.6 production migration
@@ -505,54 +543,51 @@ Permanent UI rules:
 
 ---
 
-## 10. 0.2.8 release gates
+## 10. 0.2.10 release gates
 
-All 0.2.7 architecture/parity/security gates remain inherited. Before merge, 0.2.8 must additionally pass:
+All accepted 0.2.9 architecture, UI, security, reporting-vendor and Tape behavior is inherited. Before merge, 0.2.10 must prove:
 
-1. Python syntax, JavaScript syntax, workflow YAML and the full regression suite.
-2. dedicated `tests/test_028_release.py`.
-3. Full PDF and Full Word routes must return valid artifacts even with a hostile `wsgi.file_wrapper`; report delivery must not call `send_file(BytesIO)`.
-4. Overview contains a single combined FOR / AGAINST / Signals evidence area after the editable research/readiness area and immediately before report export.
-5. Expectations does not repeat the current Fundamentals KPI strip; forward Bear/Base/Bull path, price-implied expectations, variant perception and expectation inputs remain.
-6. SEC normalization must ingest direct COGS/Cost of Revenue and recover Gross Profit only with the exact Revenue − COGS bridge when needed.
-7. Optional Alpha Vantage fundamental fallback fills only missing fields, never overwrites SEC, matches fiscal period end and stores provider provenance.
-8. Gross Margin and ROIC remain visible core Fundamentals outputs; no invented Gross Profit, debt, tax rate or ROIC is permitted.
-9. Income Statement Financial Flows exposes `presentation = WATERFALL` and a sequential Revenue-to-Net bridge whose deltas reconcile to reported subtotals.
-10. Cash Flow rendering remains intact and signed exceptions remain signed.
-11. Validate appears immediately after Sources / Audit and links to the actual point-in-time validation route.
-12. ordinary deploy backup/upload/rollback mirrors exclude both `^_reporting_vendor(/|$)` and `^_vendor(/|$)`.
-13. unchanged reporting requirements keep `MF_REPORTING_VENDOR_UPLOAD=0`; changed requirements remain the only condition that stages/replaces the persistent report runtime.
-14. VERSION == State-Version == 0.2.8.
-15. normal GET navigation performs no new synchronous external fundamental fetches; provider refresh stays job/action driven.
-16. no production merge/deploy state is claimed until the corresponding GitHub CI and Namecheap health results exist.
+1. Python syntax, JavaScript syntax, workflow YAML and the full prior regression suite are green.
+2. Dedicated `tests/test_0210_correctness.py` is green.
+3. A provisional/reference Bear/Base/Bull remains visible but its Base cannot create VALUE classification, Variant edge or LONG/SHORT Research Conclusion.
+4. An intrinsic Base still produces normal VALUE / Variant / Research Conclusion behavior.
+5. Discovery rejects provisional/reference stored Base and keeps the existing intrinsic requirement for external candidates.
+6. Management promises with incompatible period/basis/definition/unit or retrospective evidence remain EVIDENCE_ONLY rather than MET/MISS.
+7. A genuinely comparable management promise produces the correct MET/MISS result and preserves provenance.
+8. One validation policy requires >=5 valid samples and reliability >=65 for VALIDATED everywhere; a legacy raw run status cannot display VALIDATED on one surface and LIMITED on another.
+9. Normal GET remains provider-free/heavy-engine-free.
+10. No UI regression is introduced outside the minimal Management provenance text required for correctness.
+11. VERSION == State-Version == 0.2.10.
+12. Production is not changed by PR or main merge; Namecheap deploy remains an explicit later action.
+
 
 The release is blocked by a broken capability even if its page returns HTTP 200.
 ---
 
 ## 11. Merge / deploy state
 
-**Current phase:** 0.2.7 is LIVE on Namecheap via successful deploy #38 (`35372729870`) from main commit `564ea20a6eb0663380f88a375f80b3f109cf54e9`. The deployment proved the recursive reporting-vendor exclusion in the real remote mirror plan, reused the persistent rich-report runtime with `MF_REPORTING_VENDOR_UPLOAD=0`, and passed candidate plus post-cleanup production health. 0.2.8 is currently a candidate on `release/0.2.8`; merge and deploy are pending.
+**Current phase:** production is 0.2.9 from successful manual deploy #45 (`35395407123`) on main commit `e8ffdd5316f44f37647314aba94950912bd55fd0`. 0.2.10 is a candidate on `release/0.2.10-correctness`; PR, merge and post-merge main CI are pending. No production deploy is part of the 0.2.10 merge workflow.
 
 CURRENT_STATE transition rule:
 - on PR/branch: document the current production baseline and candidate;
-- immediately when the release is merged to `main`: update this file on `main` to record the actual main commit and mark deploy as pending;
-- immediately after successful Namecheap deploy: update this file on `main` again with the deploy run, production version and production health result;
-- never leave an older production/main statement in this file after either transition.
+- immediately when the release is merged to `main`: sync this file on `main` with the real merge commit and post-merge CI;
+- after any later successful Namecheap deploy: sync production version, deploy run and health separately;
+- never infer production from `main`.
 
-Required 0.2.8 sequence:
+Required 0.2.10 sequence:
 
-`0.2.7 production baseline verified → 0.2.8 branch → PR CI green → merge main → post-merge main CI green → Namecheap deploy → production health green → CURRENT_STATE production sync`
+`0.2.9 production/main baseline verified → clean 0.2.10 branch → focused correctness changes → full tests → HOW/CURRENT_STATE/VERSION → PR CI green → merge main → post-merge main CI green → final CURRENT_STATE sync → deploy remains separate`
 
-Do not merge merely because individual fixes look correct.
-
-Production health for a release remains mandatory:
+Production health remains mandatory for any later deploy:
 - HTTP 200;
 - `status = ok`;
 - release `version` matches VERSION;
 - `architecture = web-native`;
+- `database = primary`;
 - `reports = rich`.
 
-If candidate health fails, deployment must fail/rollback rather than silently accepting a degraded report backend.
+If candidate health fails, deployment must fail/rollback rather than silently accepting a degraded runtime.
+
 ---
 
 ## 12. Mandatory update rule

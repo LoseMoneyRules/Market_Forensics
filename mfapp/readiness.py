@@ -11,6 +11,7 @@ from .core_models import (
 )
 from .extensions import db
 from .services import valuation_result
+from .validation_policy import validation_payload
 
 
 def _hash(value: Any) -> str:
@@ -94,19 +95,7 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         gate["status"] = "APPROVED" if approval else ("PENDING APPROVAL" if gate["evidence_ready"] else "MISSING EVIDENCE")
 
     done = sum(1 for gate in gates if gate["approved"])
-    reliability = float(hist.reliability_score) if hist and hist.reliability_score is not None else None
-    if hist is None:
-        validation_state = "NOT RUN"
-    elif str(hist.status or "").upper() in {"FAILED", "ERROR"}:
-        validation_state = "REVIEW"
-    elif (hist.sample_size or 0) < 3 or reliability is None:
-        validation_state = "LIMITED"
-    elif reliability >= 65 and (hist.sample_size or 0) >= 5:
-        validation_state = "VALIDATED"
-    elif reliability < 40:
-        validation_state = "REVIEW"
-    else:
-        validation_state = "LIMITED"
+    validation = validation_payload(hist)
 
     return {
         "done": done,
@@ -114,13 +103,7 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         "total": len(gates),
         "gates": gates,
         "ready_to_validate": bool(gates) and done == len(gates),
-        "validation": {
-            "state": validation_state,
-            "run_id": hist.id if hist else None,
-            "status": hist.status if hist else None,
-            "samples": hist.sample_size if hist else 0,
-            "reliability": reliability,
-        },
+        "validation": validation,
         "bias_flags": [],
     }
 

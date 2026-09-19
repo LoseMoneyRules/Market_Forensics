@@ -14,6 +14,7 @@ from .routes import SECTIONS, _ctx, bp
 from .security import role_required
 from .research_synthesis import valuation_price_history
 from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, n
+from .validation_policy import state_for_run
 
 
 def _fraction(value, default=None):
@@ -256,7 +257,16 @@ def validate_company(ticker):
     runs = HistoricalTestRun.query.filter_by(coverage_id=ctx["coverage"].id).order_by(HistoricalTestRun.created_at.desc()).limit(20).all()
     latest = runs[0] if runs else None
     samples = HistoricalTestSample.query.filter_by(run_id=latest.id).order_by(HistoricalTestSample.anchor_date.desc()).all() if latest else []
-    return render_template("validate.html", runs=runs, latest_run=latest, samples=samples, **ctx)
+    validation_states = {run.id: state_for_run(run) for run in runs}
+    return render_template(
+        "validate.html",
+        runs=runs,
+        latest_run=latest,
+        latest_validation_state=state_for_run(latest),
+        validation_states=validation_states,
+        samples=samples,
+        **ctx,
+    )
 
 
 @bp.post("/company/<ticker>/validate/run")

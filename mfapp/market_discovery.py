@@ -10,6 +10,7 @@ from .data_providers import get_secret
 from .discovery_forensics import enrich_forensic_candidates, forensic_side
 from .extensions import db
 from .research_cache import latest_cache_map
+from .services import valuation_result
 
 MIN_LONG_PRICE = 5.0
 MIN_SHORT_PRICE = 10.0
@@ -64,6 +65,10 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
     for coverage, security in rows:
         cache = dict(caches.get(coverage.id) or {})
         valuation = dict(cache.get("valuation") or {})
+        if not valuation.get("base_quality"):
+            live_valuation = valuation_result(coverage)
+            for key in ("quality", "base_quality", "decision_grade"):
+                valuation[key] = live_valuation.get(key)
         out[security.ticker.upper()] = {
             "known": True,
             "coverage_id": coverage.id,
@@ -76,6 +81,9 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
             "valuation": {
                 "current_price": valuation.get("current_price"),
                 "base": valuation.get("base"),
+                "quality": valuation.get("quality"),
+                "base_quality": valuation.get("base_quality"),
+                "decision_grade": valuation.get("decision_grade"),
             },
             "cache_ready": bool(cache),
         }

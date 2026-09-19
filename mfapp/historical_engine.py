@@ -9,6 +9,7 @@ from .extensions import db
 from .historical_data import preferred_provider, price_on_or_after, refresh_historical_prices
 from .secdata import DURATION_TAGS, INSTANT_TAGS, SEC_DATA, _facts, _json, _ticker_meta, _ua
 from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, n
+from .validation_policy import validation_state
 
 
 def utcnow() -> datetime:
@@ -274,7 +275,12 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         setattr(run, field, mean(values) if values else None)
     values = [n(row.get("reliability")) for row in reliability_rows if n(row.get("reliability")) is not None]
     run.reliability_score = mean(values) if values else None
-    run.status = "LOW_SAMPLE" if run.sample_size < 3 else ("VALIDATED" if n(run.reliability_score) is not None and n(run.reliability_score) >= 60 else "REVIEW")
+    run.status = validation_state(
+        exists=True,
+        execution_status="COMPLETED",
+        sample_size=run.sample_size,
+        reliability=run.reliability_score,
+    )
     run.summary = {
         "anchors_considered": len(anchors), "completed_samples": run.sample_size,
         "anti_leakage": "Future filings and prices are excluded from each model snapshot. Future prices enter validation only.",

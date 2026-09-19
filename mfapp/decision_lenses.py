@@ -4,6 +4,7 @@ from typing import Any
 
 from .core_models import BearCaseItem, Catalyst, Expectation, MonitoringRule, ResearchState, RiskPlan
 from .expectations_engine import price_implied_expectations
+from .valuation_engine import valuation_base_quality, valuation_is_decision_grade
 
 
 def _text(value: Any) -> str:
@@ -54,8 +55,17 @@ def build_decision_lenses(
     else:
         business = "MIXED"
 
-    # VALUE
-    if base_gap is None:
+    # VALUE — displayed targets are not automatically decision-grade.
+    explicit_quality = any(key in valuation for key in ("base_quality", "quality", "scenarios"))
+    if explicit_quality:
+        base_quality = valuation_base_quality(valuation)
+        decision_grade_valuation = valuation_is_decision_grade(valuation)
+    else:
+        # Compatibility for direct/internal callers predating quality metadata.
+        # Production cache/route paths attach stored Base quality before calling us.
+        base_quality = "LEGACY_UNSPECIFIED"
+        decision_grade_valuation = True
+    if base_gap is None or not decision_grade_valuation:
         value = "UNVERIFIED"
     elif base_gap >= 20:
         value = "ATTRACTIVE"
@@ -74,6 +84,8 @@ def build_decision_lenses(
     expectation_count = Expectation.query.filter_by(coverage_id=coverage.id).count()
     if not market_view or not our_view:
         variant = "UNPROVEN"
+    elif not decision_grade_valuation:
+        variant = "DEFINED · UNPROVEN"
     elif not variant_evidence and expectation_count == 0:
         variant = "DEFINED · UNPROVEN"
     elif value == "ATTRACTIVE" and expectations in {"FAVORABLE", "BALANCED"} and variant_evidence:
@@ -125,6 +137,8 @@ def build_decision_lenses(
     research_ready = bool(readiness.get("ready_to_validate"))
     if not research_ready:
         conclusion = "RESEARCH INCOMPLETE"
+    elif not decision_grade_valuation:
+        conclusion = "DATA REVIEW"
     elif model_confidence == "UNVALIDATED":
         conclusion = "READY TO VALIDATE"
     elif value == "ATTRACTIVE" and variant == "POSITIVE EDGE" and path == "SUPPORTIVE" and model_confidence in {"STRONG", "MODERATE"}:
@@ -160,6 +174,8 @@ def build_decision_lenses(
         "model_confidence": model_confidence,
         "thesis_control": thesis_control,
         "research_conclusion": conclusion,
+        "valuation_base_quality": base_quality,
+        "valuation_decision_grade": decision_grade_valuation,
         "implied_expectations": implied,
     }
 

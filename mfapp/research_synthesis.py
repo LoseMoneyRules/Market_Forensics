@@ -24,6 +24,7 @@ from .current_financials import current_row
 from .extensions import db
 from .macro_context import macro_context
 from .services import valuation_result
+from .valuation_engine import valuation_base_quality, valuation_is_decision_grade
 
 
 ENGINE_VERSION = "0.2.0"
@@ -138,6 +139,8 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
     expected = _num(valuation.get("expected_value"))
     base_gap = ((base / price - 1.0) * 100.0) if base is not None and price not in (None, 0) else None
     expected_gap = ((expected / price - 1.0) * 100.0) if expected is not None and price not in (None, 0) else None
+    valuation_decision_grade = valuation_is_decision_grade(valuation)
+    base_quality = valuation_base_quality(valuation)
     horizon = int((model.assumptions or {}).get("horizon_years") or 5) if model else 5
     target_year = date.today().year + horizon
 
@@ -172,8 +175,13 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
     expectation_diffs.sort(key=lambda row: abs(row["delta_pct"]), reverse=True)
 
     why = []
-    if base_gap is not None:
+    if base_gap is not None and valuation_decision_grade:
         why.append(f"Base fair value is {base_gap:+.1f}% vs the verified market reference.")
+    elif base_gap is not None:
+        why.append(
+            f"Displayed Base is {base_gap:+.1f}% vs market, but quality is {base_quality.replace('_', ' ')}; "
+            "it is visible for review and is not decision-grade intrinsic evidence."
+        )
     if expectation_diffs:
         top = expectation_diffs[0]
         why.append(f"Largest stored expectation variant: {top['label']} {top['delta_pct']:+.1f}% vs market input.")
@@ -223,7 +231,7 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
         lenses.append({"label": label, "key": key, "state": state})
 
     why_now = []
-    if base_gap is not None and abs(base_gap) >= 15:
+    if valuation_decision_grade and base_gap is not None and abs(base_gap) >= 15:
         why_now.append(f"Valuation dislocation is material at {base_gap:+.1f}% vs Base.")
     if catalysts:
         dated = next((row for row in catalysts if row.expected_date), None)

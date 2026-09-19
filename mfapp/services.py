@@ -5,6 +5,7 @@ from typing import Any
 
 from .extensions import db
 from .calculations import CALCULATION_VERSION, bias_flags, calculate_valuation, financial_metrics
+from .valuation_engine import canonical_valuation_quality, valuation_is_decision_grade
 from .core_models import (
     BearCaseItem,
     Catalyst,
@@ -120,10 +121,17 @@ def ensure_workspace(coverage: Coverage, user_id: int) -> tuple[ResearchState, R
 def valuation_result(coverage: Coverage) -> dict[str, Any]:
     model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
     if not model:
-        return calculate_valuation(bear=None, base=None, bull=None, bear_probability=.25, base_probability=.5, bull_probability=.25, current_price=None).as_dict()
+        out = calculate_valuation(
+            bear=None, base=None, bull=None,
+            bear_probability=.25, base_probability=.5, bull_probability=.25,
+            current_price=None,
+        ).as_dict()
+        out.update({"quality": "DATA_WARNING", "base_quality": "DATA_WARNING", "decision_grade": False})
+        return out
+
     scenarios = {row.name.upper(): row for row in model.scenarios}
     market = latest_market_snapshot(coverage.security_id)
-    return calculate_valuation(
+    out = calculate_valuation(
         bear=(scenarios.get("BEAR").equity_value_per_share if scenarios.get("BEAR") else None),
         base=(scenarios.get("BASE").equity_value_per_share if scenarios.get("BASE") else None),
         bull=(scenarios.get("BULL").equity_value_per_share if scenarios.get("BULL") else None),
@@ -132,6 +140,23 @@ def valuation_result(coverage: Coverage) -> dict[str, Any]:
         bull_probability=(scenarios.get("BULL").probability if scenarios.get("BULL") else .25),
         current_price=market.price if market else None,
     ).as_dict()
+
+    latest_engine = dict((model.assumptions or {}).get("latest_engine_result") or {})
+    latest_scenarios = dict(latest_engine.get("scenarios") or {})
+    base_row = scenarios.get("BASE")
+    base_outputs = dict(base_row.outputs or {}) if base_row else {}
+    base_quality = canonical_valuation_quality(
+        base_outputs.get("quality")
+        or (latest_scenarios.get("BASE") or {}).get("quality")
+        or latest_engine.get("quality")
+    )
+    overall_quality = canonical_valuation_quality(latest_engine.get("quality") or base_quality)
+    out.update({
+        "quality": overall_quality,
+        "base_quality": base_quality,
+        "decision_grade": valuation_is_decision_grade({"base_quality": base_quality}),
+    })
+    return out
 
 
 def financial_rows(company_id: int, limit: int = 10) -> list[dict[str, Any]]:

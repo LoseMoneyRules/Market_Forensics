@@ -35,6 +35,7 @@ from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
 from .symbols import validate_ticker
+from .valuation_engine import stored_model_base_quality, valuation_base_quality, valuation_is_decision_grade
 
 bp = Blueprint("web", __name__)
 
@@ -150,7 +151,8 @@ def _fallback_lenses(valuation: dict, cache_pending: bool) -> dict:
         gap = ((float(base) / float(price) - 1.0) * 100.0) if base is not None and price not in (None, 0) else None
     except (TypeError, ValueError, ZeroDivisionError):
         gap = None
-    value = "UNVERIFIED" if gap is None else ("ATTRACTIVE" if gap >= 20 else "EXPENSIVE" if gap <= -15 else "FAIR")
+    decision_grade = valuation_is_decision_grade(valuation)
+    value = "UNVERIFIED" if gap is None or not decision_grade else ("ATTRACTIVE" if gap >= 20 else "EXPENSIVE" if gap <= -15 else "FAIR")
     return {
         "rows": [],
         "business": "CALCULATING" if cache_pending else "UNPROVEN",
@@ -163,6 +165,51 @@ def _fallback_lenses(valuation: dict, cache_pending: bool) -> dict:
         "research_conclusion": "UPDATING" if cache_pending else "DATA REVIEW",
         "implied_expectations": {"available": False, "classification": "CALCULATING" if cache_pending else "UNAVAILABLE", "drivers": []},
     }
+
+
+def _fail_closed_cached_research(
+    valuation: dict,
+    readiness: dict,
+    intelligence: dict,
+    lenses: dict,
+) -> tuple[dict, dict]:
+    """Make old/materialized payloads obey current valuation-quality policy on read."""
+    if valuation_is_decision_grade(valuation):
+        return intelligence, lenses
+
+    quality = valuation_base_quality(valuation)
+    intelligence = dict(intelligence or {})
+    intelligence["action"] = "WAIT"
+    intelligence["stance"] = "DATA REVIEW"
+    intelligence["valuation_base_quality"] = quality
+    intelligence["valuation_decision_grade"] = False
+    warnings = list(intelligence.get("warnings") or [])
+    warning = f"Valuation quality is {quality.replace('_', ' ')}; target remains visible but cannot create an edge."
+    if warning not in warnings:
+        warnings.append(warning)
+    intelligence["warnings"] = warnings
+
+    lenses = dict(lenses or {})
+    lenses["value"] = "UNVERIFIED"
+    if str(lenses.get("variant") or "") in {"POSITIVE EDGE", "NEGATIVE EDGE", "POSSIBLE"}:
+        lenses["variant"] = "DEFINED · UNPROVEN"
+    lenses["valuation_base_quality"] = quality
+    lenses["valuation_decision_grade"] = False
+    lenses["research_conclusion"] = (
+        "RESEARCH INCOMPLETE"
+        if not readiness.get("ready_to_validate")
+        else "DATA REVIEW"
+    )
+    rows = []
+    for row in list(lenses.get("rows") or []):
+        item = dict(row)
+        if item.get("key") == "value":
+            item["state"] = "UNVERIFIED"
+        elif item.get("key") == "variant" and str(item.get("state") or "") in {"POSITIVE EDGE", "NEGATIVE EDGE", "POSSIBLE"}:
+            item["state"] = "DEFINED · UNPROVEN"
+        rows.append(item)
+    lenses["rows"] = rows
+    return intelligence, lenses
 
 
 def _fast_brief(valuation: dict, model: ValuationModel | None, lenses: dict) -> dict:
@@ -194,6 +241,11 @@ def _ctx(ticker: str) -> dict:
     position = Position.query.filter_by(user_id=g.user.id, security_id=security.id).first()
     cache = latest_research_cache(coverage.id, company.id)
     valuation = dict((cache or {}).get("valuation") or valuation_result(coverage))
+    if not valuation.get("base_quality"):
+        base_quality = stored_model_base_quality(model)
+        valuation["base_quality"] = base_quality
+        valuation["quality"] = valuation.get("quality") or base_quality
+        valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
 
     active_recalc = Job.query.filter(
         Job.user_id == g.user.id,
@@ -218,6 +270,7 @@ def _ctx(ticker: str) -> dict:
     readiness = research_readiness(coverage)
     intelligence = dict((cache or {}).get("intelligence") or _fallback_intelligence(readiness, updating=cache_pending))
     decision_lenses = dict((cache or {}).get("decision_lenses") or _fallback_lenses(valuation, cache_pending))
+    intelligence, decision_lenses = _fail_closed_cached_research(valuation, readiness, intelligence, decision_lenses)
     brief = dict((cache or {}).get("brief") or _fast_brief(valuation, model, decision_lenses))
 
     return {
@@ -367,9 +420,16 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             "current_price": float(market.price) if market and market.price is not None else None,
             "bear": None, "base": None, "bull": None, "expected_value": None,
         })
+        if not valuation.get("base_quality"):
+            model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
+            base_quality = stored_model_base_quality(model)
+            valuation["base_quality"] = base_quality
+            valuation["quality"] = valuation.get("quality") or base_quality
+            valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
         readiness = dict(cache.get("readiness") or _fallback_readiness())
         intelligence = dict(cache.get("intelligence") or _fallback_intelligence(readiness, updating=True))
         lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
+        intelligence, lenses = _fail_closed_cached_research(valuation, readiness, intelligence, lenses)
         pending = [gate.get("label") for gate in readiness.get("gates", []) if not gate.get("approved")]
         validation_state = str((readiness.get("validation") or {}).get("state") or "NOT RUN")
         conclusion = str(lenses.get("research_conclusion") or "DATA REVIEW")
