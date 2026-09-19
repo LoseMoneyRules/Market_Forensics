@@ -13,7 +13,7 @@
   <link rel="icon" href="{{ url_for('static', filename='img/mark.svg', v=mf_version) }}" type="image/svg+xml">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v=mf_version) }}">
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="{% block body_class %}{% endblock %}{% if g.user and real_role == 'CONTROL' and effective_role != 'CONTROL' %} preview-mode{% endif %}">
 {% if g.user %}
 <header class="topbar">
   <button id="mf-mobile-menu" class="mobile-menu-button" type="button" aria-label="Open navigation" aria-controls="mf-primary-nav" aria-expanded="false">☰</button>
