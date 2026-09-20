@@ -179,7 +179,11 @@ def test_0214_executive_full_pdf_and_word_are_valid_and_decision_first():
     upper=text.upper()
     assert upper.index("RESEARCH CONCLUSION") < upper.index("BASE TARGET")
     assert upper.index("RESEARCH CONCLUSION") < upper.index("VALUATION")
-    for token in ("CURRENT PRICE","BEAR","BASE","BULL","BASE GAP","VALUATION QUALITY","LONG WATCH","$62.00"):
+    for token in (
+        "CURRENT PRICE","BEAR","BASE","BULL","BASE GAP","VALUATION QUALITY",
+        "VALUE LENS","EXPECTATIONS","VARIANT","PATH","MODEL CONFIDENCE","THESIS CONTROL",
+        "LONG WATCH","$62.00",
+    ):
         assert token in upper
 
 
