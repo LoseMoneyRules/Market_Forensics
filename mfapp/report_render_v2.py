@@ -241,6 +241,7 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     styles.add(ParagraphStyle(name="MFKpiV", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=10.4, leading=12.2, textColor=colors.HexColor(NAVY), alignment=TA_CENTER))
     styles.add(ParagraphStyle(name="MFCell", parent=styles["BodyText"], fontSize=8.8, leading=11.2, textColor=colors.HexColor(INK)))
     styles.add(ParagraphStyle(name="MFCellSmall", parent=styles["BodyText"], fontSize=8.1, leading=10.2, textColor=colors.HexColor(INK)))
+    styles.add(ParagraphStyle(name="MFSource", parent=styles["BodyText"], fontSize=6.6, leading=8.1, textColor=colors.HexColor(MUTED)))
     styles.add(ParagraphStyle(name="MFTableHead", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=8.0, leading=9.7, textColor=colors.HexColor(MUTED)))
     styles.add(ParagraphStyle(name="MFCenter", parent=styles["MFCell"], alignment=TA_CENTER))
     styles.add(ParagraphStyle(name="MFRight", parent=styles["MFCell"], alignment=TA_RIGHT))
@@ -368,6 +369,9 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     ]))
     story.extend([hero, Spacer(1,6)])
 
+    # The decision range is intentionally visual and immediate: conclusion -> valuation map
+    # -> compact decision diagnostics. This mirrors the first-read order used in sell-side/buy-side notes.
+    image("valuation_map", 6.55, 1.58)
     kpi_strip([
         ("Current price", _money(valuation.get("current_price")), MARKET),
         ("Bear", _money(valuation.get("bear")), NEGATIVE),
@@ -382,7 +386,6 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         ("Model confidence", _txt(lenses.get("model_confidence")), _tone(str(lenses.get("model_confidence")))),
         ("Thesis control", _txt(lenses.get("thesis_control")), _tone(str(lenses.get("thesis_control")))),
     ], 6)
-    image("valuation_map", 6.55, 1.58)
 
     # Executive decision content.
     thesis = data.get("thesis") or {}
@@ -706,7 +709,8 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         for row in sources[:50]:
             doc_type=" / ".join(x for x in [row.get("document"),row.get("type")] if x)
             rows.append([row.get("provider"),doc_type,str(row.get("published_at") or "")[:10],str(row.get("retrieved_at") or "")[:19],_txt(row.get("title"),140)])
-        story.append(rule_table(rows,widths=[.8*inch,1.2*inch,.75*inch,1.0*inch,2.8*inch],font_style="MFCellSmall"))
+        # Complete provenance, deliberately de-emphasized like a bank research source appendix.
+        story.append(rule_table(rows,widths=[.8*inch,1.2*inch,.75*inch,1.0*inch,2.8*inch],font_style="MFSource"))
     else:
         story.append(P("No source provenance rows are stored."))
 
@@ -888,6 +892,8 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     shade(left,"F7FAFC");shade(right,"F7FAFC");borders(left,"BDD0DF","6");borders(right,"BDD0DF","6")
     doc.add_paragraph().paragraph_format.space_after=Pt(1)
 
+    # Keep the Bear / Base / Bull visual directly below the conclusion hero in Word too.
+    add_chart(charts,"valuation_map",6.9)
     kpis([
         ("Current price",_money(valuation.get("current_price")),MARKET),("Bear",_money(valuation.get("bear")),NEGATIVE),
         ("Base",_money(valuation.get("base")),PRIMARY),("Bull",_money(valuation.get("bull")),POSITIVE),("Base gap",_pct(valuation.get("base_gap_pct")),PRIMARY),
@@ -896,7 +902,6 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         ("Variant",_txt(lenses.get("variant")),_tone(str(lenses.get("variant")))),("Path",_txt(lenses.get("path")),_tone(str(lenses.get("path")))),
         ("Model confidence",_txt(lenses.get("model_confidence")),_tone(str(lenses.get("model_confidence")))),("Thesis control",_txt(lenses.get("thesis_control")),_tone(str(lenses.get("thesis_control")))),
     ],6)
-    add_chart(charts,"valuation_map",6.9)
 
     thesis=data.get("thesis") or {}
     two_panel("MARKET VIEW",_txt(thesis.get("market_view"),500),"OUR VIEW / VARIANT",_txt(thesis.get("our_view"),500))
@@ -1054,7 +1059,12 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     heading("Sources / audit",1,"Provenance")
     sources=data.get("sources") or []
     if sources:
-        add_table(["Provider","Document / type","Published","Retrieved","Title"],[[r.get("provider")," / ".join(x for x in [r.get("document"),r.get("type")] if x),str(r.get("published_at") or "")[:10],str(r.get("retrieved_at") or "")[:19],_txt(r.get("title"),160)] for r in sources[:50]],small=True)
+        source_table=add_table(["Provider","Document / type","Published","Retrieved","Title"],[[r.get("provider")," / ".join(x for x in [r.get("document"),r.get("type")] if x),str(r.get("published_at") or "")[:10],str(r.get("retrieved_at") or "")[:19],_txt(r.get("title"),160)] for r in sources[:50]],small=True)
+        for source_row in source_table.rows:
+            for cell in source_row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size=Pt(6.7);run.font.color.rgb=rgb(MUTED)
     contract=data.get("data_contract") or {}
     p=doc.add_paragraph(f"Report data contract {data.get('contract_version','')} | Cache {contract.get('materialized_cache_event') or '-'} | Provider refresh started: {'YES' if contract.get('provider_refresh_started') else 'NO'} | Heavy analytics started: {'YES' if contract.get('heavy_analytics_started') else 'NO'}")
     for r in p.runs:r.font.size=Pt(8);r.font.color.rgb=rgb(MUTED)

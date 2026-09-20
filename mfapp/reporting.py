@@ -429,6 +429,7 @@ def render_pdf_safe(data: dict[str, Any]) -> BytesIO:
 
 
 def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None = None) -> BytesIO:
+    """Render Discovery as an investment-opportunity landscape, not a raw scan dump."""
     branding = dict(branding or {})
     candidates = list(scan.get("candidates") or [])[:60]
 
@@ -444,75 +445,98 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
         except (TypeError, ValueError, ArithmeticError):
             return "—"
 
+    def _compact_money(value):
+        try:
+            value=float(value)
+        except (TypeError, ValueError, ArithmeticError):
+            return "—"
+        sign="-" if value < 0 else ""
+        value=abs(value)
+        if value >= 1_000_000_000:
+            return f"{sign}\${value/1_000_000_000:.1f}B"
+        if value >= 1_000_000:
+            return f"{sign}\${value/1_000_000:.1f}M"
+        if value >= 1_000:
+            return f"{sign}\${value/1_000:.0f}K"
+        return f"{sign}\${value:,.0f}"
+
     if not _load_report_libs():
-        lines = [
-            str(branding.get("title") or "Market Forensics") + " · Discovery",
-            "Broad-universe staged forensic screen · P1/P2 are stronger research leads; WATCH preserves emerging or verification-needed dislocations.",
-            "",
-        ]
+        lines = [str(branding.get("title") or "Market Forensics") + " · Discovery", "Opportunity landscape · latest completed broad-universe scan", ""]
         for idx, row in enumerate(candidates, start=1):
             lines.append(
                 f"{idx}. {row.get('ticker') or ''} · {row.get('priority') or 'WATCH'} · {row.get('research_side') or 'RESEARCH'} · "
-                f"price {_number(row.get('price'))} · Base {_number(row.get('base') if row.get('base') is not None else row.get('fair_value'))} · "
-                f"gap {_gap(row.get('base_gap_pct'))} · {int(row.get('valuation_methods') or 0)} methods · "
-                f"{row.get('radar_label') or ''}"
+                f"price {_number(row.get('price'))} · Bear {_number(row.get('bear'))} · Base {_number(row.get('base') if row.get('base') is not None else row.get('fair_value'))} · "
+                f"Bull {_number(row.get('bull'))} · gap {_gap(row.get('base_gap_pct'))} · {row.get('radar_label') or ''}"
             )
         lines += ["", str(branding.get("footer") or "Lose Money Rules")]
         return _fallback_pdf(lines, landscape_page=True)
 
     out = BytesIO()
-    doc = SimpleDocTemplate(
-        out,
-        pagesize=landscape(LETTER),
-        rightMargin=.35*inch, leftMargin=.35*inch, topMargin=.35*inch, bottomMargin=.35*inch,
-    )
+    doc = SimpleDocTemplate(out, pagesize=landscape(LETTER), rightMargin=.34*inch, leftMargin=.34*inch, topMargin=.32*inch, bottomMargin=.34*inch)
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="MFDiscTitle", parent=styles["Title"], fontSize=17, leading=20, textColor=colors.HexColor("#0b1f33"), alignment=TA_LEFT, spaceAfter=5))
-    styles.add(ParagraphStyle(name="MFDiscBody", parent=styles["BodyText"], fontSize=9.5, leading=12, spaceAfter=3))
+    styles.add(ParagraphStyle(name="MFDiscBrand", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=7.4, leading=9, textColor=colors.HexColor("#3a6f99"), spaceAfter=1))
+    styles.add(ParagraphStyle(name="MFDiscTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=17, leading=19, textColor=colors.HexColor("#0b1f33"), alignment=TA_LEFT, spaceAfter=2))
+    styles.add(ParagraphStyle(name="MFDiscBody", parent=styles["BodyText"], fontSize=8.6, leading=10.8, textColor=colors.HexColor("#344454"), spaceAfter=3))
+    styles.add(ParagraphStyle(name="MFDiscSmall", parent=styles["BodyText"], fontSize=6.5, leading=8.0, textColor=colors.HexColor("#667788"), spaceAfter=1))
     story = []
     logo = _safe_logo(str(branding.get("logo_url") or ""))
     if logo:
-        story += [RLImage(logo, width=1.0*inch, height=.34*inch), Spacer(1,3)]
+        story += [RLImage(logo, width=.82*inch, height=.28*inch), Spacer(1,2)]
     story += [
-        Paragraph(escape(str(branding.get("title") or "Market Forensics")) + " · Discovery", styles["MFDiscTitle"]),
-        Paragraph("Broad-universe staged forensic screen · P1/P2 are stronger research leads; WATCH preserves emerging or verification-needed dislocations.", styles["MFDiscBody"]),
+        Paragraph(escape(str(branding.get("title") or "MARKET FORENSICS").upper()), styles["MFDiscBrand"]),
+        Paragraph("Discovery · Opportunity Landscape", styles["MFDiscTitle"]),
+        Paragraph("Latest completed broad-universe scan. P1/P2 are research leads; WATCH preserves emerging or verification-needed dislocations. Discovery is a research funnel, not an investment recommendation.", styles["MFDiscBody"]),
     ]
-    rows = [["#","Ticker","Tier","Side","Price","Bear","Base","Bull","Gap","Methods","Research reason"]]
-    for idx, row in enumerate(candidates, start=1):
-        rows.append([
-            str(idx),
-            str(row.get("ticker") or ""),
-            str(row.get("priority") or "WATCH"),
-            str(row.get("research_side") or ""),
-            _number(row.get("price")),
-            _number(row.get("bear")),
-            _number(row.get("base") if row.get("base") is not None else row.get("fair_value")),
-            _number(row.get("bull")),
-            _gap(row.get("base_gap_pct")),
-            str(int(row.get("valuation_methods") or 0)),
-            str(row.get("radar_label") or "") + (" · " + str((row.get("forensic_signals") or [{}])[0].get("detail") or "") if row.get("forensic_signals") else ""),
-        ])
-    table = Table(
-        rows,
-        colWidths=[.25*inch,.48*inch,.48*inch,.48*inch,.58*inch,.56*inch,.56*inch,.56*inch,.58*inch,.50*inch,3.85*inch],
-        repeatRows=1,
-    )
-    table.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),
-        ("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),
-        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-        ("FONTSIZE",(0,0),(-1,-1),8.2),
-        ("GRID",(0,0),(-1,-1),.25,colors.HexColor("#c7d1da")),
-        ("VALIGN",(0,0),(-1,-1),"TOP"),
-        ("LEFTPADDING",(0,0),(-1,-1),3),
-        ("RIGHTPADDING",(0,0),(-1,-1),3),
-        ("TOPPADDING",(0,0),(-1,-1),3),
-        ("BOTTOMPADDING",(0,0),(-1,-1),3),
+
+    summary = [
+        ("CANDIDATES", str(len(candidates))),
+        ("LONG", str(scan.get("long_count") or sum(1 for x in candidates if x.get("research_side")=="LONG" and x.get("priority")!="WATCH"))),
+        ("SHORT", str(scan.get("short_count") or sum(1 for x in candidates if x.get("research_side")=="SHORT" and x.get("priority")!="WATCH"))),
+        ("WATCH", str(scan.get("watch_count") or sum(1 for x in candidates if x.get("priority")=="WATCH"))),
+        ("P1", str(scan.get("p1_count") or sum(1 for x in candidates if x.get("priority")=="P1"))),
+        ("P2", str(scan.get("p2_count") or sum(1 for x in candidates if x.get("priority")=="P2"))),
+    ]
+    summary_cells=[Paragraph('<font size="6.5" color="#667788"><b>'+escape(label)+'</b></font><br/><font size="11" color="#0b1f33"><b>'+escape(value)+'</b></font>',styles["MFDiscBody"]) for label,value in summary]
+    summary_table=Table([summary_cells], colWidths=[1.62*inch]*6)
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#f7fafc")),("BOX",(0,0),(-1,-1),.4,colors.HexColor("#d9e0e6")),
+        ("INNERGRID",(0,0),(-1,-1),.25,colors.HexColor("#d9e0e6")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("ALIGN",(0,0),(-1,-1),"CENTER"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
     ]))
-    story += [table, Spacer(1,4), Paragraph(
-        escape(f"{branding.get('footer') or 'Lose Money Rules'} · {scan.get('universe_source') or 'Discovery'} · {len(candidates)} candidates"),
-        styles["MFDiscBody"],
-    )]
+    story += [summary_table, Spacer(1,5)]
+
+    rows = [["#","Ticker","Tier","Side","Price","Bear","Base","Bull","Gap","Methods","$ Vol","Research reason / invalidation"]]
+    for idx, row in enumerate(candidates, start=1):
+        signals=list(row.get("forensic_signals") or [])
+        signal = str((signals[0] or {}).get("detail") or "") if signals and isinstance(signals[0],dict) else ""
+        reason = " · ".join(x for x in [str(row.get("radar_label") or ""), str(row.get("priority_reason") or ""), signal] if x)
+        invalidates=str(row.get("what_invalidates") or "")
+        if invalidates:
+            reason += (" | Invalidates: " if reason else "Invalidates: ") + invalidates
+        rows.append([
+            str(idx), str(row.get("ticker") or ""), str(row.get("priority") or "WATCH"), str(row.get("research_side") or ""),
+            _number(row.get("price")), _number(row.get("bear")), _number(row.get("base") if row.get("base") is not None else row.get("fair_value")),
+            _number(row.get("bull")), _gap(row.get("base_gap_pct")), str(int(row.get("valuation_methods") or 0)),
+            _compact_money(row.get("dollar_volume")), reason,
+        ])
+    table = Table(rows, colWidths=[.22*inch,.42*inch,.40*inch,.42*inch,.48*inch,.47*inch,.47*inch,.47*inch,.48*inch,.43*inch,.58*inch,4.00*inch], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eaf0f5")),("TEXTCOLOR",(0,0),(-1,0),colors.HexColor("#0b1f33")),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),7.1),("FONTSIZE",(0,1),(-1,-1),7.0),
+        ("TEXTCOLOR",(0,1),(-1,-1),colors.HexColor("#263746")),("GRID",(0,0),(-1,-1),.22,colors.HexColor("#d9e0e6")),
+        ("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),2.5),("RIGHTPADDING",(0,0),(-1,-1),2.5),
+        ("TOPPADDING",(0,0),(-1,-1),2.8),("BOTTOMPADDING",(0,0),(-1,-1),2.8),
+    ]))
+    story += [table, Spacer(1,4)]
+
+    source_bits=[
+        f"Universe: {scan.get('universe_source') or 'Discovery universe'}", f"Contract: {scan.get('contract_version') or '—'}",
+        f"Stage 0: {scan.get('stage0_count') or 0}", f"Stage 1 scanned: {scan.get('stage1_scanned_count') or 0}",
+        f"Stage 2 enriched: {scan.get('stage2_enriched_count') or 0}", f"Provider calls: {scan.get('provider_call_total') or 0}",
+        f"Materialized: {scan.get('materialized_at') or '—'}",
+    ]
+    story.append(Paragraph(escape(" · ".join(source_bits)), styles["MFDiscSmall"]))
+    story.append(Paragraph(escape(f"{branding.get('footer') or 'Lose Money Rules'} · Discovery data provenance / scan diagnostics"), styles["MFDiscSmall"]))
     doc.build(story)
     out.seek(0)
     return out
