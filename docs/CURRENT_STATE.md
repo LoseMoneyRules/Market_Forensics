@@ -11,11 +11,11 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.2.13**  
+**State-Version: 0.2.14**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.12 on Namecheap from manual deploy run `35469617101` / deploy #52 at main `4f4d7466433eed69d5db7785d6a15b1d4a77522e`; release tests, production-minimal startup smoke, candidate health, restart, cleanup and final health all completed successfully; reporting-vendor rebuild/stage was correctly skipped because reporting dependencies were unchanged  
+**Production:** 0.2.13 on Namecheap from manual deploy run `35473486802` / deploy #53 at main `22a12451bd7d3c1b5ba4bd663ac4d20784e362b4`; release tests and production-minimal rich-report smoke passed before transfer; candidate health and final health both returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.13"}`; reporting-vendor rebuild/stage remained skipped because reporting dependencies were unchanged  
 **Verified production baseline:** manual deploy run `35448890411` / deploy #49 = completed / success on main event SHA `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; candidate and final production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.11"}`; persistent reporting-vendor rebuild/stage steps were skipped because dependencies were unchanged  
 **Accepted pre-0.2.12 main baseline:** `ff4eb1e96a92610bc3ddd2c21c6e32840a016452` (accepted 0.2.11 runtime `ba5a16783763f8032e3341b2e08eae8566457fbd` plus final 0.2.11 documentation sync)  
 **Latest verified 0.2.11 runtime main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`  
@@ -67,11 +67,32 @@
 **Verified opportunity-funnel PR CI:** run `35469153142` / #1116 = completed / success on `55f59f3fdc9099491110bfd7c72a16ade52eb281`.  
 **Accepted opportunity-funnel merge:** `adfd99593f6db378cf8cf99a41976a2e85c6c49d`.  
 **Verified opportunity-funnel post-merge main CI:** run `35469221771` / #1117 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
-**Release phase:** 0.2.13 UI/UX & codebase consolidation is complete in `main`. Source branch `release/0.2.13-ui-ux-codebase-consolidation` was created directly from clean main `4f4d7466433eed69d5db7785d6a15b1d4a77522e`; PR #44 merged by squash as `8b84873294cee3a4962fd4dd3eace91ef21d6e9b`. Production remains independently verified at 0.2.12 deploy #52; 0.2.13 has NOT been deployed.  
+**Release phase:** 0.2.14 Research Reports V2 is the active release candidate on `release/0.2.14-research-reports-v2`, created directly from clean main `22a12451bd7d3c1b5ba4bd663ac4d20784e362b4`. Scope is reporting only: canonical report data contract, Executive PDF, Full PDF, Full Word, native report charts, Local/Web parity audit, provider-free report GET, report-specific tests and reporting cleanup. No valuation/Tape/Discovery/Portfolio/Process Readiness/database/deploy engine redesign is in scope. Production is independently verified at 0.2.13 deploy #53 and must remain there until a later explicit manual deploy.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
 ---
+
+## 0.2.14 release scope — Research Reports V2
+
+The Local V3.1.12 exporter is the minimum benchmark, not the target architecture. The concrete capability audit lives in `docs/REPORT_PARITY_0_2_14.md`.
+
+Release contract:
+- RESEARCH CONCLUSION is the first decision information in PDF and Word;
+- Base target and Bear/Base/Bull sit before valuation-detail tables;
+- the Executive export remains compact (one page when it fits; never more than two in the canonical fixture);
+- Executive decision intelligence includes Current Price, Bear/Base/Bull, Base Gap, Valuation Quality, Value, Expectations, Variant, Path, Model Confidence and Thesis Control;
+- the Full report follows the investment process rather than appending a table dump;
+- valuation exposes scenario probability, target, quality, method values, effective method weights, DCF cross-check, share denominator/source and provisional warnings;
+- native report charts cover valuation map, revenue/profitability, cash conversion, working-capital forensics, price context, selected Tape/positioning and historical Validate samples when stored data exists;
+- Financial Flows reads the canonical stored `edges` / `signed_exceptions` ledger and preserves signed negatives rather than inventing balancing values;
+- Management promises, Tape, Monitoring/locked invalidation, Validate and Sources/Audit are first-class Full-report sections;
+- Word and PDF share one canonical report data model; presentation is renderer-specific;
+- report generation disables stale-cache recalculation enqueueing and starts no SEC/Alpaca/FINRA/FRED/Discovery refresh or heavy analytical job;
+- publication/member privacy boundaries remain unchanged; Portfolio holdings, sizing, cost basis, P/L, private Portfolio notes and private Decision Journal data do not enter member/public research artifacts;
+- rich `python-docx` + ReportLab rendering remains a production requirement, with valid fallback artifacts and audit-write isolation.
+
+Implementation files are deliberately report-scoped: `mfapp/report_contract.py`, `mfapp/report_charts.py`, `mfapp/report_render_v2.py`, reporting orchestration, report route queue control, report tests and documentation. No schema migration or reporting dependency change is required.
 
 ## 0.2.13 release scope — UI/UX & Codebase Consolidation
 
