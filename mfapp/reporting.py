@@ -70,91 +70,67 @@ def report_backend_status() -> dict[str, str]:
     }
 
 
+
 def _plain_research_lines(data: dict[str, Any]) -> list[str]:
+    """Readable emergency text representation of the canonical report contract."""
     brand = data.get("branding") or {}
+    ident = data.get("identity") or {}
+    valuation = data.get("valuation") or {}
+    lenses = data.get("decision_lenses") or {}
+    thesis = data.get("thesis") or {}
+    evidence = data.get("evidence") or {}
     lines = [
         str(brand.get("title") or "Market Forensics"),
-        f"{data.get('ticker') or ''} · {data.get('company') or ''}",
-        f"Research conclusion: {data.get('action') or 'DATA REVIEW'}",
-        f"Value / confidence: {data.get('stance') or '—'} · {data.get('confidence') or '—'}",
-        f"Market {_money(data.get('market_price'))} · Bear {_money(data.get('bear'))} · Base {_money(data.get('base'))} · Bull {_money(data.get('bull'))} · Base gap {_pct(data.get('base_gap_pct'))}",
+        f"{ident.get('ticker') or ''} | {ident.get('company') or ''}",
+        f"RESEARCH CONCLUSION: {data.get('conclusion') or 'DATA REVIEW'}",
+        f"Current {_money(valuation.get('current_price'))} | Bear {_money(valuation.get('bear'))} | Base {_money(valuation.get('base'))} | Bull {_money(valuation.get('bull'))} | Base gap {_pct(valuation.get('base_gap_pct'))}",
+        f"Valuation quality: {str(valuation.get('base_quality') or 'DATA_WARNING').replace('_',' ')}",
+        f"Value {lenses.get('value') or '-'} | Expectations {lenses.get('expectations') or '-'} | Variant {lenses.get('variant') or '-'} | Path {lenses.get('path') or '-'} | Model confidence {lenses.get('model_confidence') or '-'}",
         "",
-        "RESEARCH LENSES",
+        "MARKET VIEW", _txt(thesis.get("market_view")) or "-",
+        "", "OUR VIEW / VARIANT", _txt(thesis.get("our_view")) or "-",
+        "", "WHAT MUST BE TRUE",
     ]
-    for row in data.get("decision_lenses") or []:
-        lines.append(f"{row.get('label') or row.get('key') or 'Lens'}: {row.get('state') or '—'}")
-    lines += [
-        "",
-        "THESIS", _txt(data.get("thesis")) or "—",
-        "",
-        "COUNTER-EVIDENCE", _txt(data.get("counter_evidence")) or "—",
-        "",
-        "MARKET VIEW", _txt(data.get("variant_market")) or "—",
-        "",
-        "OUR VARIANT", _txt(data.get("variant_us")) or "—",
-    ]
-    implied = data.get("implied_expectations") or {}
-    if implied.get("available"):
-        lines += ["", f"PRICE-IMPLIED EXPECTATIONS · {implied.get('classification') or '—'}"]
-        for row in implied.get("drivers") or []:
-            unit=row.get("unit"); mv=row.get("market_implied"); bv=row.get("base")
-            if unit=="%":
-                mv_txt=f"{float(mv)*100:.1f}%" if mv is not None else "—"; bv_txt=f"{float(bv)*100:.1f}%" if bv is not None else "—"
-            else:
-                mv_txt=f"{float(mv):.1f}x" if mv is not None else "—"; bv_txt=f"{float(bv):.1f}x" if bv is not None else "—"
-            lines.append(f"{row.get('label')}: market {mv_txt} · Base {bv_txt} · {row.get('read') or '—'}")
+    for row in (thesis.get("what_must_be_true") or [])[:6]:
+        lines.append("• " + _txt(row.get("text")))
+    lines += ["", "WHAT WOULD PROVE US WRONG"]
+    for row in (thesis.get("what_proves_wrong") or [])[:6]:
+        lines.append("• " + _txt(row.get("text")))
     lines += ["", "EVIDENCE FOR"]
-    for row in data.get("supporting") or []:
-        lines.append(f"• {row.get('label') or 'Evidence'} — {row.get('detail') or ''}")
+    for row in (evidence.get("for") or [])[:8]:
+        lines.append(f"• {row.get('label') or 'Evidence'} - {row.get('detail') or ''}")
     lines += ["", "EVIDENCE AGAINST"]
-    for row in data.get("opposing") or []:
-        lines.append(f"• {row.get('label') or 'Evidence'} — {row.get('detail') or ''}")
+    for row in (evidence.get("against") or [])[:8]:
+        lines.append(f"• {row.get('label') or 'Evidence'} - {row.get('detail') or ''}")
     if data.get("mode") == "full":
-        for label,key in [
-            ("BUSINESS","business"),("FUNDAMENTALS","numbers"),("EXPECTATIONS","expectations_summary"),
-            ("VALUATION","valuation_notes"),("BEAR CASE","bear_case_summary"),("CATALYSTS","catalysts_summary"),
-            ("FINANCIAL FLOWS","flows_summary"),("MANAGEMENT","management_summary"),("TAPE / FLOWS","tape_summary"),
-            ("RESEARCH INVALIDATION","risk_summary"),
-        ]:
-            lines += ["", label, _txt(data.get(key)) or "—"]
-        fundamentals=data.get("fundamentals_history") or []
-        if fundamentals:
-            lines += ["", "FUNDAMENTALS HISTORY"]
-            for row in fundamentals[-8:]:
-                cfo_ni = f"{float(row.get('cfo_to_net_income')):.2f}x" if row.get("cfo_to_net_income") is not None else "—"
-                lines.append(
-                    f"{row.get('period') or '—'} · Revenue {_money(row.get('revenue'))} · "
-                    f"Op margin {_pct(row.get('operating_margin_pct'))} · FCF {_money(row.get('fcf'))} · "
-                    f"Inv/Rev {_pct(row.get('inventory_to_revenue_pct'))} · "
-                    f"Rec/Rev {_pct(row.get('receivables_to_revenue_pct'))} · "
-                    f"CFO/NI {cfo_ni} · Shares YoY {_pct(row.get('share_count_growth_pct'))}"
-                )
-
-        tri=data.get("triangulation") or {}
-        if tri.get("available"):
-            lines += ["", "AUTOMATIC TRIANGULATION", f"{tri.get('method')} · SIC {tri.get('sic') or '—'}"]
-            for row in (tri.get("signals") or [])[:12]:
-                lines.append(f"• {row.get('state') or ''} — {row.get('detail') or ''}")
-        promises=data.get("management_promises") or []
-        if promises:
-            lines += ["", "MANAGEMENT PROMISES VS ACTUALS"]
-            for row in promises[:30]:
-                lo=row.get("low"); hi=row.get("high"); unit=row.get("unit") or ""
-                if row.get("target_text"):
-                    promise=str(row.get("target_text"))
-                elif lo is None or hi is None:
-                    promise="—"
-                else:
-                    promise=(str(lo) if lo==hi else f"{lo}–{hi}") + (f" {unit}" if unit else "")
-                period = row.get("target_period") or (f"FY{row.get('target_year')}" if row.get("target_year") else "UNRESOLVED")
-                lines.append(f"{period} · {row.get('metric')} · {promise} · actual {row.get('actual') if row.get('actual') is not None else '—'} · {row.get('status') or ''}")
+        fundamentals = data.get("fundamentals") or {}
+        lines += ["", "BUSINESS", _txt((data.get("business") or {}).get("summary")) or "-"]
+        lines += ["", "FUNDAMENTALS"]
+        for row in (fundamentals.get("history") or [])[-8:]:
+            lines.append(
+                f"{row.get('period') or '-'} | Revenue {_money(row.get('revenue'))} | "
+                f"Op margin {_pct(row.get('operating_margin_pct'))} | FCF {_money(row.get('fcf'))} | "
+                f"Inv/Rev {_pct(row.get('inventory_to_revenue_pct'))} | Rec/Rev {_pct(row.get('receivables_to_revenue_pct'))}"
+            )
+        lines += ["", "MANAGEMENT PROMISES"]
+        for row in ((data.get("management") or {}).get("promises") or [])[:20]:
+            lines.append(f"{row.get('target_period') or row.get('target_year') or '-'} | {row.get('metric') or '-'} | {row.get('status') or '-'} | actual {row.get('actual') if row.get('actual') is not None else '-'}")
+        lines += ["", "TAPE"]
+        tm=(data.get("tape") or {}).get("metrics") or {}
+        lines.append(f"Regime {tm.get('regime') or '-'} | Rank {tm.get('rank') or '-'} | Confidence {tm.get('confidence') or '-'} | Net Tape {tm.get('net_tape') if tm.get('net_tape') is not None else '-'}")
+        monitoring=data.get("monitoring") or {}
+        lines += ["", "THESIS INVALIDATION", _txt(monitoring.get("thesis_invalidation")) or "-"]
+        lines += ["", "VALIDATION"]
+        validation=data.get("validation") or {}
+        lines.append(
+            f"{validation.get('state') or 'NOT RUN'} | Reliability {validation.get('reliability') if validation.get('reliability') is not None else '-'} | "
+            f"Samples {validation.get('sample_count') or 0}"
+        )
         lines += ["", "SOURCES"]
-        for row in data.get("sources") or []:
-            lines.append(f"• {row.get('provider')} · {row.get('type')} · {row.get('title')} · {row.get('retrieved_at')}")
-    footer=str(brand.get("footer") or "Lose Money Rules")
-    lines += ["", footer]
+        for row in (data.get("sources") or [])[:40]:
+            lines.append(f"• {row.get('provider') or '-'} | {row.get('type') or '-'} | {row.get('title') or '-'} | {row.get('retrieved_at') or '-'}")
+    lines += ["", str(brand.get("footer") or "Lose Money Rules")]
     return lines
-
 
 def _pdf_escape(text: str) -> str:
     return str(text).replace("\\","\\\\").replace("(","\\(").replace(")","\\)")
