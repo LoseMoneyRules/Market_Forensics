@@ -16,6 +16,7 @@ from mfapp.extensions import db
 from mfapp.models import User
 from mfapp.report_charts import chart_bundle
 from mfapp.reporting import render_docx, render_docx_safe, render_pdf, render_pdf_safe
+from mfapp.report_render_v2 import _flow_rows
 from mfapp.security import encrypt_secret, hash_password
 from mfapp.services import ensure_workspace
 
@@ -220,8 +221,11 @@ def test_0214_valuation_weights_and_real_financial_flow_payload_are_rendered():
     for token in ("P/E WEIGHT","EV/SALES WEIGHT","FCF YIELD WEIGHT","40.0%","25.0%","35.0%"):
         assert token in upper
     # FinancialFlow stores edges + signed_exceptions, not a synthetic bridge_steps payload.
-    for token in ("FINANCIAL FLOWS","INCOME STATEMENT","PRE-TAX INCOME","SIGNED EXCEPTION","-$25.00","OPERATING CASH FLOW -> FREE CASH FLOW"):
+    for token in ("FINANCIAL FLOWS","INCOME STATEMENT","PRE-TAX INCOME","SIGNED EXCEPTION","-$25.00","FREE CASH FLOW"):
         assert token in upper
+    ledger=_flow_rows(sample_report())
+    assert any(row["flow"]=="Cash flow" and row["route"]=="Operating Cash Flow -> Free Cash Flow" for row in ledger)
+    assert any(row["value"]==-25 for row in ledger)
 
 
 def test_0214_optional_sections_never_break_rich_or_fallback_artifacts(monkeypatch):
