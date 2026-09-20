@@ -88,15 +88,26 @@ def sample_report(*, provisional: bool = False, complete: bool = True) -> dict:
         },
         "flows": {"summary": "Revenue converts through operating income into net income with positive FCF.", "periods": [{
             "period":"FY2025","period_end":"2025-12-31",
-            "income_statement":{"bridge_steps":[
-                {"label":"Revenue","kind":"START","value":1480,"result":1480,"source_field":"revenue","derived":False},
-                {"label":"COGS / Cost of Revenue","kind":"DEDUCTION","value":-850,"result":630,"source_field":"cogs","derived":False},
-                {"label":"Gross Profit","kind":"SUBTOTAL","value":630,"result":630,"source_field":"gross_profit","derived":False},
-                {"label":"Operating Expenses / Costs","kind":"DEDUCTION","value":-410,"result":220,"source_field":"operating_expenses","derived":True},
-                {"label":"Operating Income","kind":"SUBTOTAL","value":220,"result":220,"source_field":"operating_income","derived":False},
-                {"label":"Net Income","kind":"RESULT","value":160,"result":160,"source_field":"net_income","derived":False},
-            ]},
-            "cash_flow":{"warnings":[]},
+            "income_statement":{
+                "edges":[
+                    {"source":"Revenue","target":"COGS","value":850,"signed_value":850,"label":"Cost of revenue","source_field":"cogs","kind":"FLOW","sign":"POSITIVE"},
+                    {"source":"Revenue","target":"Gross Profit","value":630,"signed_value":630,"label":"Gross profit","source_field":"gross_profit","kind":"FLOW","sign":"POSITIVE"},
+                    {"source":"Gross Profit","target":"Operating Expenses","value":410,"signed_value":410,"label":"Operating expenses","source_field":"operating_expenses","kind":"FLOW","sign":"POSITIVE"},
+                    {"source":"Gross Profit","target":"Operating Income","value":220,"signed_value":220,"label":"Operating income","source_field":"operating_income","kind":"FLOW","sign":"POSITIVE"},
+                    {"source":"Operating Income","target":"Pre-Tax Income","value":190,"signed_value":190,"label":"Pre-tax income","source_field":"pretax_income","kind":"FLOW","sign":"POSITIVE"},
+                    {"source":"Pre-Tax Income","target":"Net Income","value":160,"signed_value":160,"label":"Net income","source_field":"net_income","kind":"FLOW","sign":"POSITIVE"}
+                ],
+                "signed_exceptions":[
+                    {"source":"Revenue","target":"Returns / Other","value":25,"signed_value":-25,"label":"Signed exception","source_field":"other","kind":"FLOW","sign":"NEGATIVE"}
+                ],
+                "derived":["Other / Interest bridge = Pre-Tax Income - Operating Income"],"warnings":[]
+            },
+            "cash_flow":{
+                "edges":[
+                    {"source":"Operating Cash Flow","target":"Capital Expenditure","value":70,"signed_value":70,"label":"Capital expenditure","source_field":"capex","kind":"FLOW","sign":"POSITIVE"},
+                    {"source":"Operating Cash Flow","target":"Free Cash Flow","value":120,"signed_value":120,"label":"Free cash flow","source_field":"fcf","kind":"FLOW","sign":"POSITIVE"}
+                ],"signed_exceptions":[],"derived":[],"warnings":[]
+            },
         }]},
         "management": {
             "summary":"Execution improved; one guidance item remains pending.",
@@ -156,6 +167,8 @@ def test_0214_executive_full_pdf_and_word_are_valid_and_decision_first():
     executive=sample_report();executive["mode"]="executive"
     epdf=render_pdf(executive)
     assert epdf.getvalue().startswith(b"%PDF") and len(epdf.getvalue())>5000
+    # Executive may use a second page to preserve readable type, but never becomes a long report.
+    assert 1 <= len(re.findall(rb"/Type\s*/Page\b", epdf.getvalue())) <= 2
     full=sample_report()
     fpdf=render_pdf(full)
     docx=render_docx(full)
@@ -198,6 +211,17 @@ def test_0214_full_word_contains_management_tape_validation_monitoring_and_sourc
         "VALIDATION","VALIDATED","72.5%","SOURCES / AUDIT","EXAMPLE INDUSTRIAL 2025 10-K",
     ):
         assert token in upper or token.replace("&AMP;","&") in upper
+
+
+def test_0214_valuation_weights_and_real_financial_flow_payload_are_rendered():
+    text=docx_text(render_docx(sample_report()))
+    upper=text.upper()
+    assert "EFFECTIVE METHOD WEIGHTS" in upper
+    for token in ("P/E WEIGHT","EV/SALES WEIGHT","FCF YIELD WEIGHT","40.0%","25.0%","35.0%"):
+        assert token in upper
+    # FinancialFlow stores edges + signed_exceptions, not a synthetic bridge_steps payload.
+    for token in ("FINANCIAL FLOWS","INCOME STATEMENT","PRE-TAX INCOME","SIGNED EXCEPTION","-$25.00","OPERATING CASH FLOW -> FREE CASH FLOW"):
+        assert token in upper
 
 
 def test_0214_optional_sections_never_break_rich_or_fallback_artifacts(monkeypatch):
