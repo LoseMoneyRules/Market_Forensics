@@ -1594,6 +1594,123 @@ CONTROL exports include:
 - Full Word;
 - Discovery landscape PDF.
 
+### 21.1 Research report data contract
+
+0.2.14 uses one canonical stored-data research-report contract for Executive PDF, Full PDF and Full Word.
+
+The contract may read:
+
+- the materialized Research cache;
+- current stored valuation model/scenarios and their persisted engine output;
+- normalized stored Fundamentals;
+- stored Financial Flow payloads;
+- Management accountability/promises already materialized by the background Management engine;
+- stored Tape / positioning series and summary;
+- stored Monitoring rules/history;
+- stored Historical Validation runs/samples;
+- stored Sources / provenance;
+- lightweight Research, Expectations, Catalysts and Bear Case rows.
+
+A report request does **not** start or refresh SEC ingest, market data, FINRA, FRED, Discovery, Management scanning or heavy analytics. The report route explicitly suppresses the generic stale-cache recalculation enqueue. Missing or stale materialized evidence is rendered as unavailable, not run, incomplete or data warning; it is never invented during export.
+
+PDF and Word are presentation renderers over the same contract. They are not independent financial engines and must not recalculate valuation, Tape, validation or accounting logic.
+
+### 21.2 Decision hierarchy
+
+The first decision information below company identity is always **RESEARCH CONCLUSION**.
+
+Beside it, the Base target and Base Gap receive primary valuation emphasis.
+
+Immediately after the hero, the compact executive strip contains, when available:
+
+- Current Price;
+- Bear;
+- Base;
+- Bull;
+- Base Gap;
+- Valuation Quality;
+- Value Lens;
+- Variant;
+- Path;
+- Model Confidence.
+
+A report must not make the reader traverse multiple pages before learning the conclusion and target range.
+
+The Executive report is a decision brief rather than a compressed Full report. It contains the conclusion, target range, valuation map, market view vs our view, what must be true, what would prove the thesis wrong, high-information FOR / AGAINST evidence, Tape context, next catalyst and thesis invalidation. One page is preferred only when readability is preserved; two readable pages are valid.
+
+The Full report follows the investment process:
+
+Research Conclusion → Valuation → Thesis / Variant → Expectations → Evidence FOR / AGAINST → Business → Fundamentals → Financial Flows → Management → Catalysts / Bear Case → Tape & Positioning → Monitoring / Invalidation → Validation → Sources / Audit.
+
+### 21.3 Valuation and charts
+
+Valuation is presented in decision order:
+
+Current Price → Bear / Base / Bull → Base Gap → method detail.
+
+The report preserves stored scenario probabilities, method values/weights, DCF cross-check, share denominator/source/verification and quality warnings. A provisional/stored-fallback valuation must be visually and textually distinguishable from decision-grade intrinsic valuation.
+
+Report charts are generated natively from stored data; browser screenshots are not used.
+
+Canonical report charts are:
+
+- Valuation Map — Current Price vs Bear/Base/Bull;
+- Revenue / Profitability Trend — revenue is scale-separated from margin series;
+- FCF / Cash Conversion — FCF is scale-separated from CFO/Net Income;
+- Working-Capital Forensics — material Inventory/Revenue and Receivables/Revenue divergence;
+- Price Context — historical market price against today's stored scenario levels, explicitly not historical fair-value output;
+- selected Tape charts — price + institutional-flow proxy and Absorption / Short Pressure / Net Tape when enough observations exist;
+- Validation — historical Price Then vs Bear/Base/Bull Then plus stored outcome where available.
+
+Charts are omitted cleanly when the underlying stored series is insufficient. No decorative chart is added simply to fill space. No rainbow palette and no purple are used.
+
+### 21.4 Research intelligence and evidence
+
+Research intelligence is a set of decision lenses, not gamification.
+
+The report uses:
+
+- Research Conclusion;
+- Value;
+- Expectations;
+- Variant;
+- Path;
+- Model Confidence;
+- Thesis Control.
+
+Evidence is reduced to high-information FOR and AGAINST items. The weighted diagnostic score may appear only as secondary context and never overrides canonical readiness, validation or Decision Lenses.
+
+Thesis / Variant is structured as:
+
+- MARKET VIEW;
+- OUR VIEW / VARIANT;
+- WHAT MUST BE TRUE;
+- WHAT WOULD PROVE US WRONG.
+
+Only stored/materialized content is reused; the report renderer does not invent thesis statements.
+
+### 21.5 Fundamentals, flows, Management, Tape and Validation
+
+Fundamentals prioritize trends first, concise table second. Useful stored metrics may include Revenue growth, Gross/Operating/FCF margin, CFO/Net Income, ROIC, Net Debt/FCF, Inventory/Revenue, Receivables/Revenue, DSO/DIO/DPO/CCC and Share Count Growth. Metrics that are unavailable are not padded into a large table of dashes.
+
+Financial Flows use the stored signed bridge/ledger. Signed deductions remain negative. The report never fabricates balancing values to make a visual flow appear complete.
+
+Management reports execution/evidence coverage and material promises vs actuals. Promise states retain MET, MISS, PENDING and EVIDENCE ONLY/non-comparable semantics. Management is not personality-scored.
+
+Tape is summarized before charts: regime/rank/confidence, Large/Whale positioning when stored, Short Pressure, Absorption, Net Tape, what changed and what would change regime. The Full report selects only decision-useful chart views; it does not reproduce the entire Tape page.
+
+Monitoring exposes Thesis Invalidation plus active rules with metric, locked threshold, direction, current state, triggered state and last observation. Pre-investment thresholds are not rewritten retroactively.
+
+If Validate has not run, the report says **NOT RUN** and implies no validation confidence. When a run exists, the report can show state, reliability, sample count/history span, valuation accuracy, direction accuracy, range coverage, assumption accuracy and point-in-time sample chart/calibration insight.
+
+### 21.6 Styling, privacy and failure behavior
+
+Research PDF/Word use the Market Forensics document language: white/light institutional background, Market Forensics blue, subdued grays, restrained semantic positive/negative/caution states, light rules, clear typography, minimal bold and controlled white space. Reports are paginated documents; Web mobile CSS is not reused as a PDF layout system.
+
+Full Word follows the same information structure as Full PDF while remaining editable in Microsoft Word. It uses standard Office-safe fonts and native document tables/images rather than a PDF screenshot.
+
+Sources/Audit remain readable: provider, document/type, publication date when available, retrieval time and concise title/provenance. Raw URL dumps are not the primary presentation.
+
 Rich PDF/Word rendering is a production dependency and health requirement.
 
 Report export must fail safely.
@@ -1604,7 +1721,9 @@ An audit-write failure must not turn a valid report into HTTP 500.
 
 In-memory reports are returned as normal response bytes and must not be delegated to a problematic WSGI file wrapper.
 
-Private Portfolio holdings, Position Action, sizing, P/L, private journal and credentials do not belong in published/member research reports.
+CONTROL research reports may contain CONTROL-private research evidence permitted by the research workspace. Publication/member artifacts must not expose Portfolio shares, cost basis, P/L, Position Action, sizing, PortfolioRiskPlan, private notes, private Decision Journal or credentials. FRIEND / INSIDER continue to receive only explicitly published research.
+
+The concrete Local V3.1.12 → Web → 0.2.14 capability audit is documented in `docs/REPORT_PARITY_0_2_14.md`.
 
 ---
 
