@@ -346,7 +346,7 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     gap = _pct(valuation.get("base_gap_pct"))
     hero_left = [
         Paragraph("RESEARCH CONCLUSION", styles["MFHeroLabel"]),
-        Paragraph(escape(conclusion), styles["MFHero"]),
+        Paragraph(f'<font color="{_tone(conclusion)}">{escape(conclusion)}</font>', styles["MFHero"]),
         Paragraph(escape(f"Value {lenses.get('value','-')}  |  Path {lenses.get('path','-')}  |  Confidence {lenses.get('model_confidence','-')}"), styles["MFSmall"]),
     ]
     hero_right = [
@@ -373,10 +373,12 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         ("Base gap", _pct(valuation.get("base_gap_pct")), PRIMARY),
         ("Valuation quality", _txt(valuation.get("base_quality")).replace("_"," "), _tone(str(valuation.get("base_quality")))),
         ("Value lens", _txt(lenses.get("value")), _tone(str(lenses.get("value")))),
+        ("Expectations", _txt(lenses.get("expectations")), _tone(str(lenses.get("expectations")))),
         ("Variant", _txt(lenses.get("variant")), _tone(str(lenses.get("variant")))),
         ("Path", _txt(lenses.get("path")), _tone(str(lenses.get("path")))),
         ("Model confidence", _txt(lenses.get("model_confidence")), _tone(str(lenses.get("model_confidence")))),
-    ], 5)
+        ("Thesis control", _txt(lenses.get("thesis_control")), _tone(str(lenses.get("thesis_control")))),
+    ], 6)
     image("valuation_map", 6.55, 1.58)
 
     # Executive decision content.
@@ -888,9 +890,10 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         ("Current price",_money(valuation.get("current_price")),MARKET),("Bear",_money(valuation.get("bear")),NEGATIVE),
         ("Base",_money(valuation.get("base")),PRIMARY),("Bull",_money(valuation.get("bull")),POSITIVE),("Base gap",_pct(valuation.get("base_gap_pct")),PRIMARY),
         ("Valuation quality",_txt(valuation.get("base_quality")).replace("_"," "),_tone(str(valuation.get("base_quality")))),
-        ("Value lens",_txt(lenses.get("value")),_tone(str(lenses.get("value")))),("Variant",_txt(lenses.get("variant")),_tone(str(lenses.get("variant")))),
-        ("Path",_txt(lenses.get("path")),_tone(str(lenses.get("path")))),("Model confidence",_txt(lenses.get("model_confidence")),_tone(str(lenses.get("model_confidence")))),
-    ],5)
+        ("Value lens",_txt(lenses.get("value")),_tone(str(lenses.get("value")))),("Expectations",_txt(lenses.get("expectations")),_tone(str(lenses.get("expectations")))),
+        ("Variant",_txt(lenses.get("variant")),_tone(str(lenses.get("variant")))),("Path",_txt(lenses.get("path")),_tone(str(lenses.get("path")))),
+        ("Model confidence",_txt(lenses.get("model_confidence")),_tone(str(lenses.get("model_confidence")))),("Thesis control",_txt(lenses.get("thesis_control")),_tone(str(lenses.get("thesis_control")))),
+    ],6)
     add_chart(charts,"valuation_map",6.9)
 
     thesis=data.get("thesis") or {}
