@@ -226,7 +226,7 @@ def _fast_brief(valuation: dict, model: ValuationModel | None, lenses: dict) -> 
     }
 
 
-def _ctx(ticker: str) -> dict:
+def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
     coverage = _coverage(ticker)
     security = db.session.get(Security, coverage.security_id)
     company = db.session.get(Company, security.company_id)
@@ -261,7 +261,7 @@ def _ctx(ticker: str) -> dict:
         Job.job_type == "RECALCULATE",
         Job.status.in_(["QUEUED", "RUNNING"]),
     ).first()
-    if stale_cache and active_recalc is None:
+    if stale_cache and active_recalc is None and queue_recalc:
         active_recalc = enqueue_job(
             "RECALCULATE",
             user_id=g.user.id,

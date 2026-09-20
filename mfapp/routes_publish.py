@@ -247,7 +247,7 @@ def discovery_report():
 @role_required("CONTROL")
 def research_report(ticker, fmt):
     require_control_view()
-    ctx = _ctx(ticker)
+    ctx = _ctx(ticker, queue_recalc=False)
     mode = "executive" if str(request.args.get("mode") or "").lower() == "executive" else "full"
     fmt = str(fmt or "").lower()
     if fmt not in {"pdf", "docx"}:
