@@ -368,6 +368,9 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     ]))
     story.extend([hero, Spacer(1,6)])
 
+    # The decision range is intentionally visual and immediate: conclusion -> valuation map
+    # -> compact decision diagnostics. This mirrors the first-read order used in sell-side/buy-side notes.
+    image("valuation_map", 6.55, 1.58)
     kpi_strip([
         ("Current price", _money(valuation.get("current_price")), MARKET),
         ("Bear", _money(valuation.get("bear")), NEGATIVE),
@@ -382,7 +385,6 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         ("Model confidence", _txt(lenses.get("model_confidence")), _tone(str(lenses.get("model_confidence")))),
         ("Thesis control", _txt(lenses.get("thesis_control")), _tone(str(lenses.get("thesis_control")))),
     ], 6)
-    image("valuation_map", 6.55, 1.58)
 
     # Executive decision content.
     thesis = data.get("thesis") or {}
@@ -888,6 +890,8 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     shade(left,"F7FAFC");shade(right,"F7FAFC");borders(left,"BDD0DF","6");borders(right,"BDD0DF","6")
     doc.add_paragraph().paragraph_format.space_after=Pt(1)
 
+    # Keep the Bear / Base / Bull visual directly below the conclusion hero in Word too.
+    add_chart(charts,"valuation_map",6.9)
     kpis([
         ("Current price",_money(valuation.get("current_price")),MARKET),("Bear",_money(valuation.get("bear")),NEGATIVE),
         ("Base",_money(valuation.get("base")),PRIMARY),("Bull",_money(valuation.get("bull")),POSITIVE),("Base gap",_pct(valuation.get("base_gap_pct")),PRIMARY),
@@ -896,7 +900,6 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         ("Variant",_txt(lenses.get("variant")),_tone(str(lenses.get("variant")))),("Path",_txt(lenses.get("path")),_tone(str(lenses.get("path")))),
         ("Model confidence",_txt(lenses.get("model_confidence")),_tone(str(lenses.get("model_confidence")))),("Thesis control",_txt(lenses.get("thesis_control")),_tone(str(lenses.get("thesis_control")))),
     ],6)
-    add_chart(charts,"valuation_map",6.9)
 
     thesis=data.get("thesis") or {}
     two_panel("MARKET VIEW",_txt(thesis.get("market_view"),500),"OUR VIEW / VARIANT",_txt(thesis.get("our_view"),500))
