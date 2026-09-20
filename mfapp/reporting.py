@@ -11,11 +11,8 @@ from urllib.parse import urlparse
 
 import requests
 
-from .core_models import BearCaseItem, Catalyst, Expectation, ManagementAssessment, Source
-from .current_financials import annual_rows, current_row
 from .extensions import db
 from .models import UserPreference
-from .management_promises import evaluate_promises
 
 
 
@@ -366,110 +363,6 @@ def safe_research_report_data(ctx: dict[str, Any], *, mode: str = "full", brandi
             "triangulation": {},
             "data_contract": {"materialized_cache_event": None, "cache_generated_at": None, "provider_refresh_started": False, "heavy_analytics_started": False},
         }
-
-def _valuation_chart_png(data: dict[str, Any]) -> BytesIO:
-    if not _load_report_libs():
-        raise RuntimeError("Rich report backend unavailable")
-    values = [
-        ("Market", data.get("market_price"), "#7f8a94"),
-        ("Bear", data.get("bear"), "#a13b3b"),
-        ("Base", data.get("base"), "#3a6f99"),
-        ("Bull", data.get("bull"), "#1f7a54"),
-    ]
-    numeric = [float(v) for _, v, _ in values if v is not None]
-    out = BytesIO()
-    image = PILImage.new("RGB", (1000, 230), "white")
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()
-    if not numeric:
-        draw.text((30, 90), "Valuation scenarios unavailable", fill="#52606d", font=font)
-        image.save(out, format="PNG")
-        out.seek(0)
-        return out
-    low, high = min(numeric), max(numeric)
-    span = max(high - low, max(abs(high), 1.0) * .08)
-    low -= span * .08
-    high += span * .08
-    x0, x1, y = 75, 935, 115
-    draw.line((x0, y, x1, y), fill="#c8d1da", width=3)
-    for label, value, color in values:
-        if value is None:
-            continue
-        v = float(value)
-        x = int(x0 + (v - low) / (high - low) * (x1 - x0))
-        draw.line((x, y - 42, x, y + 42), fill=color, width=5)
-        draw.text((max(10, x - 30), y - 72), label, fill=color, font=font)
-        draw.text((max(10, x - 32), y + 52), "$" + format(v, ",.2f"), fill="#0b1f33", font=font)
-    draw.text((x0, 190), "Range $" + format(low, ",.2f"), fill="#6d7a86", font=font)
-    draw.text((x1 - 95, 190), "$" + format(high, ",.2f"), fill="#6d7a86", font=font)
-    image.save(out, format="PNG")
-    out.seek(0)
-    return out
-
-
-def _docx_add_heading(doc: Document, text: str, level: int = 1) -> None:
-    p = doc.add_heading(text, level=level)
-    p.paragraph_format.space_before = Pt(9)
-    p.paragraph_format.space_after = Pt(4)
-
-
-def _docx_add_text(doc: Document, text: str) -> None:
-    p = doc.add_paragraph(text or "—")
-    p.paragraph_format.space_after = Pt(5)
-
-
-def _docx_hex(hex_value: str):
-    value = str(hex_value or "0B1F33").strip().lstrip("#")
-    return RGBColor(int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
-
-
-def _docx_shade(cell, fill: str) -> None:
-    tc_pr = cell._tc.get_or_add_tcPr()
-    shd = tc_pr.find(qn("w:shd"))
-    if shd is None:
-        shd = OxmlElement("w:shd")
-        tc_pr.append(shd)
-    shd.set(qn("w:fill"), fill.replace("#", "").upper())
-
-
-def _docx_cell(cell, text: str, *, bold: bool = False, size: float = 10.5, color: str = "#0b1f33",
-               align=None) -> None:
-    cell.text = ""
-    p = cell.paragraphs[0]
-    if align is not None:
-        p.alignment = align
-    p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(0)
-    r = p.add_run(str(text if text not in (None, "") else "—"))
-    r.bold = bold
-    r.font.size = Pt(size)
-    r.font.color.rgb = _docx_hex(color)
-    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-
-
-def _docx_kpi_strip(doc: Document, items: list[tuple[str, str, str]]) -> None:
-    table = doc.add_table(rows=2, cols=len(items))
-    table.style = "Table Grid"
-    for idx, (label, value, tone) in enumerate(items):
-        _docx_cell(table.cell(0, idx), label.upper(), bold=True, size=8.5, color="#607384", align=WD_ALIGN_PARAGRAPH.CENTER)
-        _docx_cell(table.cell(1, idx), value, bold=True, size=11.5, color=tone, align=WD_ALIGN_PARAGRAPH.CENTER)
-        _docx_shade(table.cell(0, idx), "EAF0F5")
-        _docx_shade(table.cell(1, idx), "FFFFFF")
-    doc.add_paragraph().paragraph_format.space_after = Pt(1)
-
-
-def _docx_two_panel(doc: Document, left_title: str, left_text: str, right_title: str, right_text: str,
-                    *, left_fill: str = "F4F7F9", right_fill: str = "F4F7F9") -> None:
-    table = doc.add_table(rows=2, cols=2)
-    table.style = "Table Grid"
-    _docx_cell(table.cell(0, 0), left_title.upper(), bold=True, size=9, color="#0b1f33")
-    _docx_cell(table.cell(0, 1), right_title.upper(), bold=True, size=9, color="#0b1f33")
-    _docx_shade(table.cell(0, 0), left_fill); _docx_shade(table.cell(0, 1), right_fill)
-    _docx_cell(table.cell(1, 0), left_text or "—", size=10)
-    _docx_cell(table.cell(1, 1), right_text or "—", size=10)
-    doc.add_paragraph().paragraph_format.space_after = Pt(1)
-
-
 
 # Regression contract retained in the V2 renderer: ["Period","Metric","Promise","Actual","Status"] and row.get("target_period").
 def render_docx(data: dict[str, Any]) -> BytesIO:
