@@ -43,52 +43,6 @@ jobs:
           if [ -z "${MF_ENCRYPTION_KEY:-}" ]; then export MF_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"; fi
           pytest -q
 
-      - name: TEMP 0.2.14 visual QA render
-        if: github.ref == 'refs/heads/release/0.2.14-research-reports-v2'
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/mf-report-qa
-          mkdir -p /tmp/mf-report-qa
-          python - <<'PY'
-          import runpy
-          from pathlib import Path
-          from mfapp.reporting import render_pdf, render_docx
-
-          ns = runpy.run_path("tests/test_0214_reports_v2.py")
-          sample = ns["sample_report"]
-          out = Path("/tmp/mf-report-qa")
-          full = sample()
-          executive = sample(); executive["mode"] = "executive"
-          partial = sample(complete=False); partial["mode"] = "executive"
-          (out / "executive_complete.pdf").write_bytes(render_pdf(executive).getvalue())
-          (out / "full_complete.pdf").write_bytes(render_pdf(full).getvalue())
-          (out / "full_complete.docx").write_bytes(render_docx(full).getvalue())
-          (out / "executive_data_review.pdf").write_bytes(render_pdf(partial).getvalue())
-          print("visual qa source artifacts generated")
-          PY
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq poppler-utils libreoffice-writer >/dev/null
-          command -v pdftoppm >/dev/null
-          pdftoppm -jpeg -jpegopt quality=75 -r 100 /tmp/mf-report-qa/executive_complete.pdf /tmp/mf-report-qa/executive
-          pdftoppm -jpeg -jpegopt quality=72 -r 85 /tmp/mf-report-qa/full_complete.pdf /tmp/mf-report-qa/full
-          pdftoppm -jpeg -jpegopt quality=75 -r 100 /tmp/mf-report-qa/executive_data_review.pdf /tmp/mf-report-qa/data_review
-          if command -v libreoffice >/dev/null; then
-            mkdir -p /tmp/mf-report-qa/word_render
-            libreoffice --headless --convert-to pdf --outdir /tmp/mf-report-qa/word_render /tmp/mf-report-qa/full_complete.docx
-            pdftoppm -jpeg -jpegopt quality=72 -r 85 /tmp/mf-report-qa/word_render/full_complete.pdf /tmp/mf-report-qa/word
-          else
-            echo "LibreOffice not present; DOCX is structurally validated by python-docx tests." > /tmp/mf-report-qa/WORD_RENDER_NOTE.txt
-          fi
-          ls -lh /tmp/mf-report-qa
-
-      - name: TEMP upload 0.2.14 visual QA
-        if: github.ref == 'refs/heads/release/0.2.14-research-reports-v2'
-        uses: actions/upload-artifact@v4
-        with:
-          name: report-visual-qa-${{ github.sha }}
-          path: /tmp/mf-report-qa
-          retention-days: 1
-
       - name: Production-minimal startup and rich report smoke
         run: |
           set -euo pipefail
