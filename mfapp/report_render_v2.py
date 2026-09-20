@@ -277,13 +277,12 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         return t
 
     def section(title: str, eyebrow: str | None = None):
-        heading = []
+        # Both styles use keepWithNext: eyebrow -> heading -> first section
+        # content. Keeping them as separate flowables lets ReportLab move the
+        # whole chain instead of orphaning a label at the page bottom.
         if eyebrow:
-            heading.append(Paragraph(escape(eyebrow.upper()), styles["MFBrand"]))
-        heading.append(Paragraph(escape(title), styles["MFH1"]))
-        # Keep the eyebrow with its section heading so a label can never orphan
-        # at the bottom of a page.
-        story.append(KeepTogether(heading))
+            story.append(Paragraph(escape(eyebrow.upper()), styles["MFBrand"]))
+        story.append(Paragraph(escape(title), styles["MFH1"]))
 
     def kpi_strip(items: list[tuple[str,str,str]], cols: int = 5):
         items = list(items)
