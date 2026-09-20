@@ -11,7 +11,8 @@ def test_0213_release_identity_and_docs_are_synced():
     version = (ROOT / "VERSION").read_text().strip()
     current = (ROOT / "docs/CURRENT_STATE.md").read_text()
     how = (ROOT / "docs/HOW_MARKET_FORENSICS_WORKS.md").read_text()
-    assert version == "0.2.13"
+    assert tuple(int(part) for part in version.split(".")) >= (0, 2, 13)
+    assert "## 0.2.13 release scope — UI/UX & Codebase Consolidation" in current
     assert f"**State-Version: {version}**" in current
     assert f"**Current product line:** {version}" in how
 
