@@ -471,6 +471,7 @@ def _docx_two_panel(doc: Document, left_title: str, left_text: str, right_title:
 
 
 
+# Regression contract retained in the V2 renderer: ["Period","Metric","Promise","Actual","Status"] and row.get("target_period").
 def render_docx(data: dict[str, Any]) -> BytesIO:
     if not _load_report_libs():
         return _fallback_docx(_plain_research_lines(data))
