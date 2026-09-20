@@ -629,7 +629,8 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
     def add_table(headers,rows,widths=None,small=False):
-        t=doc.add_table(rows=1,cols=len(headers))
+        cols = len(headers) if headers else (len(rows[0]) if rows else 1)
+        t=doc.add_table(rows=1 if headers else 0,cols=cols)
         t.autofit=True
         for i,h in enumerate(headers):
             cell_text(t.cell(0,i),h.upper(),bold=True,size=8.3,color=MUTED)
