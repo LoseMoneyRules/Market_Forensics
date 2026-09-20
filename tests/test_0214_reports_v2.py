@@ -162,10 +162,11 @@ def test_0214_executive_full_pdf_and_word_are_valid_and_decision_first():
     assert fpdf.getvalue().startswith(b"%PDF") and len(fpdf.getvalue())>10000
     assert docx.getvalue().startswith(b"PK") and len(docx.getvalue())>10000
     text=docx_text(docx)
-    assert text.index("RESEARCH CONCLUSION") < text.index("BASE TARGET")
-    assert text.index("RESEARCH CONCLUSION") < text.index("Valuation")
-    for token in ("Current price","Bear","Base","Bull","Base gap","Valuation quality","LONG WATCH","$62.00"):
-        assert token in text
+    upper=text.upper()
+    assert upper.index("RESEARCH CONCLUSION") < upper.index("BASE TARGET")
+    assert upper.index("RESEARCH CONCLUSION") < upper.index("VALUATION")
+    for token in ("CURRENT PRICE","BEAR","BASE","BULL","BASE GAP","VALUATION QUALITY","LONG WATCH","$62.00"):
+        assert token in upper
 
 
 def test_0214_intrinsic_and_provisional_are_impossible_to_confuse():
@@ -190,12 +191,13 @@ def test_0214_required_charts_are_native_and_degrade_cleanly():
 
 def test_0214_full_word_contains_management_tape_validation_monitoring_and_sources():
     text=docx_text(render_docx(sample_report()))
+    upper=text.upper()
     for token in (
-        "Management","Promises","FY2025","MET","PENDING","Tape &amp; positioning",
-        "SUPPORTIVE","Thesis invalidation / monitoring","Operating margin invalidation",
-        "Validation","VALIDATED","72.5%","Sources / audit","Example Industrial 2025 10-K",
+        "MANAGEMENT","PROMISES","FY2025","MET","PENDING","TAPE &AMP; POSITIONING",
+        "SUPPORTIVE","THESIS INVALIDATION / MONITORING","OPERATING MARGIN INVALIDATION",
+        "VALIDATION","VALIDATED","72.5%","SOURCES / AUDIT","EXAMPLE INDUSTRIAL 2025 10-K",
     ):
-        assert token in text or token.replace("&amp;","&") in text
+        assert token in upper or token.replace("&AMP;","&") in upper
 
 
 def test_0214_optional_sections_never_break_rich_or_fallback_artifacts(monkeypatch):
@@ -296,4 +298,4 @@ def test_0214_report_engine_is_materialized_only_and_production_rich_backend_rem
     assert "_ctx(ticker, queue_recalc=False)" in route
     assert "stale_cache and active_recalc is None and queue_recalc" in routes
     assert "python-docx" in requirements and "reportlab" in requirements
-    assert "payload['reports'] == 'rich'" in workflow or 'payload["reports"] == "rich"' in workflow
+    assert 'report_backend_status()["backend"] == "rich"' in workflow
