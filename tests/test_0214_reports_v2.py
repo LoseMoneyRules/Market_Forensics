@@ -145,6 +145,8 @@ def sample_report(*, provisional: bool = False, complete: bool = True) -> dict:
         "data_contract":{"materialized_cache_event":123,"cache_generated_at":"2026-09-20T17:00:00","provider_refresh_started":False,"heavy_analytics_started":False},
     }
     if not complete:
+        data["conclusion"]="DATA REVIEW"
+        data["decision_lenses"]["model_confidence"]="UNVALIDATED"
         data["fundamentals"]={"current":{},"history":[],"summary":""}
         data["flows"]={"summary":"","periods":[]}
         data["management"]={"summary":"","engine":{},"accountability":[],"promises":[],"assessments":[]}
@@ -230,6 +232,20 @@ def test_0214_valuation_weights_and_real_financial_flow_payload_are_rendered():
     ledger=_flow_rows(sample_report())
     assert any(row["flow"]=="Cash flow" and row["route"]=="Operating Cash Flow -> Free Cash Flow" for row in ledger)
     assert any(row["value"]==-25 for row in ledger)
+
+
+def test_0214_data_review_partial_case_stays_honest_and_renderable():
+    data=sample_report(complete=False)
+    data["mode"]="executive"
+    pdf=render_pdf(data)
+    docx=render_docx(data)
+    assert pdf.getvalue().startswith(b"%PDF")
+    text=docx_text(docx).upper()
+    assert "RESEARCH CONCLUSION" in text
+    assert "DATA REVIEW" in text
+    assert "UNVALIDATED" in text
+    assert "NOT RUN" in text or data["validation"]["state"]=="NOT RUN"
+    assert len(re.findall(rb"/Type\s*/Page\b", pdf.getvalue())) <= 2
 
 
 def test_0214_optional_sections_never_break_rich_or_fallback_artifacts(monkeypatch):
