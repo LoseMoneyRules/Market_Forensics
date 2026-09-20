@@ -277,9 +277,13 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         return t
 
     def section(title: str, eyebrow: str | None = None):
+        heading = []
         if eyebrow:
-            story.append(Paragraph(escape(eyebrow.upper()), styles["MFBrand"]))
-        story.append(Paragraph(escape(title), styles["MFH1"]))
+            heading.append(Paragraph(escape(eyebrow.upper()), styles["MFBrand"]))
+        heading.append(Paragraph(escape(title), styles["MFH1"]))
+        # Keep the eyebrow with its section heading so a label can never orphan
+        # at the bottom of a page.
+        story.append(KeepTogether(heading))
 
     def kpi_strip(items: list[tuple[str,str,str]], cols: int = 5):
         items = list(items)
@@ -537,7 +541,6 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         for item in (evidence.get("warnings") or [])[:4]:
             story.append(Paragraph("<b>WATCH</b> - "+escape(_txt(item,360)), styles["MFSmall"]))
 
-    story.append(PageBreak())
     section("Business", "Operating reality")
     story.append(P((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
 
@@ -653,7 +656,6 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     if tape.get("summary"):
         story.append(P(tape.get("summary")))
 
-    story.append(PageBreak())
     section("Thesis invalidation / monitoring", "Decision control")
     monitoring=data.get("monitoring") or {}
     story.append(Paragraph("<b>THESIS INVALIDATION</b> - "+escape(_txt(monitoring.get("thesis_invalidation"),700)),styles["MFBody"]))
@@ -809,9 +811,10 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
 
     def heading(text,level=1,eyebrow=None):
         if eyebrow:
-            p=doc.add_paragraph();p.paragraph_format.space_after=Pt(1)
+            p=doc.add_paragraph();p.paragraph_format.space_after=Pt(1);p.paragraph_format.keep_with_next=True
             r=p.add_run(eyebrow.upper());r.bold=True;r.font.size=Pt(8.5);r.font.color.rgb=rgb(PRIMARY)
-        doc.add_heading(text,level=level)
+        h=doc.add_heading(text,level=level)
+        h.paragraph_format.keep_with_next=True
 
     def kpis(items,cols=5):
         items=list(items)
@@ -969,7 +972,6 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     heading("Evidence for / against",1,"Research evidence")
     two_panel("FOR",fort,"AGAINST",against,"EDF7F1","FBEFEF")
 
-    doc.add_page_break()
     heading("Business",1,"Operating reality")
     doc.add_paragraph(_txt((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
 
@@ -1027,7 +1029,6 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     kpis([("Regime",_txt(tm.get("regime") or tm.get("forensic_regime")),_tone(str(tm.get("regime")))),("Rank",_txt(tm.get("rank")),NAVY),("Confidence",_txt(tm.get("confidence")),NAVY),("Large flow",_money(tm.get("net_large")),NAVY),("Whale flow",_money(tm.get("net_whale")),NAVY),("Short pressure",_num(tm.get("bear_pressure"),0),NEGATIVE),("Absorption",_num(tm.get("absorption"),0),POSITIVE),("Net Tape",_num(tm.get("net_tape"),0),PRIMARY),("What changed",_txt(tape.get("what_changed"),60),NAVY),("Regime change",_txt(tape.get("what_would_change_regime"),60),NAVY)],5)
     add_chart(charts,"tape_price_flow",6.9);add_chart(charts,"tape_pressure",6.9)
 
-    doc.add_page_break()
     heading("Thesis invalidation / monitoring",1,"Decision control")
     p=doc.add_paragraph();r=p.add_run("THESIS INVALIDATION - ");r.bold=True;p.add_run(_txt(mon.get("thesis_invalidation"),900))
     if mon.get("locked_at"):
