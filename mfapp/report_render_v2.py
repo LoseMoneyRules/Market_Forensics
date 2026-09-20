@@ -171,12 +171,38 @@ def _tone(value: str) -> str:
 
 
 def _flow_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the newest stored signed financial-flow ledger.
+
+    FinancialFlow persists canonical payloads as edges + signed_exceptions.
+    Do not reconstruct an accounting bridge in the report and do not turn
+    negative exceptions positive for presentation.
+    """
     periods = list((data.get("flows") or {}).get("periods") or [])
     for period in periods:
-        income = dict(period.get("income_statement") or {})
-        steps = list(income.get("bridge_steps") or [])
-        if steps:
-            return [{"period": period.get("period"), **row} for row in steps]
+        rows: list[dict[str, Any]] = []
+        for key, flow_label in (("income_statement", "Income statement"), ("cash_flow", "Cash flow")):
+            payload = dict(period.get(key) or {})
+            for edge in list(payload.get("edges") or []) + list(payload.get("signed_exceptions") or []):
+                if not isinstance(edge, dict):
+                    continue
+                signed = _n(edge.get("signed_value"))
+                if signed is None:
+                    continue
+                source = _txt(edge.get("source"))
+                target = _txt(edge.get("target"))
+                source_field = str(edge.get("source_field") or "")
+                kind = str(edge.get("kind") or "FLOW").upper()
+                derived = kind in {"BRIDGE", "WARNING"} or source_field.startswith("derived_")
+                rows.append({
+                    "period": period.get("period"),
+                    "flow": flow_label,
+                    "label": edge.get("label") or source_field or "Flow",
+                    "value": signed,
+                    "route": f"{source} -> {target}",
+                    "basis": "Derived bridge" if derived else "Reported / normalized",
+                })
+        if rows:
+            return rows
     return []
 
 
@@ -263,7 +289,11 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
             rows.append([Paragraph(escape(lbl.upper()), styles["MFKpiL"]) for lbl,_,_ in chunk])
             vals = []
             for _, val, tone in chunk:
-                para = Paragraph(escape(val or "-"), styles["MFKpiV"])
+                # Preserve the restrained semantic state colors used by the Web UI.
+                para = Paragraph(
+                    f'<font color="{escape(str(tone or NAVY))}">{escape(val or "-")}</font>',
+                    styles["MFKpiV"],
+                )
                 vals.append(para)
             rows.append(vals)
         widths = [6.55*inch/cols]*cols
@@ -444,6 +474,18 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
             _money(row.get("dcf")),
         ])
     story.append(rule_table(rows, widths=[.55*inch,.70*inch,.75*inch,1.18*inch,.78*inch,.78*inch,.78*inch,.78*inch], font_style="MFCellSmall"))
+    weight_rows = [["Case","P/E weight","EV/Sales weight","FCF Yield weight"]]
+    for row in valuation.get("scenarios") or []:
+        methods = {m.get("key"): m for m in row.get("methods") or []}
+        def method_weight(key):
+            weight = _n((methods.get(key) or {}).get("weight"))
+            return _pct(weight * 100, signed=False) if weight is not None else "-"
+        weight_rows.append([
+            row.get("name"), method_weight("pe"), method_weight("ev_sales"), method_weight("fcf_yield")
+        ])
+    if len(weight_rows) > 1:
+        story.append(Paragraph("EFFECTIVE METHOD WEIGHTS", styles["MFBrand"]))
+        story.append(rule_table(weight_rows, widths=[1.0*inch,1.8*inch,1.8*inch,1.95*inch], font_style="MFCellSmall"))
     share = valuation.get("share_basis") or {}
     story.append(Paragraph(
         escape("Share denominator: " + _num(share.get("shares"),1) + " | Source: " + _txt(share.get("source")).replace("_"," ") +
@@ -531,11 +573,14 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     section("Financial flows", "Follow the money")
     flow_steps=_flow_rows(data)
     if flow_steps:
-        rows=[["Step","Signed change","Result","Basis"]]
-        for step in flow_steps[:12]:
-            rows.append([step.get("label"),_money(step.get("value")),_money(step.get("result")),"Derived" if step.get("derived") else "Reported"])
-        story.append(rule_table(rows, widths=[2.3*inch,1.1*inch,1.1*inch,2.05*inch]))
-        story.append(Paragraph("Signed negatives are retained. No positive width is fabricated to force an accounting bridge.",styles["MFSmall"]))
+        rows=[["Flow","Line item","Signed amount","Route","Basis"]]
+        for step in flow_steps[:16]:
+            rows.append([
+                step.get("flow"), step.get("label"), _money(step.get("value")),
+                step.get("route"), step.get("basis"),
+            ])
+        story.append(rule_table(rows, widths=[.9*inch,1.3*inch,1.0*inch,2.0*inch,1.35*inch], font_style="MFCellSmall"))
+        story.append(Paragraph("Signed negatives are retained exactly as stored. The report does not invent balancing values to force a bridge.",styles["MFSmall"]))
     else:
         story.append(P((data.get("flows") or {}).get("summary") or "Materialized financial-flow bridge unavailable."))
 
@@ -880,6 +925,16 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         methods={m.get("key"):m for m in row.get("methods") or []}
         rows.append([row.get("name"),_pct((_n(row.get("probability")) or 0)*100,signed=False),_money(row.get("target")),_txt(row.get("quality")).replace("_"," "),_money((methods.get("pe") or {}).get("value")),_money((methods.get("ev_sales") or {}).get("value")),_money((methods.get("fcf_yield") or {}).get("value")),_money(row.get("dcf"))])
     add_table(["Case","Probability","Target","Quality","P/E","EV/Sales","FCF Yield","DCF"],rows,small=True)
+    weight_rows=[]
+    for row in valuation.get("scenarios") or []:
+        methods={m.get("key"):m for m in row.get("methods") or []}
+        def method_weight(key):
+            weight=_n((methods.get(key) or {}).get("weight"))
+            return _pct(weight*100,signed=False) if weight is not None else "-"
+        weight_rows.append([row.get("name"),method_weight("pe"),method_weight("ev_sales"),method_weight("fcf_yield")])
+    if weight_rows:
+        p=doc.add_paragraph();r=p.add_run("EFFECTIVE METHOD WEIGHTS");r.bold=True;r.font.size=Pt(8.5);r.font.color.rgb=rgb(PRIMARY)
+        add_table(["Case","P/E weight","EV/Sales weight","FCF Yield weight"],weight_rows,small=True)
     share=valuation.get("share_basis") or {}
     p=doc.add_paragraph("Share denominator: "+_num(share.get("shares"),1)+" | Source: "+_txt(share.get("source")).replace("_"," ")+" | Verified: "+("YES" if share.get("verified") else "NO"))
     for r in p.runs:r.font.size=Pt(9);r.font.color.rgb=rgb(MUTED)
@@ -929,8 +984,12 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     heading("Financial flows",1,"Follow the money")
     steps=_flow_rows(data)
     if steps:
-        add_table(["Step","Signed change","Result","Basis"],[[r.get("label"),_money(r.get("value")),_money(r.get("result")),"Derived" if r.get("derived") else "Reported"] for r in steps[:12]])
-        p=doc.add_paragraph("Signed negatives are retained. No positive width is fabricated to force an accounting bridge.")
+        add_table(
+            ["Flow","Line item","Signed amount","Route","Basis"],
+            [[r.get("flow"),r.get("label"),_money(r.get("value")),r.get("route"),r.get("basis")] for r in steps[:16]],
+            small=True,
+        )
+        p=doc.add_paragraph("Signed negatives are retained exactly as stored. The report does not invent balancing values to force a bridge.")
         for r in p.runs:r.font.size=Pt(8.5);r.font.color.rgb=rgb(MUTED)
     else:
         doc.add_paragraph(_txt((data.get("flows") or {}).get("summary") or "Materialized financial-flow bridge unavailable."))
