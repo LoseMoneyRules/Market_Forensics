@@ -227,7 +227,7 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         author=(data.get("branding") or {}).get("prepared_by") or "Market Forensics",
     )
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="MFBrand", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=8.5, leading=10, textColor=colors.HexColor(PRIMARY), spaceAfter=2, letterSpacing=.6))
+    styles.add(ParagraphStyle(name="MFBrand", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=8.5, leading=10, textColor=colors.HexColor(PRIMARY), spaceAfter=2, letterSpacing=.6, keepWithNext=1))
     styles.add(ParagraphStyle(name="MFTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=21, leading=24, textColor=colors.HexColor(NAVY), alignment=TA_LEFT, spaceAfter=2))
     styles.add(ParagraphStyle(name="MFMeta", parent=styles["BodyText"], fontSize=8.8, leading=11.5, textColor=colors.HexColor(MUTED), spaceAfter=5))
     styles.add(ParagraphStyle(name="MFHeroLabel", parent=styles["BodyText"], fontName="Helvetica-Bold", fontSize=8.6, leading=10, textColor=colors.HexColor(MUTED), letterSpacing=.5))
