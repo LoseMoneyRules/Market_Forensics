@@ -66,6 +66,8 @@ jobs:
           (out / "executive_data_review.pdf").write_bytes(render_pdf(partial).getvalue())
           print("visual qa source artifacts generated")
           PY
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq poppler-utils libreoffice-writer >/dev/null
           command -v pdftoppm >/dev/null
           pdftoppm -jpeg -jpegopt quality=75 -r 100 /tmp/mf-report-qa/executive_complete.pdf /tmp/mf-report-qa/executive
           pdftoppm -jpeg -jpegopt quality=72 -r 85 /tmp/mf-report-qa/full_complete.pdf /tmp/mf-report-qa/full
