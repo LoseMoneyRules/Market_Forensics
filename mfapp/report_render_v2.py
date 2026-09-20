@@ -21,13 +21,15 @@ def _money(value: Any) -> str:
     v = _n(value)
     if v is None:
         return "-"
-    if abs(v) >= 1_000_000_000:
-        return "$" + f"{v/1_000_000_000:,.1f}B"
-    if abs(v) >= 1_000_000:
-        return "$" + f"{v/1_000_000:,.1f}M"
-    if abs(v) >= 1_000:
-        return "$" + f"{v/1_000:,.1f}K"
-    return "$" + f"{v:,.2f}"
+    sign = "-" if v < 0 else ""
+    magnitude = abs(v)
+    if magnitude >= 1_000_000_000:
+        return sign + "$" + f"{magnitude/1_000_000_000:,.1f}B"
+    if magnitude >= 1_000_000:
+        return sign + "$" + f"{magnitude/1_000_000:,.1f}M"
+    if magnitude >= 1_000:
+        return sign + "$" + f"{magnitude/1_000:,.1f}K"
+    return sign + "$" + f"{magnitude:,.2f}"
 
 
 def _pct(value: Any, *, signed: bool = True) -> str:
