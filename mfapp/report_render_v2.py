@@ -49,6 +49,116 @@ def _txt(value: Any, limit: int | None = None) -> str:
     return text or "-"
 
 
+def _canonicalize_input(data: dict[str, Any]) -> dict[str, Any]:
+    """Accept the pre-0.2.14 flat renderer payload without creating a second report engine."""
+    if isinstance(data.get("identity"), dict) and isinstance(data.get("valuation"), dict):
+        return data
+    source = dict(data or {})
+    lenses_list = list(source.get("decision_lenses") or [])
+    lens_map = {}
+    for row in lenses_list:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key") or row.get("label") or "").strip().lower().replace(" ", "_")
+        if key:
+            lens_map[key] = row.get("state")
+    validation_state = source.get("validation_state") or "NOT RUN"
+    validation_available = str(validation_state).upper() not in {"", "NOT RUN", "NOT_RUN", "UNAVAILABLE"}
+    return {
+        "contract_version": "legacy-adapter",
+        "mode": "executive" if str(source.get("mode") or "").lower() == "executive" else "full",
+        "branding": dict(source.get("branding") or {}),
+        "identity": {
+            "ticker": source.get("ticker") or "UNKNOWN",
+            "company": source.get("company") or "Unknown company",
+            "sector": source.get("sector") or "",
+            "industry": source.get("industry") or "",
+            "market_provider": source.get("market_provider") or "",
+            "market_as_of": source.get("market_as_of") or "",
+        },
+        "conclusion": source.get("action") or "DATA REVIEW",
+        "decision_lenses": {
+            "value": lens_map.get("value") or source.get("stance") or "UNVERIFIED",
+            "expectations": lens_map.get("expectations") or "UNAVAILABLE",
+            "variant": lens_map.get("variant") or "UNPROVEN",
+            "path": lens_map.get("path") or "UNCLEAR",
+            "model_confidence": lens_map.get("model_confidence") or source.get("confidence") or "UNVALIDATED",
+            "thesis_control": lens_map.get("thesis_control") or "UNRESOLVED",
+            "business": lens_map.get("business") or "UNPROVEN",
+            "rows": lenses_list,
+        },
+        "valuation": {
+            "current_price": source.get("market_price"),
+            "bear": source.get("bear"), "base": source.get("base"), "bull": source.get("bull"),
+            "expected_value": source.get("expected_value"), "base_gap_pct": source.get("base_gap_pct"),
+            "quality": source.get("valuation_quality") or "DATA_WARNING",
+            "base_quality": source.get("valuation_quality") or "DATA_WARNING",
+            "decision_grade": False, "provisional": True, "warnings": [],
+            "share_basis": {"shares": None, "source": "UNRESOLVED", "verified": False, "note": ""},
+            "weights": {}, "horizon_years": 5, "calibration": {}, "scenarios": [], "engine_version": "",
+        },
+        "thesis": {
+            "thesis": source.get("thesis") or "",
+            "counter_evidence": source.get("counter_evidence") or "",
+            "market_view": source.get("variant_market") or "",
+            "our_view": source.get("variant_us") or "",
+            "variant_evidence": source.get("variant_evidence") or "",
+            "what_must_be_true": [], "what_proves_wrong": [],
+        },
+        "evidence": {
+            "for": list(source.get("supporting") or []), "against": list(source.get("opposing") or []),
+            "score": source.get("score"), "warnings": list(source.get("warnings") or []),
+            "blockers": list(source.get("blockers") or []),
+        },
+        "business": {"summary": source.get("business") or ""},
+        "fundamentals": {
+            "current": dict(source.get("current_fundamentals") or {}),
+            "history": list(source.get("fundamentals_history") or []),
+            "summary": source.get("numbers") or "",
+        },
+        "expectations": {
+            "summary": source.get("expectations_summary") or "",
+            "implied": dict(source.get("implied_expectations") or {}),
+            "rows": list(source.get("expectations") or []),
+        },
+        "flows": {"summary": source.get("flows_summary") or "", "periods": []},
+        "management": {
+            "summary": source.get("management_summary") or "", "engine": {}, "accountability": [],
+            "promises": list(source.get("management_promises") or []), "assessments": list(source.get("management") or []),
+        },
+        "catalysts": [{
+            "event": row.get("event") or row.get("title"), "timing": row.get("timing") or row.get("date"),
+            "direction": row.get("direction"), "status": row.get("status"), "type": row.get("type"),
+            "evidence": row.get("evidence"),
+        } for row in (source.get("catalysts") or []) if isinstance(row, dict)],
+        "bear_case": [{
+            "risk": row.get("risk") or row.get("title"), "severity": row.get("severity"),
+            "probability": row.get("probability"), "invalidates": row.get("invalidates"),
+            "status": row.get("status"), "evidence": row.get("evidence"),
+        } for row in (source.get("bear_items") or []) if isinstance(row, dict)],
+        "tape": {
+            "summary": source.get("tape_summary") or "", "metrics": dict(source.get("tape_metrics") or {}),
+            "market": [], "daily_market": [], "short_interest": [], "short_volume": [],
+            "institutional_flow": [], "tape_daily": [], "ats": [], "what_changed": "",
+            "what_would_change_regime": "",
+        },
+        "monitoring": {
+            "thesis_invalidation": source.get("risk_summary") or "", "locked_at": "",
+            "summary": source.get("risk_summary") or "", "rules": [],
+        },
+        "validation": {
+            "state": validation_state, "available": validation_available, "status": validation_state,
+            "sample_count": 0, "reliability": None, "lookback_years": None, "history_span": "",
+            "valuation_accuracy": None, "direction_accuracy": None, "range_coverage": None,
+            "assumption_accuracy": None, "summary": {}, "samples": [],
+        },
+        "sources": list(source.get("sources") or []), "price_history": [],
+        "readiness": {"done": 0, "total": 0, "ready_to_validate": bool(source.get("ready_to_validate"))},
+        "triangulation": dict(source.get("triangulation") or {}),
+        "data_contract": {"provider_refresh_started": False, "heavy_analytics_started": False},
+    }
+
+
 def _tone(value: str) -> str:
     t = str(value or "").upper()
     if any(x in t for x in ("LONG", "READY", "ATTRACTIVE", "SUPPORTIVE", "VALIDATED", "MET", "GOOD", "STRONG", "POSITIVE")):
@@ -71,6 +181,7 @@ def _flow_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -> BytesIO:
+    data = _canonicalize_input(data)
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.lib.pagesizes import LETTER
@@ -574,6 +685,7 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
 
 
 def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -> BytesIO:
+    data = _canonicalize_input(data)
     from docx import Document
     from docx.enum.section import WD_SECTION
     from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
