@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from math import isfinite
 from typing import Any
@@ -306,7 +306,7 @@ def build_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict
         },
         "identity": {
             "ticker": security.ticker, "company": company.display_name, "sector": company.sector or "",
-            "industry": company.industry or "", "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "industry": company.industry or "", "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "market_provider": getattr(ctx.get("market"), "provider", "") if ctx.get("market") else "",
             "market_as_of": _iso(getattr(ctx.get("market"), "as_of", None)) if ctx.get("market") else "",
         },
