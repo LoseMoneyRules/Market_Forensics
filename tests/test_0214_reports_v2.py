@@ -15,7 +15,7 @@ from mfapp.core_models import Company, Coverage, Event, Job, MarketSnapshot, Pos
 from mfapp.extensions import db
 from mfapp.models import User
 from mfapp.report_charts import chart_bundle
-from mfapp.reporting import render_docx, render_docx_safe, render_pdf, render_pdf_safe
+from mfapp.reporting import render_discovery_pdf, render_docx, render_docx_safe, render_pdf, render_pdf_safe
 from mfapp.report_render_v2 import _flow_rows
 from mfapp.security import encrypt_secret, hash_password
 from mfapp.services import ensure_workspace
@@ -247,6 +247,26 @@ def test_0214_data_review_partial_case_stays_honest_and_renderable():
     assert "NOT RUN" in text or data["validation"]["state"]=="NOT RUN"
     assert len(re.findall(rb"/Type\s*/Page\b", pdf.getvalue())) <= 2
 
+
+
+def test_0214_discovery_landscape_is_decision_useful_and_auditable():
+    scan={
+        "contract_version":"BROAD_FORENSIC_DISCOVERY_V2","universe_source":"US operating equities",
+        "long_count":1,"short_count":0,"watch_count":1,"p1_count":1,"p2_count":0,
+        "stage0_count":5600,"stage1_scanned_count":900,"stage2_enriched_count":45,"provider_call_total":52,
+        "materialized_at":"2026-09-20T18:30:00",
+        "candidates":[
+            {"ticker":"AAA","priority":"P1","research_side":"LONG","price":40.0,"bear":34.0,"base":62.0,"bull":82.0,"base_gap_pct":55.0,"valuation_methods":3,"dollar_volume":125000000,"radar_label":"Valuation Dislocation","priority_reason":"Intrinsic gap with operating confirmation","forensic_signals":[{"detail":"Cash conversion improving"}],"what_invalidates":"Base falls below market"},
+            {"ticker":"BBB","priority":"WATCH","research_side":"LONG","price":20.0,"bear":16.0,"base":24.0,"bull":31.0,"base_gap_pct":20.0,"valuation_methods":2,"dollar_volume":18000000,"radar_label":"Verification Needed","priority_reason":"Data still incomplete","forensic_signals":[],"what_invalidates":"Filed data removes the gap"},
+        ],
+    }
+    pdf=render_discovery_pdf(scan,{"title":"Market Forensics","footer":"Lose Money Rules"})
+    assert pdf.getvalue().startswith(b"%PDF")
+    assert len(pdf.getvalue()) > 3000
+    import mfapp.reporting as reporting
+    source=Path(reporting.__file__).read_text()
+    for token in ("Discovery · Opportunity Landscape","Bear","Base","Bull","Research reason / invalidation","Stage 1 scanned","Provider calls"):
+        assert token in source
 
 def test_0214_optional_sections_never_break_rich_or_fallback_artifacts(monkeypatch):
     data=sample_report(complete=False)
