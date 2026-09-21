@@ -7,6 +7,7 @@ from typing import Any
 from .core_models import Coverage, Security, ValuationModel
 from .data_providers import get_secret
 from .discovery_engine import classify_coverage
+from .discovery_market_fundamentals import screen_full_universe
 from .discovery_forensics import (
     FORENSIC_EDGE_PCT, FORENSIC_ENRICH_LIMIT, FORENSIC_STRONG_EDGE_PCT,
     FORENSIC_WATCH_EDGE_PCT, discovery_opportunity, enrich_forensic_candidates,
@@ -23,7 +24,7 @@ MIN_DOLLAR_VOLUME = 15_000_000.0
 MIN_DAILY_VOLUME = 200_000.0
 MAX_PER_SIDE = 10
 MAX_WATCH = 10
-CONTRACT_VERSION = "BROAD_FORENSIC_DISCOVERY_V3"
+CONTRACT_VERSION = "FULL_MARKET_FORENSIC_DISCOVERY_V4"
 
 
 def _headers(user_id: int) -> dict[str, str] | None:
@@ -165,7 +166,11 @@ def _active_coverage_tickers(user_id: int) -> set[str]:
     }
 
 
-def _discovery_health(universe: dict[str, Any], stage1: dict[str, Any]) -> dict[str, Any]:
+def _discovery_health(
+    universe: dict[str, Any],
+    stage1: dict[str, Any],
+    fundamental_screen: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     flags: list[str] = []
     severity = "OK"
     current = int(universe.get("member_count") or 0)
@@ -187,6 +192,28 @@ def _discovery_health(universe: dict[str, Any], stage1: dict[str, Any]) -> dict[
         severity = "WARN" if severity == "OK" else severity
         flags.append(f"Only {received}/{requested} requested market snapshots were returned.")
 
+    if current and requested != current:
+        severity = "CRITICAL"
+        flags.append(f"Stage 1 requested {requested}/{current} eligible names; full-universe scan contract was not satisfied.")
+
+    fundamental_screen = dict(fundamental_screen or {})
+    fundamental_total = int(fundamental_screen.get("total_liquid_names") or 0)
+    fundamental_usable = int(fundamental_screen.get("usable_count") or 0)
+    fundamental_pct = (
+        fundamental_usable / fundamental_total * 100.0
+        if fundamental_total else 0.0
+    )
+    if fundamental_total:
+        if not fundamental_screen.get("configured"):
+            severity = "CRITICAL"
+            flags.append("SEC full-market fundamental pre-screen is not configured.")
+        elif fundamental_pct < 50.0:
+            severity = "CRITICAL"
+            flags.append(f"Only {fundamental_usable}/{fundamental_total} liquid names have usable full-market SEC fundamentals.")
+        elif fundamental_pct < 75.0:
+            severity = "WARN" if severity == "OK" else severity
+            flags.append(f"Full-market SEC fundamental coverage is {fundamental_pct:.0f}%; missing names are not selected blindly.")
+
     exclusions = dict(stage1.get("excluded_breakdown") or {})
     total_stage1_rejected = sum(int(v or 0) for v in exclusions.values())
     if total_stage1_rejected >= 20 and exclusions:
@@ -204,12 +231,14 @@ def _discovery_health(universe: dict[str, Any], stage1: dict[str, Any]) -> dict[
         "snapshot_requested_count": requested,
         "snapshot_received_count": received,
         "snapshot_success_pct": round(snapshot_pct, 1),
+        "fundamental_total_count": fundamental_total,
+        "fundamental_usable_count": fundamental_usable,
+        "fundamental_usable_pct": round(fundamental_pct, 1),
     }
 
 
 def _scan_cadence(health: dict[str, Any], coverage_progress: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    pct_30d = _n(coverage_progress.get("pct_30d")) or 0.0
     health_status = str(health.get("status") or "OK")
     if health_status == "CRITICAL":
         days = 1
@@ -217,17 +246,14 @@ def _scan_cadence(health: dict[str, Any], coverage_progress: dict[str, Any]) -> 
     elif health_status == "WARN":
         days = 3
         reason = "Re-run in about 3 days because the last universe/provider health check needs confirmation."
-    elif pct_30d < 25.0:
-        days = 3
-        reason = "Run every ~3 days until the rotating broad-universe baseline has reasonable recent coverage."
     else:
         days = 7
-        reason = "Weekly is the normal cadence once broad-universe coverage is established."
+        reason = "Weekly is the normal cadence; every successful run scans the full eligible universe rather than advancing a rotation."
     return {
         "recommended_interval_days": days,
         "next_due_at": (now + timedelta(days=days)).isoformat(timespec="seconds"),
         "reason": reason,
-        "rule": "Sooner after a failed/partial scan; otherwise build breadth first, then weekly.",
+        "rule": "Sooner after failed/partial full-market coverage; otherwise weekly.",
     }
 
 
@@ -237,78 +263,115 @@ def _select_stage2_finalists(
     *,
     limit: int = FORENSIC_ENRICH_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Allocate bounded deep-enrichment budget across valuation, quiet and activity lanes.
+    """Choose deep-forensic finalists only after market-wide evidence screening.
 
-    Discovery is allowed to surface research leads before Validation is complete.
-    The finalist selector therefore prioritizes known valuation dislocations from
-    the WATCH edge onward, while reserving most capacity for quiet broad rotation.
+    Known Coverage names may qualify from stored intrinsic/historical/peer evidence.
+    Unknown names must have an eligible SEC-frame fundamental pre-screen. Market
+    activity, alphabetical rotation and liquidity alone never allocate Stage-2 budget.
     """
     known_edge: list[dict[str, Any]] = []
-    quiet_broad: list[dict[str, Any]] = []
-    activity: list[dict[str, Any]] = []
-    remainder: list[dict[str, Any]] = []
+    broad_long: list[dict[str, Any]] = []
+    broad_short: list[dict[str, Any]] = []
 
     for row in rows:
         ticker = str(row.get("ticker") or "").upper()
         context = local_context.get(ticker) or {}
-        lanes = set(row.get("stage1_lanes") or [])
+        screen = dict(row.get("fundamental_screen") or {})
         gap = _n(context.get("base_gap_pct"))
         vf = dict(context.get("valuation_forensics") or {})
-        forensic_gaps = [abs(v) for v in (
-            _n(gap), _n(vf.get("historical_gap_pct")), _n(vf.get("peer_gap_pct"))
-        ) if v is not None]
+        forensic_gaps = [
+            abs(v) for v in (
+                _n(gap), _n(vf.get("historical_gap_pct")), _n(vf.get("peer_gap_pct"))
+            ) if v is not None
+        ]
         strongest_forensic_gap = max(forensic_gaps) if forensic_gaps else None
         item = dict(row)
-        if context:
-            item["known_context"] = context
-            item["in_coverage"] = True
-        else:
-            item["known_context"] = {}
-            item["in_coverage"] = False
+        item["known_context"] = context
+        item["in_coverage"] = bool(context)
 
-        if strongest_forensic_gap is not None and strongest_forensic_gap >= FORENSIC_WATCH_EDGE_PCT:
-            item["stage2_selection_reason"] = "Stored intrinsic / historical / peer-relative evidence is already at or beyond the Discovery WATCH edge."
+        if context and strongest_forensic_gap is not None and strongest_forensic_gap >= FORENSIC_WATCH_EDGE_PCT:
+            item["stage2_selection_reason"] = (
+                "Stored Coverage intrinsic / historical / peer-relative evidence is already "
+                "at or beyond the Discovery WATCH edge."
+            )
             item["stage2_forensic_gap_pct"] = strongest_forensic_gap
             known_edge.append(item)
-        elif "BROAD_ROTATION" in lanes and "MARKET_ACTIVITY" not in lanes:
-            item["stage2_selection_reason"] = "Quiet liquid broad-universe name selected for forensic rotation."
-            quiet_broad.append(item)
-        elif "MARKET_ACTIVITY" in lanes:
-            item["stage2_selection_reason"] = "Current market activity adds a secondary forensic investigation lane."
-            activity.append(item)
-        else:
-            item["stage2_selection_reason"] = "Liquid Stage-1 name selected from the bounded remainder."
-            remainder.append(item)
+            continue
 
-    known_edge.sort(key=lambda row: (-abs(_n((row.get("known_context") or {}).get("base_gap_pct")) or 0.0), row["ticker"]))
-    quiet_broad.sort(key=lambda row: (abs(_n(row.get("move_pct")) or 0.0), -(_n(row.get("dollar_volume")) or 0.0), row["ticker"]))
-    activity.sort(key=lambda row: (-abs(_n(row.get("move_pct")) or 0.0), int(row.get("activity_rank") or 9999), row["ticker"]))
-    remainder.sort(key=lambda row: (-(_n(row.get("dollar_volume")) or 0.0), row["ticker"]))
+        if not screen.get("eligible"):
+            continue
+
+        signals = list(screen.get("signals") or [])
+        signal_text = "; ".join(
+            str(signal.get("detail") or signal.get("label") or "")
+            for signal in signals[:3]
+            if signal.get("detail") or signal.get("label")
+        )
+        item["stage2_selection_reason"] = (
+            f"Full-market SEC fundamental pre-screen {screen.get('side')} "
+            f"strength {int(screen.get('strength') or 0)}"
+            + (f": {signal_text}" if signal_text else ".")
+        )
+        item["stage2_screen_strength"] = int(screen.get("strength") or 0)
+        item["stage2_screen_signal_count"] = len(signals)
+        if str(screen.get("side") or "").upper() == "LONG":
+            broad_long.append(item)
+        elif str(screen.get("side") or "").upper() == "SHORT":
+            broad_short.append(item)
+
+    known_edge.sort(key=lambda row: (
+        -max(
+            abs(_n((row.get("known_context") or {}).get("base_gap_pct")) or 0.0),
+            abs(_n(((row.get("known_context") or {}).get("valuation_forensics") or {}).get("historical_gap_pct")) or 0.0),
+            abs(_n(((row.get("known_context") or {}).get("valuation_forensics") or {}).get("peer_gap_pct")) or 0.0),
+        ),
+        row["ticker"],
+    ))
+
+    def broad_sort(row: dict[str, Any]) -> tuple:
+        screen = dict(row.get("fundamental_screen") or {})
+        return (
+            -int(screen.get("strength") or 0),
+            -len(list(screen.get("signals") or [])),
+            -(_n(row.get("dollar_volume")) or 0.0),
+            row["ticker"],
+        )
+
+    broad_long.sort(key=broad_sort)
+    broad_short.sort(key=broad_sort)
 
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    def add(items: list[dict[str, Any]], budget: int | None = None) -> None:
-        taken = 0
-        for item in items:
-            if len(selected) >= limit:
-                return
-            ticker = item["ticker"]
-            if ticker in seen:
-                continue
-            if budget is not None and taken >= budget:
-                return
+    def append(item: dict[str, Any]) -> None:
+        ticker = str(item.get("ticker") or "").upper()
+        if ticker and ticker not in seen and len(selected) < limit:
             selected.append(item)
             seen.add(ticker)
-            taken += 1
 
-    add(known_edge, 3)
-    add(quiet_broad, 5)
-    add(activity, 2)
-    add(known_edge)
-    add(quiet_broad)
-    add(activity)
-    add(remainder)
+    # Preserve a bounded lane for already-researched dislocations, then allocate
+    # the remaining capacity symmetrically across full-market LONG/SHORT screens.
+    for item in known_edge[:4]:
+        append(item)
+
+    li = si = 0
+    while len(selected) < limit and (li < len(broad_long) or si < len(broad_short)):
+        if li < len(broad_long):
+            append(broad_long[li])
+            li += 1
+        if len(selected) >= limit:
+            break
+        if si < len(broad_short):
+            append(broad_short[si])
+            si += 1
+
+    for item in known_edge[4:]:
+        append(item)
+    for item in broad_long[li:]:
+        append(item)
+    for item in broad_short[si:]:
+        append(item)
+
     return selected[:limit]
 
 
@@ -336,7 +399,7 @@ def _invalidation(side: str, priority: str = "P2") -> str:
 
 
 def market_scan(user_id: int) -> dict[str, Any]:
-    """Broad-universe Discovery with cheap rotation followed by bounded forensics."""
+    """Full-market evidence-first Discovery followed by bounded deep forensics."""
     headers = _headers(user_id)
     if not headers:
         return {
@@ -358,6 +421,9 @@ def market_scan(user_id: int) -> dict[str, Any]:
         min_dollar_volume=MIN_DOLLAR_VOLUME,
     )
     stage1_rows = list(stage1.get("rows") or [])
+    stage1_rows, fundamental_screen = screen_full_universe(
+        user_id, stage1_rows, errors, provider_calls,
+    )
     symbols = {str(row.get("ticker") or "").upper() for row in stage1_rows if row.get("ticker")}
     local_context = _coverage_context_map(user_id, symbols)
     finalists = _select_stage2_finalists(stage1_rows, local_context)
@@ -542,7 +608,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
     watch_candidates = [row for row in candidates if row.get("priority") == "WATCH"][:MAX_WATCH]
     final = long_candidates + short_candidates + watch_candidates
 
-    health = _discovery_health(universe, stage1)
+    health = _discovery_health(universe, stage1, fundamental_screen)
     coverage_progress = dict(stage1.get("coverage_progress") or {})
     cadence = _scan_cadence(health, coverage_progress)
 
@@ -559,7 +625,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "short_candidates": short_candidates,
         "watch_candidates": watch_candidates,
         "errors": errors,
-        "universe_source": "Cached Alpaca active US operating equities + rotating cheap Stage 1 + bounded SEC/filed Stage 2",
+        "universe_source": "Alpaca active US operating equities + full-market price/liquidity scan + full-market SEC frame pre-screen + bounded deep Companyfacts Stage 2",
         "universe_generated_at": universe.get("generated_at"),
         "universe_cache_hit": bool(universe.get("cache_hit")),
         "stage0_count": int(universe.get("member_count") or 0),
@@ -568,9 +634,12 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "stage0_excluded_breakdown": stage0_excluded,
         "stage1_scanned_count": int(stage1.get("scanned_count") or 0),
         "stage1_qualified_count": int(stage1.get("qualified_count") or 0),
-        "stage1_broad_rotation_count": int(stage1.get("broad_rotation_count") or 0),
-        "stage1_quiet_broad_count": int(stage1.get("quiet_broad_count") or 0),
-        "stage1_activity_count": int(stage1.get("activity_count") or 0),
+        "stage1_broad_rotation_count": 0,
+        "stage1_quiet_broad_count": 0,
+        "stage1_activity_count": 0,
+        "stage1_full_universe_count": int(stage1.get("full_universe_count") or 0),
+        "stage1_scan_mode": str(stage1.get("scan_mode") or "FULL_UNIVERSE"),
+        "fundamental_screen": fundamental_screen,
         "stage1_cursor_start": int(stage1.get("cursor_start") or 0),
         "stage1_cursor_end": int(stage1.get("cursor_end") or 0),
         "stage1_snapshot_requested_count": int(stage1.get("snapshot_requested_count") or 0),
@@ -610,17 +679,21 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "final_requires_valid_ttm": True,
             "reference_price_fallback": False,
             "fill_quota": "none",
+            "full_universe_each_run": True,
+            "unknown_stage2_requires_marketwide_fundamental_screen": True,
             "stage2_deep_enrichment_limit": FORENSIC_ENRICH_LIMIT,
         },
         "ranking_basis": [
-            "priority tier",
+            "full-market SEC fundamental pre-screen for unknown names",
+            "stored intrinsic / historical / peer evidence for known names",
+            "priority tier after deep forensics",
             "absolute Base gap",
             "valuation quality / method count",
             "operating confirmation or contradiction",
             "ticker",
         ],
         "contract_version": CONTRACT_VERSION,
-        "enrichment_mode": "BROAD_STAGE0_ROTATION_STAGE1_BOUNDED_FORENSIC_STAGE2",
+        "enrichment_mode": "FULL_STAGE0_FULL_MARKET_STAGE1_SEC_FRAME_PRESCREEN_BOUNDED_DEEP_STAGE2",
     }
 
 

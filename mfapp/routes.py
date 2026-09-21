@@ -566,7 +566,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
-    if scan and scan.get("contract_version") != "BROAD_FORENSIC_DISCOVERY_V3":
+    if scan and scan.get("contract_version") != "FULL_MARKET_FORENSIC_DISCOVERY_V4":
         return {
             "candidates": [], "long_candidates": [], "short_candidates": [], "watch_candidates": [],
             "candidate_count": 0, "long_count": 0, "short_count": 0, "watch_count": 0,
@@ -650,7 +650,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
     for key in (
         "stage0_count", "stage0_raw_count", "stage0_excluded_count",
         "stage1_scanned_count", "stage1_qualified_count", "stage1_broad_rotation_count",
-        "stage1_quiet_broad_count", "stage1_activity_count", "stage1_cursor_start",
+        "stage1_quiet_broad_count", "stage1_activity_count", "stage1_full_universe_count", "stage1_cursor_start",
         "stage1_cursor_end", "stage1_snapshot_requested_count", "stage1_snapshot_received_count",
         "stage2_selected_count", "stage2_enriched_count", "provider_call_total", "excluded_count",
     ):
@@ -663,6 +663,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
     scan["coverage_progress"] = dict(scan.get("coverage_progress") or {}) if isinstance(scan.get("coverage_progress") or {}, dict) else {}
     scan["universe_health"] = dict(scan.get("universe_health") or {}) if isinstance(scan.get("universe_health") or {}, dict) else {}
     scan["scan_cadence"] = dict(scan.get("scan_cadence") or {}) if isinstance(scan.get("scan_cadence") or {}, dict) else {}
+    scan["fundamental_screen"] = dict(scan.get("fundamental_screen") or {}) if isinstance(scan.get("fundamental_screen") or {}, dict) else {}
     raw_rejections = list(scan.get("rejection_log") or []) if isinstance(scan.get("rejection_log") or [], list) else []
     rejection_log = []
     for raw in raw_rejections:

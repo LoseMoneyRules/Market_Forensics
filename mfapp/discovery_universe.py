@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
@@ -11,13 +12,13 @@ from .extensions import db
 from .models import UserPreference
 
 STAGE0_CACHE_KEY = "discovery_stage0_v2"
-STAGE0_CURSOR_KEY = "discovery_stage0_cursor_v2"
 STAGE1_SEEN_KEY = "discovery_stage1_seen_v1"
 STAGE0_CACHE_HOURS = 24
-STAGE1_BATCH_SIZE = 360
-STAGE1_ACTIVITY_LIMIT = 160
-STAGE1_COVERAGE_LIMIT = 80
-SNAPSHOT_CHUNK_SIZE = 60
+STAGE1_BATCH_SIZE = 0  # compatibility surface: Stage 1 now scans the full universe every run
+STAGE1_ACTIVITY_LIMIT = 0
+STAGE1_COVERAGE_LIMIT = 0
+SNAPSHOT_CHUNK_SIZE = 100
+SNAPSHOT_MAX_WORKERS = 4
 MAJOR_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA"}
 
 NON_OPERATING_NAME_TOKENS = (
@@ -198,74 +199,29 @@ def stage0_universe(
         }
 
 
-def _activity_pool(headers: dict[str, str], errors: list[str], provider_calls: Counter) -> dict[str, dict[str, Any]]:
-    activity: dict[str, dict[str, Any]] = {}
-
-    def touch(symbol: Any) -> dict[str, Any]:
-        ticker = str(symbol or "").upper().strip()
-        if not ticker:
-            return {}
-        return activity.setdefault(ticker, {"ticker": ticker, "activity_rank": None, "move_pct": None, "activity_sources": []})
-
-    try:
-        provider_calls["alpaca_most_active"] += 1
-        response = requests.get(
-            "https://data.alpaca.markets/v1beta1/screener/stocks/most-actives",
-            headers=headers,
-            params={"by": "volume", "top": 100},
-            timeout=(5, 12),
-        )
-        if response.status_code == 200:
-            for idx, row in enumerate((response.json() or {}).get("most_actives") or [], start=1):
-                item = touch(row.get("symbol"))
-                if item:
-                    item["activity_rank"] = idx
-                    item["activity_sources"].append("MOST_ACTIVE")
-        else:
-            errors.append(f"Stage 1 Most Active HTTP {response.status_code}.")
-    except Exception as exc:
-        errors.append(f"Stage 1 Most Active: {type(exc).__name__}")
-
-    try:
-        provider_calls["alpaca_movers"] += 1
-        response = requests.get(
-            "https://data.alpaca.markets/v1beta1/screener/stocks/movers",
-            headers=headers,
-            params={"top": 50},
-            timeout=(5, 12),
-        )
-        if response.status_code == 200:
-            payload = response.json() or {}
-            for side_key, sign, label in (("gainers", 1, "GAINER"), ("losers", -1, "LOSER")):
-                for row in payload.get(side_key) or []:
-                    item = touch(row.get("symbol"))
-                    if not item:
-                        continue
-                    move = _num(row.get("percent_change") or row.get("change_pct") or row.get("percentChange"))
-                    if move is not None and sign < 0 and move > 0:
-                        move = -move
-                    item["move_pct"] = move
-                    item["activity_sources"].append(label)
-        else:
-            errors.append(f"Stage 1 Movers HTTP {response.status_code}.")
-    except Exception as exc:
-        errors.append(f"Stage 1 Movers: {type(exc).__name__}")
-    return activity
-
-
 def _snapshot_map(
     symbols: list[str],
     headers: dict[str, str],
     errors: list[str],
     provider_calls: Counter,
 ) -> dict[str, dict[str, Any]]:
+    """Fetch current market state for the entire eligible universe.
+
+    Requests are chunked and modestly parallelized. Selection happens only after
+    every symbol has had the same opportunity to return a snapshot.
+    """
     out: dict[str, dict[str, Any]] = {}
-    for start in range(0, len(symbols), SNAPSHOT_CHUNK_SIZE):
-        chunk = symbols[start:start + SNAPSHOT_CHUNK_SIZE]
-        if not chunk:
-            continue
+    chunks = [
+        symbols[start:start + SNAPSHOT_CHUNK_SIZE]
+        for start in range(0, len(symbols), SNAPSHOT_CHUNK_SIZE)
+        if symbols[start:start + SNAPSHOT_CHUNK_SIZE]
+    ]
+    if not chunks:
+        return out
+    provider_calls["alpaca_snapshot_batches"] += len(chunks)
+
+    def fetch_chunk(chunk: list[str]) -> tuple[list[str], int | None, dict[str, Any], str]:
         try:
-            provider_calls["alpaca_snapshot_batches"] += 1
             response = requests.get(
                 "https://data.alpaca.markets/v2/stocks/snapshots",
                 headers=headers,
@@ -273,9 +229,22 @@ def _snapshot_map(
                 timeout=(5, 18),
             )
             if response.status_code != 200:
-                errors.append(f"Stage 1 snapshot batch HTTP {response.status_code}.")
+                return chunk, response.status_code, {}, ""
+            return chunk, response.status_code, response.json() or {}, ""
+        except Exception as exc:
+            return chunk, None, {}, type(exc).__name__
+
+    with ThreadPoolExecutor(max_workers=SNAPSHOT_MAX_WORKERS) as executor:
+        futures = [executor.submit(fetch_chunk, chunk) for chunk in chunks]
+        for future in as_completed(futures):
+            chunk, status, payload, error = future.result()
+            if error:
+                errors.append(f"Stage 1 snapshot batch: {error}")
                 continue
-            for symbol, node in (response.json() or {}).items():
+            if status != 200:
+                errors.append(f"Stage 1 snapshot batch HTTP {status}.")
+                continue
+            for symbol, node in payload.items():
                 node = node or {}
                 trade = node.get("latestTrade") or {}
                 day = node.get("dailyBar") or {}
@@ -285,8 +254,6 @@ def _snapshot_map(
                 prior_close = _num(prior.get("c"))
                 prior_volume = _num(prior.get("v"))
                 move = ((price / prior_close - 1.0) * 100.0) if price is not None and prior_close not in (None, 0) else None
-                # Use the completed prior bar for the cheap liquidity gate when
-                # available so an early-session scan does not become activity-biased.
                 liquidity_volume = prior_volume if prior_volume is not None else current_volume
                 liquidity_price = prior_close if prior_close is not None else price
                 out[str(symbol).upper()] = {
@@ -302,8 +269,6 @@ def _snapshot_map(
                     "as_of": trade.get("t") or day.get("t"),
                     "liquidity_basis": "PREVIOUS_COMPLETED_DAILY_BAR" if prior_volume is not None else "CURRENT_DAILY_BAR",
                 }
-        except Exception as exc:
-            errors.append(f"Stage 1 snapshot batch: {type(exc).__name__}")
     return out
 
 
@@ -353,7 +318,8 @@ def _stage1_coverage_progress(
         "seen_30d": seen_30d,
         "pct_7d": round((seen_7d / universe_size) * 100.0, 1) if universe_size else 0.0,
         "pct_30d": round((seen_30d / universe_size) * 100.0, 1) if universe_size else 0.0,
-        "estimated_full_rotation_runs": ((universe_size + STAGE1_BATCH_SIZE - 1) // STAGE1_BATCH_SIZE) if universe_size else 0,
+        "estimated_full_rotation_runs": 1 if universe_size else 0,
+        "scan_mode": "FULL_UNIVERSE",
         "tracked_at": now_iso,
     }
 
@@ -370,64 +336,46 @@ def stage1_screen(
     min_daily_volume: float = 200_000.0,
     min_dollar_volume: float = 15_000_000.0,
 ) -> dict[str, Any]:
-    """Cheap, rotating screen over the cached broad universe.
+    """Cheap full-market screen over every eligible Stage-0 equity.
 
-    Stage 1 never calls SEC or Companyfacts. It scans one bounded slice per run,
-    adds current activity as a secondary lane, and checkpoints the next slice.
+    There is no rotating cursor. Every run requests market data for every Stage-0
+    member, applies the same price/liquidity rules, and passes the resulting liquid
+    universe to the market-wide fundamental pre-screen.
     """
     members = list(universe.get("members") or [])
     if not members:
         return {
             "rows": [], "scanned_count": 0, "qualified_count": 0,
             "cursor_start": 0, "cursor_end": 0, "broad_rotation_count": 0,
-            "activity_count": 0, "excluded_breakdown": {},
+            "quiet_broad_count": 0, "activity_count": 0, "full_universe_count": 0,
+            "excluded_breakdown": {},
             "snapshot_requested_count": 0, "snapshot_received_count": 0,
-            "coverage_progress": {"universe_size": 0, "seen_7d": 0, "seen_30d": 0, "pct_7d": 0.0, "pct_30d": 0.0, "estimated_full_rotation_runs": 0},
+            "coverage_progress": {
+                "universe_size": 0, "seen_7d": 0, "seen_30d": 0,
+                "pct_7d": 0.0, "pct_30d": 0.0,
+                "estimated_full_rotation_runs": 0, "scan_mode": "FULL_UNIVERSE",
+            },
+            "scan_mode": "FULL_UNIVERSE",
         }
 
-    by_symbol = {str(row.get("ticker") or "").upper(): dict(row) for row in members if row.get("ticker")}
-    n_members = len(members)
-    cursor_state = _preference(user_id, STAGE0_CURSOR_KEY)
-    cursor_start = int(cursor_state.get("cursor") or 0) % max(1, n_members)
-    rotation: list[dict[str, Any]] = []
-    for offset in range(min(STAGE1_BATCH_SIZE, n_members)):
-        rotation.append(members[(cursor_start + offset) % n_members])
-    cursor_end = (cursor_start + len(rotation)) % max(1, n_members)
-
-    activity = _activity_pool(headers, errors, provider_calls)
-    selected: dict[str, dict[str, Any]] = {}
-    for row in rotation:
-        ticker = str(row.get("ticker") or "").upper()
-        if ticker:
-            selected[ticker] = {"broad_rotation": True}
-    activity_order = sorted(
-        activity,
-        key=lambda ticker: (
-            int((activity.get(ticker) or {}).get("activity_rank") or 9999),
-            -abs(_num((activity.get(ticker) or {}).get("move_pct")) or 0.0),
-            ticker,
-        ),
-    )
-    for ticker in activity_order[:STAGE1_ACTIVITY_LIMIT]:
-        if ticker in by_symbol:
-            selected.setdefault(ticker, {})["activity"] = True
-    for ticker in sorted({str(x or "").upper() for x in (known_tickers or set())})[:STAGE1_COVERAGE_LIMIT]:
-        if ticker in by_symbol:
-            selected.setdefault(ticker, {})["coverage"] = True
-
-    symbols = sorted(selected)
+    by_symbol = {
+        str(row.get("ticker") or "").upper(): dict(row)
+        for row in members if row.get("ticker")
+    }
+    known = {str(x or "").upper() for x in (known_tickers or set())}
+    symbols = sorted(by_symbol)
     snapshots = _snapshot_map(symbols, headers, errors, provider_calls)
+
     excluded = Counter()
     rows: list[dict[str, Any]] = []
     for ticker in symbols:
         asset = by_symbol.get(ticker) or {}
         snap = snapshots.get(ticker) or {}
-        meta = selected.get(ticker) or {}
-        activity_meta = activity.get(ticker) or {}
         price = _num(snap.get("price"))
         volume = _num(snap.get("daily_volume"))
         dollar_volume = _num(snap.get("dollar_volume"))
-        is_known = bool(meta.get("coverage"))
+        is_known = ticker in known
+
         if price is None:
             excluded["PRICE UNKNOWN"] += 1
             continue
@@ -441,25 +389,11 @@ def stage1_screen(
             excluded["LOW / UNKNOWN LIQUIDITY"] += 1
             continue
 
-        lanes = []
-        if meta.get("broad_rotation"):
-            lanes.append("BROAD_ROTATION")
-        if meta.get("activity"):
-            lanes.append("MARKET_ACTIVITY")
+        lanes = ["FULL_UNIVERSE"]
+        reasons = ["Eligible operating equity passed the same full-market price/liquidity screen as every other Stage-0 name."]
         if is_known:
             lanes.append("COVERAGE_CONTEXT")
-        move = _num(activity_meta.get("move_pct"))
-        if move is None:
-            move = _num(snap.get("move_pct"))
-        reasons = []
-        if "BROAD_ROTATION" in lanes and "MARKET_ACTIVITY" not in lanes:
-            reasons.append("Quiet liquid name from the broad-universe rotation.")
-        if activity_meta.get("activity_rank"):
-            reasons.append(f"Most Active rank {int(activity_meta['activity_rank'])}.")
-        if move is not None and "MARKET_ACTIVITY" in lanes:
-            reasons.append(f"Current daily move {move:+.1f}%.")
-        if is_known:
-            reasons.append("Stored Coverage evidence is available for cheap triage.")
+            reasons.append("Stored Coverage evidence is available for additional triage.")
 
         rows.append({
             "ticker": ticker,
@@ -470,58 +404,42 @@ def stage1_screen(
             "price": price,
             "daily_volume": volume,
             "dollar_volume": dollar_volume,
-            "move_pct": move,
+            "move_pct": _num(snap.get("move_pct")),
             "snapshot_as_of": snap.get("as_of"),
             "liquidity_basis": snap.get("liquidity_basis"),
             "stage1_lanes": lanes,
             "stage1_reasons": reasons,
-            "activity_rank": activity_meta.get("activity_rank"),
+            "activity_rank": None,
         })
 
-    # Do not advance the broad-universe checkpoint when market snapshots failed
-    # completely; a later retry must see the same slice rather than silently skip it.
-    if snapshots:
-        _save_preference(user_id, STAGE0_CURSOR_KEY, {
-            "cursor": cursor_end,
-            "updated_at": _iso(),
-            "universe_generated_at": universe.get("generated_at"),
-            "universe_size": n_members,
-        })
-    else:
-        cursor_end = cursor_start
-
-    reviewed_rotation = {
-        str(row.get("ticker") or "").upper()
-        for row in rotation
-        if str(row.get("ticker") or "").upper() in snapshots
-    }
-    # A failed snapshot run must not erase previously accumulated breadth history.
-    # Passing an empty reviewed set preserves history while still leaving the
-    # broad-universe cursor unchanged.
-    coverage_progress = _stage1_coverage_progress(user_id, universe, reviewed_rotation if snapshots else set())
+    reviewed_symbols = set(snapshots)
+    coverage_progress = _stage1_coverage_progress(user_id, universe, reviewed_symbols)
 
     return {
         "rows": rows,
         "scanned_count": len(symbols),
         "qualified_count": len(rows),
-        "cursor_start": cursor_start,
-        "cursor_end": cursor_end,
-        "broad_rotation_count": sum(1 for row in rows if "BROAD_ROTATION" in row.get("stage1_lanes", [])),
-        "quiet_broad_count": sum(1 for row in rows if "BROAD_ROTATION" in row.get("stage1_lanes", []) and "MARKET_ACTIVITY" not in row.get("stage1_lanes", [])),
-        "activity_count": sum(1 for row in rows if "MARKET_ACTIVITY" in row.get("stage1_lanes", [])),
+        "cursor_start": 0,
+        "cursor_end": 0,
+        "broad_rotation_count": 0,
+        "quiet_broad_count": 0,
+        "activity_count": 0,
+        "full_universe_count": len(rows),
         "excluded_breakdown": dict(excluded),
         "snapshot_requested_count": len(symbols),
         "snapshot_received_count": len(snapshots),
         "coverage_progress": coverage_progress,
-        "batch_size": STAGE1_BATCH_SIZE,
-        "activity_limit": STAGE1_ACTIVITY_LIMIT,
-        "coverage_limit": STAGE1_COVERAGE_LIMIT,
+        "batch_size": len(symbols),
+        "activity_limit": 0,
+        "coverage_limit": 0,
         "snapshot_chunk_size": SNAPSHOT_CHUNK_SIZE,
+        "snapshot_max_workers": SNAPSHOT_MAX_WORKERS,
+        "scan_mode": "FULL_UNIVERSE",
     }
 
 
 __all__ = [
     "MAJOR_EXCHANGES", "STAGE0_CACHE_HOURS", "STAGE1_BATCH_SIZE",
-    "STAGE1_ACTIVITY_LIMIT", "STAGE1_COVERAGE_LIMIT", "SNAPSHOT_CHUNK_SIZE", "STAGE1_SEEN_KEY",
+    "STAGE1_ACTIVITY_LIMIT", "STAGE1_COVERAGE_LIMIT", "SNAPSHOT_CHUNK_SIZE", "SNAPSHOT_MAX_WORKERS", "STAGE1_SEEN_KEY",
     "stage0_universe", "stage1_screen", "_asset_is_operating_equity",
 ]
