@@ -1233,7 +1233,7 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
             for r in p.runs:r.bold=True
     hist=(data.get("fundamentals") or {}).get("history") or []
     if hist:
-        add_table(["Period","Rev growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"],[[r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),_pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),_num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),_pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),_num(r.get("ccc"),0,"d")] for r in hist[-10:]],small=True)
+        add_table(["Period","Rev growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"],[([r.get("period"),"MISSING","-","-","-","-","-","-","-","-"] if r.get("missing_year") else [r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),_pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),_num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),_pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),_num(r.get("ccc"),0,"d")]) for r in hist[-10:]],small=True)
 
     heading("Financial flows",1,"Follow the money")
     steps=_flow_rows(data)
