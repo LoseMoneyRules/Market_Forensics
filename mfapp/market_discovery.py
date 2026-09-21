@@ -455,6 +455,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
         ][:4]
 
         context = local_context.get(symbol) or {}
+        research_forensics = dict(context.get("valuation_forensics") or {})
         base_label = "Intrinsic Base" if quality == "INTRINSIC" and methods >= 2 else "Indicative Base"
         reasons = [
             (base_label + " $" + format(fair, ",.2f")) if fair is not None else "Base unavailable",
@@ -464,6 +465,14 @@ def market_scan(user_id: int) -> dict[str, Any]:
         ]
         reasons.extend(str(row.get("detail") or "") for row in operating_signals[:2])
         reasons.extend(str(row.get("detail") or "") for row in accounting_context[:2])
+        if _n(research_forensics.get("historical_gap_pct")) is not None:
+            reasons.append(f"Historical driver-adjusted multiple gap {_n(research_forensics.get('historical_gap_pct')):+.1f}%.")
+        if _n(research_forensics.get("peer_gap_pct")) is not None:
+            reasons.append(f"Peer-adjusted relative gap {_n(research_forensics.get('peer_gap_pct')):+.1f}%.")
+        if research_forensics.get("market_read"):
+            reasons.append(str(research_forensics.get("market_read")))
+        if _n(research_forensics.get("rerating_completion_pct")) is not None and _n(research_forensics.get("rerating_completion_pct")) < 50:
+            warning_parts.append("Fewer than half of measurable re-rating conditions are met; historical cheapness alone is not enough.")
         reasons = [reason for reason in reasons if reason]
 
         candidate = dict(item)
@@ -510,6 +519,8 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "corporate_action_review": basis_review,
             "warning": " ".join(warning_parts),
             "known_context": context,
+            "valuation_forensics": research_forensics,
+            "decision_window": research_forensics.get("decision_window"),
             "in_coverage": bool(context),
             "lenses": [str(row.get("label") or "") for row in operating_signals],
         })
@@ -517,7 +528,11 @@ def market_scan(user_id: int) -> dict[str, Any]:
 
     candidates.sort(key=lambda row: (
         int(row.get("priority_rank") or 9),
-        -abs(_n(row.get("base_gap_pct")) or 0.0),
+        -max(
+            abs(_n(row.get("base_gap_pct")) or 0.0),
+            abs(_n((row.get("valuation_forensics") or {}).get("historical_gap_pct")) or 0.0),
+            abs(_n((row.get("valuation_forensics") or {}).get("peer_gap_pct")) or 0.0),
+        ),
         -int(row.get("valuation_methods") or 0),
         -int(row.get("forensic_score") or 0),
         row["ticker"],
