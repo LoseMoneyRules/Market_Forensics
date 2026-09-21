@@ -26,7 +26,7 @@
     {% if scan_failure %}<div class="notice amber"><strong>LAST SCAN FAILED.</strong> {{ scan_failure }}. Any prior successful scan remains visible below.</div>{% endif %}
     {% if market_scan.stale_contract %}<div class="notice amber"><strong>OLD DISCOVERY RESULT IGNORED.</strong> The stored result predates the broad-universe contract. Run Discovery again; mover-only results are intentionally not displayed.</div>{% endif %}
 
-    {% if market_scan.contract_version == 'BROAD_FORENSIC_DISCOVERY_V2' %}
+    {% if market_scan.contract_version == 'BROAD_FORENSIC_DISCOVERY_V3' %}
       <div class="scan-summary">
         <span class="status-chip">Stage 0 · {{ market_scan.stage0_count }} names</span>
         <span class="status-chip">Stage 1 · {{ market_scan.stage1_scanned_count }} scanned / {{ market_scan.stage1_qualified_count }} passed</span>
