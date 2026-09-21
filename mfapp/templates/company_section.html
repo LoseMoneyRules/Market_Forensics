@@ -286,6 +286,31 @@
       {% else %}<p class="muted">Refresh SEC fundamentals to create a current basis.</p>{% endif %}
     </div>
 
+    {% if current_financial %}
+    <div class="panel fundamentals-source-audit">
+      <div class="panel-head"><div><p class="eyebrow">EVIDENCE / PROVENANCE</p><h2>Where the current numbers came from</h2><p class="muted">Period, filing date, normalized source map and Economic Reality fact provenance stay inspectable rather than disappearing behind the analysis.</p></div><span class="status-chip">{{ numbers_completeness.source_covered_field_count }}/{{ numbers_completeness.current_populated_field_count }} populated fields mapped</span></div>
+      <div class="numbers-quality-grid">
+        <div><span>Period end</span><strong>{{ current_financial.period_end or '—' }}</strong></div>
+        <div><span>Filed at</span><strong>{{ current_financial.filed_at or '—' }}</strong></div>
+        <div><span>Comparison basis</span><strong>{{ current_financial.comparison_basis|default('—')|replace('_',' ') }}</strong></div>
+        <div><span>Normalized fields populated</span><strong>{{ numbers_completeness.current_populated_field_count }}/{{ numbers_completeness.normalized_field_count }}</strong></div>
+      </div>
+      <details>
+        <summary><strong>Normalized filing field sources</strong> · {{ current_financial.source_map|length }} mapped entries</summary>
+        <div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Field</th><th>Source / tag / method</th></tr></thead><tbody>
+          {% for key,value in current_financial.source_map.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{{ value }}</small></td></tr>{% else %}<tr><td colspan="2" class="empty-cell">No normalized source map is stored for this basis.</td></tr>{% endfor %}
+        </tbody></table></div>
+      </details>
+      {% if economic_reality and economic_reality.fact_sources %}
+      <details>
+        <summary><strong>Economic Reality fact sources</strong> · {{ economic_reality.fact_sources|length }} classified inputs</summary>
+        <div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Economic fact</th><th>Source</th></tr></thead><tbody>
+          {% for key,value in economic_reality.fact_sources.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{{ value }}</small></td></tr>{% endfor %}
+        </tbody></table></div>
+      </details>
+    </div>
+    {% endif %}
+
     {% if economic_reality %}
     <div class="panel economic-reality-panel">
       <div class="panel-head">
@@ -429,10 +454,13 @@
         <div><span>Annual periods</span><strong>{{ numbers_completeness.annual_count }}</strong></div>
         <div><span>Stored quarters</span><strong>{{ numbers_completeness.quarter_count }}</strong></div>
         <div><span>Current basis</span><strong>{{ numbers_completeness.current_label or '—' }}</strong></div>
+        <div><span>Normalized fields</span><strong>{{ numbers_completeness.current_populated_field_count }}/{{ numbers_completeness.normalized_field_count }}</strong><small>populated on current basis</small></div>
+        <div><span>Mapped populated fields</span><strong>{{ numbers_completeness.source_covered_field_count }}/{{ numbers_completeness.current_populated_field_count }}</strong><small>source/provenance mapping</small></div>
         <div><span>Unresolved inputs / metrics</span><strong>{{ numbers_completeness.unresolved_count }}</strong></div>
       </div>
       {% if numbers_completeness.quarter_gaps %}<div class="notice amber">{% for message in numbers_completeness.quarter_gaps %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
       {% if numbers_completeness.missing_current_fields %}<p class="muted"><strong>Statement gaps:</strong> {{ numbers_completeness.missing_current_fields|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.missing_expected_fields %}<p class="muted"><strong>Historically populated fields missing on the current basis:</strong> {{ numbers_completeness.missing_expected_fields|join(', ') }}.</p>{% endif %}
       {% if numbers_completeness.missing_continuity_fields %}<p class="muted"><strong>Current balance-sheet gaps despite recent historical availability:</strong> {{ numbers_completeness.missing_continuity_fields|join(', ') }}.</p>{% endif %}
       {% if numbers_completeness.missing_derived_metrics %}<p class="muted"><strong>Derived analysis still unavailable:</strong> {{ numbers_completeness.missing_derived_metrics|join(', ') }}.</p>{% endif %}
       {% if numbers_completeness.unresolved_count %}<p class="muted">Refresh SEC + TTM first. Market Forensics now checks canonical US-GAAP concepts, exact consolidated filing-label fallbacks, debt components, then configured secondary fundamentals. Anything still unresolved remains visible rather than guessed.</p>{% else %}<p class="muted">No historically expected analytical input is unresolved on the current basis.</p>{% endif %}
