@@ -468,6 +468,11 @@ def _valuation_from_history(
         debt = _num(current_ttm.get("debt")) or 0.0
         economic = economic_from_row(current_ttm)
         economic_net_debt = economic_metric(economic, "economic_net_debt")
+        valuation_fcf = fcf
+        if has_suppression(economic, "FCF_POSITIVE_UNADJUSTED"):
+            after_sbc = economic_metric(economic, "fcf_after_sbc")
+            if after_sbc is not None and fcf is not None:
+                valuation_fcf = min(fcf, after_sbc)
         if economic.get("material_unresolved"):
             current_net_debt = None
         elif economic_net_debt is not None:
@@ -496,7 +501,8 @@ def _valuation_from_history(
                 if has_suppression(economic, "PE_EARNINGS_NORMALIZATION_REVIEW")
                 else _ratio(net_income, revenue, 1.0)
             ),
-            "fcf_margin": _ratio(fcf, revenue, 1.0),
+            "fcf_margin": _ratio(valuation_fcf, revenue, 1.0),
+            "fcf_margin_basis": "FCF_AFTER_SBC_WHEN_MATERIAL" if valuation_fcf != fcf else "REPORTED_FCF",
             "operating_margin": _ratio(current_ttm.get("operating_income"), revenue, 1.0),
         })
     defaults = default_cases(metrics, company_type)
