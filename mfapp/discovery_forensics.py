@@ -491,7 +491,11 @@ def _valuation_from_history(
                 if prior_ttm and _pct_change(revenue, (prior_ttm or {}).get("revenue")) is not None
                 else metrics.get("revenue_growth")
             ),
-            "net_margin": _ratio(net_income, revenue, 1.0),
+            "net_margin": (
+                metrics.get("net_margin")
+                if has_suppression(economic, "PE_EARNINGS_NORMALIZATION_REVIEW")
+                else _ratio(net_income, revenue, 1.0)
+            ),
             "fcf_margin": _ratio(fcf, revenue, 1.0),
             "operating_margin": _ratio(current_ttm.get("operating_income"), revenue, 1.0),
         })
@@ -514,7 +518,10 @@ def _valuation_from_history(
         "quality": result.get("quality"),
         "valuation_methods": methods,
         "metrics": metrics,
-        "warnings": list(result.get("warnings") or []),
+        "warnings": list(result.get("warnings") or []) + (
+            ["TTM net-margin evidence has a tax/non-operating distortion flag; P/E assumptions retain the multi-year filed basis."]
+            if current_ttm and has_suppression(economic_from_row(current_ttm), "PE_EARNINGS_NORMALIZATION_REVIEW") else []
+        ),
     }
 
 def _local_forensics(
