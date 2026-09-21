@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.0  
+**Current product line:** 0.3.1  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -134,6 +134,79 @@ Every automatic price effect must appear in a Valuation Impact Ledger. Items tha
 User-edited valuation assumptions remain explicit human inputs. Automatic policy may define/rebuild defaults and enforce data-integrity method exclusions, but it must not secretly rewrite a reviewed manual assumption.
 
 Company Quality is a filed/economic evidence read, not a claim that moat, competitive durability, customer concentration or product quality has been proven. Those qualitative questions remain part of the Business gate and require sourced review.
+
+### 3.5 New financial evidence reopens dependent Research
+
+A human approval is valid only for the financial basis that existed when the analyst reviewed it.
+
+When a newly normalized 10-Q/10-K equivalent period, annual/quarterly filing, recent restatement or material re-normalization is materialized after an approval, Market Forensics must show **NEW FINANCIAL EVIDENCE — REVIEW REQUIRED** and make the financially dependent approval ineffective for current readiness without deleting the historical approval row or analyst work.
+
+The current deterministic dependency set is:
+
+- Overview / research conclusion;
+- Fundamentals;
+- Expectations;
+- Valuation;
+- Bear Case;
+- Catalysts;
+- Financial Flows;
+- Management execution;
+- Monitoring.
+
+Business, Tape, Journal and Audit do not reopen merely because a quarter arrived. They may still show ordinary EVIDENCE CHANGED if their own evidence changes. Historical publications remain immutable; current publication is blocked until the current basis is reviewed.
+
+The audit trail must preserve old approval hash/basis → new financial basis → re-reviewed gates → review completed.
+
+### 3.6 Re-rating, historical regimes and implied expectations
+
+Valuation must answer why the market assigns today's multiple, not merely compare current P/E with an old median.
+
+The canonical 0.3.1 `valuation_forensics` output uses stored evidence only and materializes:
+
+- current P/E, EV/EBIT, EV/Sales, P/FCF and FCF Yield; EV/EBITDA stays missing until EBITDA is a canonical fact or deterministic derivation;
+- 3Y / 5Y / 10Y point-in-time post-filing anchors, medians, ranges and percentile/regime;
+- a transparent Historical Multiple Bridge using bounded directional translations of observed growth, margins, ROIC, cash conversion, leverage, dilution, working capital and available stored macro context;
+- Re-rating Conditions with MET / PARTIALLY MET / NOT MET / DETERIORATING;
+- an explicit old-multiple defensibility read rather than assuming mean reversion;
+- reverse-engineered Market-Implied Expectations, explicitly not sell-side consensus.
+
+The bridge is explanatory, not a causal regression. Its coefficients, inputs and uncertainty must be visible. If a variable cannot be supported, it is qualitative/missing rather than invented.
+
+### 3.7 True peer triangulation
+
+Peer selection is multi-dimensional. Same sector alone is not enough.
+
+Stored peers are classified as **CLOSE PEER**, **PARTIAL PEER**, **REFERENCE ONLY** or **NOT COMPARABLE** using available evidence for business classification, industry/SIC, size, geography, growth, operating/FCF margins, ROIC, leverage and capital intensity. Missing qualitative facts such as recurring-revenue mix or customer concentration are limitations; they do not receive fabricated scores.
+
+Only CLOSE/PARTIAL peers set peer medians. Relative value must explain the adjustment from peer median to a justified company multiple. The peer estimate never automatically alters intrinsic Bear/Base/Bull.
+
+Triangulation keeps three worlds independent:
+
+1. Intrinsic value;
+2. Historical driver-adjusted multiple value;
+3. Peer-adjusted relative value.
+
+No blind arithmetic average is allowed. Convergence/divergence and each method's evidence basis are the output.
+
+### 3.8 Market read and mispricing window
+
+The canonical synthesis must show both **WHAT THE MARKET MAY BE GETTING WRONG** and **WHAT THE MARKET MAY BE GETTING RIGHT**.
+
+If an apparent valuation gap exists, timing is expressed as an evidence/event map rather than a price forecast. Stored dated catalysts are bucketed into 0–3, 3–6, 6–12 and 12–24 months. The Decision Window is one of:
+
+- NO URGENCY;
+- BUILDING WINDOW;
+- ACTIVE WINDOW;
+- CLOSING WINDOW;
+- THESIS BROKEN.
+
+No event date may be invented. Urgency cannot be derived from price movement alone. **ADD ON EVIDENCE, NOT ON PRICE.**
+
+### 3.9 Canonical reuse
+
+`mfapp/valuation_forensics.py` is the single canonical engine for historical regimes, multiple bridge, implied expectations, peer triangulation, re-rating conditions and decision-window intelligence. It runs in RECALCULATE/background materialization.
+
+Valuation Web, Reports and Discovery Stage 2 read the same materialized output. Compatibility adapters may reshape the payload for older views but must not calculate a second answer.
 
 ### 3.5 Fundamentals is the accounting evidence room
 

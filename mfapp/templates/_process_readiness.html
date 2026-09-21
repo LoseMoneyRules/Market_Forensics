@@ -3,10 +3,18 @@
     <div><p class="eyebrow">RESEARCH CONTROL</p><h2>Process readiness</h2><p class="muted">Evidence can be ready automatically. Approve or reopen a gate immediately; only genuinely heavy analytical work runs as a background job.</p></div>
     <strong>{{ readiness.done }}/{{ readiness.total }}</strong>
   </div>
+  {% if readiness.review_required %}
+  {% set basis = readiness.financial_basis or {} %}
+  <div class="notice amber research-basis-alert">
+    <strong>NEW FINANCIAL EVIDENCE — REVIEW REQUIRED.</strong>
+    {{ basis.get('period_type','') }} FY{{ basis.get('fiscal_year','') }}{% if basis.get('period_end') %} · period ended {{ basis.get('period_end') }}{% endif %}{% if basis.get('filed_at') %} · filed {{ basis.get('filed_at') }}{% endif %}{% if basis.get('accession_no') %} · {{ basis.get('accession_no') }}{% endif %}.
+    {{ readiness.review_required_count }} financially dependent gate{{ '' if readiness.review_required_count == 1 else 's' }} must be reviewed again. Prior approvals and analyst work are preserved.
+  </div>
+  {% endif %}
   {% for gate in readiness.gates %}
   <div class="gate-row" data-gate-key="{{ gate.key }}">
     <a class="gate-link" href="{{ url_for('web.company_section', ticker=security.ticker, section=gate.key) }}">{{ gate.label }}</a>
-    <strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}{% if gate.approved and gate.evidence_changed %} · EVIDENCE CHANGED{% endif %}</strong>
+    <strong class="gate-status {{ 'approved' if gate.approved else 'pending' if gate.evidence_ready else 'missing' }}">{{ gate.status }}{% if gate.approved and gate.evidence_changed %} · EVIDENCE CHANGED{% endif %}{% if gate.financial_review_required %} · NEW FINANCIAL BASIS{% endif %}</strong>
     {% if gate.approved %}
     <form class="gate-approval-form" method="post" data-gate-action="revoke" action="{{ url_for('web.approve_research_gate_action', ticker=security.ticker, gate_key=gate.key, action='revoke') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button micro" type="submit">Reopen</button>
@@ -18,7 +26,7 @@
     {% else %}<span class="muted">—</span>{% endif %}
   </div>
   {% endfor %}
-  {% if readiness.ready_to_validate %}<div class="notice teal ready-to-validate"><strong>READY TO VALIDATE.</strong> Research gates are approved; any post-approval evidence change is flagged without silently reopening the gate. <a class="button micro primary" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>{% endif %}
+  {% if readiness.ready_to_validate %}<div class="notice teal ready-to-validate"><strong>READY TO VALIDATE.</strong> Research gates are approved on the current financial basis. Ordinary evidence drift is flagged; a newly materialized financial quarter/year reopens only the dependent gates. <a class="button micro primary" href="{{ url_for('web.validate_company', ticker=security.ticker) }}">Open Validate</a></div>{% endif %}
   <div class="publish-readiness {{ 'ready' if readiness.ready_to_validate else 'pending' }}">
     <div><strong>Publish research</strong><small>{{ 'All required Research gates are approved. Publication preview is available.' if readiness.ready_to_validate else 'Complete and approve every required Research gate to enable publishing.' }}</small></div>
     <form method="post" action="{{ url_for('web.snapshot_company', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit" {% if not readiness.ready_to_validate %}disabled aria-disabled="true"{% endif %}>Publish</button></form>

@@ -12,6 +12,7 @@ from .core_models import (
 from .extensions import db
 from .services import valuation_result
 from .validation_policy import validation_payload
+from .research_basis import FINANCIAL_REVIEW_GATES, latest_financial_basis
 
 
 def _hash(value: Any) -> str:
@@ -50,6 +51,7 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     if company:
         flow_count = FinancialFlow.query.join(FinancialPeriod, FinancialFlow.financial_period_id == FinancialPeriod.id).filter(FinancialPeriod.company_id == company.id).count()
     hist = HistoricalTestRun.query.filter_by(coverage_id=coverage.id).order_by(HistoricalTestRun.created_at.desc()).first()
+    financial_basis = latest_financial_basis(company.id if company else None)
 
     gates = [
         _gate(
@@ -82,20 +84,41 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     ]
 
     approvals = {row.gate_key: row for row in ResearchGateApproval.query.filter_by(coverage_id=coverage.id).all()}
+    basis_materialized_at = None
+    try:
+        from datetime import datetime
+        basis_materialized_at = datetime.fromisoformat(str(financial_basis.get("materialized_at"))) if financial_basis.get("materialized_at") else None
+    except Exception:
+        basis_materialized_at = None
+
     for gate in gates:
         approval = approvals.get(gate["key"])
         evidence_changed = bool(approval and approval.evidence_hash != gate["evidence_hash"])
-        # Human approval is monotonic until CONTROL explicitly reopens/revokes it.
-        # Evidence changes remain visible for review, but must never silently open
-        # unrelated gates or erase a prior approval.
-        gate["approved"] = bool(approval)
-        gate["stale_approval"] = evidence_changed
+        financial_review_required = bool(
+            approval
+            and gate["key"] in FINANCIAL_REVIEW_GATES
+            and basis_materialized_at is not None
+            and approval.approved_at is not None
+            and basis_materialized_at > approval.approved_at
+        )
+        # Preserve the historical human approval row. A new material financial
+        # basis invalidates only its CURRENT effectiveness; ordinary evidence
+        # drift remains visible without reopening unrelated gates.
+        gate["prior_approval_exists"] = bool(approval)
+        gate["approved"] = bool(approval) and not financial_review_required
+        gate["financial_review_required"] = financial_review_required
+        gate["review_required"] = financial_review_required
+        gate["stale_approval"] = evidence_changed or financial_review_required
         gate["evidence_changed"] = evidence_changed
         gate["approved_at"] = approval.approved_at if approval else None
-        gate["status"] = "APPROVED" if approval else ("PENDING APPROVAL" if gate["evidence_ready"] else "MISSING EVIDENCE")
+        if financial_review_required:
+            gate["status"] = "REVIEW REQUIRED"
+        else:
+            gate["status"] = "APPROVED" if approval else ("PENDING APPROVAL" if gate["evidence_ready"] else "MISSING EVIDENCE")
 
     done = sum(1 for gate in gates if gate["approved"])
     validation = validation_payload(hist)
+    reopened = [gate["key"] for gate in gates if gate.get("financial_review_required")]
 
     return {
         "done": done,
@@ -103,6 +126,11 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         "total": len(gates),
         "gates": gates,
         "ready_to_validate": bool(gates) and done == len(gates),
+        "review_required": bool(reopened),
+        "review_required_count": len(reopened),
+        "reopened_gates": reopened,
+        "financial_basis": financial_basis,
+        "review_banner": "NEW FINANCIAL EVIDENCE — REVIEW REQUIRED" if reopened else "",
         "validation": validation,
         "bias_flags": [],
     }

@@ -102,6 +102,15 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
         intelligence = dict(cache.get("intelligence") or {})
         intelligence["valuation_base_quality"] = valuation.get("base_quality") or "DATA_WARNING"
         intelligence["valuation_decision_grade"] = bool(valuation.get("decision_grade"))
+        valuation_forensics = dict(cache.get("valuation_forensics") or {})
+        bridge = dict(valuation_forensics.get("multiple_bridge") or {})
+        peer_adjusted = dict(((valuation_forensics.get("peer_analysis") or {}).get("peer_adjusted") or {}))
+        rerating = dict(valuation_forensics.get("rerating_conditions") or {})
+        market_read = dict(valuation_forensics.get("market_read") or {})
+        decision_window = dict(((valuation_forensics.get("catalyst_timeline") or {}).get("decision_window") or {}))
+        historical_relative_gap_pct = None
+        if _n(bridge.get("current_multiple")) not in (None, 0) and _n(bridge.get("justified_current")) is not None:
+            historical_relative_gap_pct = (_n(bridge.get("justified_current")) / _n(bridge.get("current_multiple")) - 1.0) * 100.0
         out[security.ticker.upper()] = {
             "known": True,
             "coverage_id": coverage.id,
@@ -122,6 +131,16 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
                 "warnings": list(valuation.get("warnings") or []),
             },
             "valuation_methods": _valuation_method_count(model),
+            "valuation_forensics": {
+                "historical_gap_pct": historical_relative_gap_pct,
+                "peer_gap_pct": _n(peer_adjusted.get("relative_gap_pct")),
+                "rerating_completion_pct": _n(rerating.get("completion_pct")),
+                "deteriorating_conditions": int(rerating.get("deteriorating") or 0),
+                "market_read": market_read.get("conclusion"),
+                "decision_window": decision_window.get("state"),
+                "triangulation_state": (valuation_forensics.get("triangulation") or {}).get("state"),
+                "engine_version": valuation_forensics.get("engine_version"),
+            },
             "cache_ready": bool(cache),
             "cache_generated_at": cache.get("_generated_at"),
             "market_as_of": cache.get("market_as_of"),
@@ -234,6 +253,11 @@ def _select_stage2_finalists(
         context = local_context.get(ticker) or {}
         lanes = set(row.get("stage1_lanes") or [])
         gap = _n(context.get("base_gap_pct"))
+        vf = dict(context.get("valuation_forensics") or {})
+        forensic_gaps = [abs(v) for v in (
+            _n(gap), _n(vf.get("historical_gap_pct")), _n(vf.get("peer_gap_pct"))
+        ) if v is not None]
+        strongest_forensic_gap = max(forensic_gaps) if forensic_gaps else None
         item = dict(row)
         if context:
             item["known_context"] = context
@@ -242,8 +266,9 @@ def _select_stage2_finalists(
             item["known_context"] = {}
             item["in_coverage"] = False
 
-        if gap is not None and abs(gap) >= FORENSIC_WATCH_EDGE_PCT:
-            item["stage2_selection_reason"] = "Stored Base gap is already at or beyond the Discovery WATCH edge."
+        if strongest_forensic_gap is not None and strongest_forensic_gap >= FORENSIC_WATCH_EDGE_PCT:
+            item["stage2_selection_reason"] = "Stored intrinsic / historical / peer-relative evidence is already at or beyond the Discovery WATCH edge."
+            item["stage2_forensic_gap_pct"] = strongest_forensic_gap
             known_edge.append(item)
         elif "BROAD_ROTATION" in lanes and "MARKET_ACTIVITY" not in lanes:
             item["stage2_selection_reason"] = "Quiet liquid broad-universe name selected for forensic rotation."
@@ -430,6 +455,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
         ][:4]
 
         context = local_context.get(symbol) or {}
+        research_forensics = dict(context.get("valuation_forensics") or {})
         base_label = "Intrinsic Base" if quality == "INTRINSIC" and methods >= 2 else "Indicative Base"
         reasons = [
             (base_label + " $" + format(fair, ",.2f")) if fair is not None else "Base unavailable",
@@ -439,6 +465,14 @@ def market_scan(user_id: int) -> dict[str, Any]:
         ]
         reasons.extend(str(row.get("detail") or "") for row in operating_signals[:2])
         reasons.extend(str(row.get("detail") or "") for row in accounting_context[:2])
+        if _n(research_forensics.get("historical_gap_pct")) is not None:
+            reasons.append(f"Historical driver-adjusted multiple gap {_n(research_forensics.get('historical_gap_pct')):+.1f}%.")
+        if _n(research_forensics.get("peer_gap_pct")) is not None:
+            reasons.append(f"Peer-adjusted relative gap {_n(research_forensics.get('peer_gap_pct')):+.1f}%.")
+        if research_forensics.get("market_read"):
+            reasons.append(str(research_forensics.get("market_read")))
+        if _n(research_forensics.get("rerating_completion_pct")) is not None and _n(research_forensics.get("rerating_completion_pct")) < 50:
+            warning_parts.append("Fewer than half of measurable re-rating conditions are met; historical cheapness alone is not enough.")
         reasons = [reason for reason in reasons if reason]
 
         candidate = dict(item)
@@ -485,6 +519,8 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "corporate_action_review": basis_review,
             "warning": " ".join(warning_parts),
             "known_context": context,
+            "valuation_forensics": research_forensics,
+            "decision_window": research_forensics.get("decision_window"),
             "in_coverage": bool(context),
             "lenses": [str(row.get("label") or "") for row in operating_signals],
         })
@@ -492,7 +528,11 @@ def market_scan(user_id: int) -> dict[str, Any]:
 
     candidates.sort(key=lambda row: (
         int(row.get("priority_rank") or 9),
-        -abs(_n(row.get("base_gap_pct")) or 0.0),
+        -max(
+            abs(_n(row.get("base_gap_pct")) or 0.0),
+            abs(_n((row.get("valuation_forensics") or {}).get("historical_gap_pct")) or 0.0),
+            abs(_n((row.get("valuation_forensics") or {}).get("peer_gap_pct")) or 0.0),
+        ),
         -int(row.get("valuation_methods") or 0),
         -int(row.get("forensic_score") or 0),
         row["ticker"],
