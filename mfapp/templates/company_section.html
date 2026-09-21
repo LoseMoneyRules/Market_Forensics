@@ -156,9 +156,40 @@
       <div class="current-kpi"><span>Operating margin</span><strong>{{ pct(current_financial.metrics.operating_margin_pct) if current_financial else '—' }}</strong></div>
       <div class="current-kpi"><span>FCF margin</span><strong>{{ pct(current_financial.metrics.fcf_margin_pct) if current_financial else '—' }}</strong></div>
       <div class="current-kpi"><span>CFO / Net income</span><strong>{% if current_financial and current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div>
-      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.roic_pct is none %}Needs operating income, tax, debt, equity & cash{% else %}NOPAT / invested capital{% endif %}</small></div>
-      <div class="current-kpi"><span>Net debt / FCF</span><strong>{% if leverage_display and leverage_display.value is not none %}{{ '%.1f'|format(leverage_display.value) }}x{% else %}—{% endif %}</strong><small>{% if leverage_display and leverage_display.value is not none %}{{ leverage_display.basis }}{% else %}{{ leverage_display.reason if leverage_display else 'Debt/cash or positive FCF unavailable' }}{% endif %}</small></div>
+      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.roic_pct is none %}Needs operating income, tax & capital classification{% elif current_financial.metrics.roic_basis == 'ECONOMIC_CAPITAL' %}Economic capital basis{% else %}Reported debt/equity/cash basis{% endif %}</small></div>
+      <div class="current-kpi"><span>Economic net debt / FCF</span><strong>{% if leverage_display and leverage_display.value is not none %}{{ '%.1f'|format(leverage_display.value) }}x{% else %}—{% endif %}</strong><small>{% if current_financial and current_financial.metrics.net_debt_basis %}{{ current_financial.metrics.net_debt_basis|replace('_', ' ') }}{% elif leverage_display %}{{ leverage_display.basis }}{% else %}Debt/cash classification unavailable{% endif %}</small></div>
     </div>
+    {% if economic_reality %}
+    <div class="panel economic-reality-panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">ECONOMIC REALITY · 0.3.0</p><h2>Reported accounting → economic interpretation</h2><p class="muted">Filed numbers remain unchanged. This layer separates financing debt, operating capital and non-debt liabilities before valuation or evidence scoring.</p></div>
+        <span class="status-chip" data-status-value="{{ 'REVIEW' if economic_reality.material_unresolved else 'PASS' }}">{{ economic_reality.quality or 'UNAVAILABLE' }}{% if economic_reality.material_unresolved %} · REVIEW{% endif %}</span>
+      </div>
+      <div class="numbers-quality-grid">
+        <div><span>Reported debt</span><strong>{{ num(economic_reality.reported_debt) }}</strong><small>As normalized from filing</small></div>
+        <div><span>Financial debt</span><strong>{{ num(economic_reality.financial_debt) }}</strong><small>Borrowings only</small></div>
+        <div><span>Finance leases</span><strong>{{ num(economic_reality.finance_lease_liability) }}</strong><small>Debt-like lease financing</small></div>
+        <div><span>Operating leases</span><strong>{{ num(economic_reality.operating_lease_liability) }}</strong><small>Operating footprint · kept separate</small></div>
+        <div><span>Economic net debt</span><strong>{{ num(economic_reality.economic_net_debt) }}</strong><small>{{ economic_reality.debt_basis|default('UNRESOLVED')|replace('_',' ') }}</small></div>
+        <div><span>Lease / liabilities</span><strong>{{ pct(economic_reality.operating_lease_share_of_liabilities_pct) }}</strong><small>Operating leases as share of total liabilities</small></div>
+        <div><span>Revenue / lease liability</span><strong>{% if economic_reality.lease_revenue_productivity_x is not none %}{{ '%.2f'|format(economic_reality.lease_revenue_productivity_x) }}x{% else %}—{% endif %}</strong><small>Productivity context, not a solvency ratio</small></div>
+        <div><span>Growth capex proxy</span><strong>{{ num(economic_reality.growth_capex_proxy) }}</strong><small>Capex above D&amp;A · proxy only</small></div>
+        <div><span>Owner-cash proxy</span><strong>{{ num(economic_reality.owner_cash_proxy) }}</strong><small>CFO − D&amp;A-based maintenance proxy</small></div>
+        <div><span>FCF after SBC</span><strong>{{ num(economic_reality.fcf_after_sbc) }}</strong><small>Cash FCF less share-based compensation</small></div>
+        <div><span>Economic ROIC</span><strong>{{ pct(economic_reality.economic_roic_pct) }}</strong><small>Excludes operating leases from financial debt</small></div>
+        <div><span>Lease-adjusted ROIC</span><strong>{{ pct(economic_reality.lease_adjusted_roic_pct) }}</strong><small>Conservative view adding operating leases to capital</small></div>
+      </div>
+      {% if economic_reality.flags %}
+      <div class="stack compact">
+        {% for flag in economic_reality.flags %}
+        <div class="list-row"><div><strong>{{ flag.code|replace('_',' ') }}</strong><p>{{ flag.detail }}</p></div><span class="status-chip">{{ flag.tone }}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if economic_reality.unresolved %}<div class="notice amber"><strong>CLASSIFICATION REVIEW.</strong> {{ economic_reality.unresolved|join(' ') }}</div>{% endif %}
+      <p class="muted">Important: lease productivity, maintenance capex and normalized operating income are diagnostics, not accounting restatements. They prevent automatic false signals; they do not erase contractual obligations or investment risk.</p>
+    </div>
+    {% endif %}
     <div class="chart-grid">
       <div class="panel chart-card"><div class="panel-head"><div><h2>Revenue & free cash flow</h2><p class="muted">Revenue is shown as columns; free cash flow is the line. Current TTM is included only when four consecutive stored quarters reconcile.</p></div></div><canvas data-mf-chart="numbers-scale" data-series='{{ numbers_scale_series|tojson|forceescape }}'></canvas></div>
       <div class="panel chart-card"><div class="panel-head"><div><h2>Operating & FCF margin</h2><p class="muted">Profitability quality and forward Base assumptions.</p></div></div><canvas data-mf-chart="numbers-margin" data-series='[{% for r in financials|reverse %}{"label":"FY{{ r.fiscal_year }}","op_margin":{{ r.metrics.operating_margin_pct if r.metrics.operating_margin_pct is not none else "null" }},"fcf_margin":{{ r.metrics.fcf_margin_pct if r.metrics.fcf_margin_pct is not none else "null" }}}{% if not loop.last or forecast_rows %},{% endif %}{% endfor %}{% for f in forecast_rows %}{"label":"{{ f.period_label }}","forecast_op_margin":{{ (f.operating_margin*100) if f.operating_margin is not none else "null" }}}{% if not loop.last %},{% endif %}{% endfor %}]'></canvas></div>
