@@ -311,3 +311,12 @@ def test_031_release_metadata_and_permanent_rules():
         "NEW FINANCIAL EVIDENCE — REVIEW REQUIRED",
     ):
         assert phrase in current + how
+
+
+def test_business_peer_table_is_null_safe_for_missing_canonical_multiples():
+    template = Path("mfapp/templates/company_section.html").read_text()
+    assert "'%.2f'|format(row.target) if row.target is not none else '—'" in template
+    assert "'%.2f'|format(row.peer_median) if row.peer_median is not none else '—'" in template
+    assert "MISSING" in template
+    assert "Independent cross-check; never blended into Bear / Base / Bull" in template
+    assert "Peer overlay applied, max ±10% shift" not in template
