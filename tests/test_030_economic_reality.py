@@ -6,7 +6,9 @@ from mfapp.calculations import financial_metrics
 from mfapp.decision_engine import build_research_intelligence
 from mfapp.discovery_forensics import _signals, discovery_opportunity
 from mfapp.economic_reality import build_economic_reality, has_suppression
-from mfapp.valuation_engine import metrics_from_history
+from mfapp.company_quality import build_company_quality
+from mfapp.valuation_engine import default_cases, evaluate, metrics_from_history
+from tools.sync_production_state import sync_current_state
 
 
 def _cmg_like_snapshot():
@@ -202,3 +204,150 @@ def test_030_discovery_short_signals_honor_economic_suppressions():
     signals, _long_score, short_score = _signals(snapshot, None)
     assert short_score == 0
     assert not [row for row in signals if row["side"] == "SHORT"]
+
+
+
+def _quality_row(year, revenue, operating_income, net_income, cfo, capex, cash, debt, equity, shares, *, receivables=100.0, extra_facts=None):
+    row = {
+        "fiscal_year": year,
+        "period_end": f"{year}-12-31",
+        "revenue": float(revenue),
+        "operating_income": float(operating_income),
+        "pretax_income": float(net_income) / 0.8 if net_income is not None else None,
+        "income_tax": (float(net_income) / 0.8) * 0.2 if net_income is not None else None,
+        "net_income": float(net_income) if net_income is not None else None,
+        "cfo": float(cfo),
+        "capex": float(capex),
+        "fcf": float(cfo) - float(capex),
+        "cash": float(cash),
+        "debt": float(debt),
+        "liabilities": float(debt) + 300.0,
+        "equity": float(equity),
+        "receivables": float(receivables),
+        "inventory": 80.0,
+        "payables": 70.0,
+        "shares_outstanding": float(shares),
+        "diluted_shares": float(shares),
+        "buybacks": 0.0,
+        "dividends": 0.0,
+        "_debt_source_tag": "LongTermDebt",
+    }
+    facts = {"cash_unrestricted": float(cash), **(extra_facts or {})}
+    row["quality"] = {"economic_reality": build_economic_reality(row, facts=facts)}
+    return row
+
+
+def test_030_company_quality_strong_does_not_create_hidden_valuation_premium():
+    history = [
+        _quality_row(2022, 1000, 180, 140, 180, 40, 100, 0, 500, 100),
+        _quality_row(2023, 1100, 200, 155, 195, 42, 110, 0, 520, 99),
+        _quality_row(2024, 1210, 225, 175, 215, 45, 125, 0, 545, 98),
+        _quality_row(2025, 1331, 255, 200, 245, 48, 145, 0, 575, 96),
+    ]
+    quality = build_company_quality(history, "Consumer / Brand")
+    assert quality["state"] == "STRONG"
+    assert quality["red_flag_count"] == 0
+    policy = quality["valuation_policy"]
+    assert policy["positive_quality_uplift"] is False
+    assert policy["risk_premium_bps"] == 0
+    assert policy["growth_haircut_bps"] == 0
+    assert policy["terminal_growth_haircut_bps"] == 0
+    assert policy["bear_probability_shift_pts"] == 0
+
+
+def test_030_company_quality_fragile_creates_bounded_downside_policy():
+    history = [
+        _quality_row(2022, 1200, 100, 60, 50, 120, 100, 900, 450, 100, receivables=100, extra_facts={"interest_expense": 80, "operating_lease_cost": 25}),
+        _quality_row(2023, 1100, 40, 20, 20, 130, 80, 950, 400, 108, receivables=120, extra_facts={"interest_expense": 90, "operating_lease_cost": 25}),
+        _quality_row(2024, 950, -20, -30, 10, 140, 70, 1000, 350, 116, receivables=150, extra_facts={"interest_expense": 100, "operating_lease_cost": 25}),
+        _quality_row(2025, 800, -60, -80, 5, 150, 60, 1050, 300, 125, receivables=230, extra_facts={"interest_expense": 110, "operating_lease_cost": 25}),
+    ]
+    quality = build_company_quality(history, "Consumer / Brand")
+    assert quality["state"] == "FRAGILE"
+    assert quality["red_flag_count"] >= 2
+    assert any(flag["severity"] == "RED" for flag in quality["alarm_bells"])
+    policy = quality["valuation_policy"]
+    assert 0 < policy["risk_premium_bps"] <= 300
+    assert 0 < policy["growth_haircut_bps"] <= 300
+    assert 0 <= policy["terminal_growth_haircut_bps"] <= 100
+    assert policy["bear_probability_shift_pts"] == 10
+
+
+def test_030_company_quality_policy_is_embedded_in_auto_bear_base_bull():
+    history = [
+        _quality_row(2022, 1200, 100, 60, 50, 120, 100, 900, 450, 100, receivables=100, extra_facts={"interest_expense": 80, "operating_lease_cost": 25}),
+        _quality_row(2023, 1100, 40, 20, 20, 130, 80, 950, 400, 108, receivables=120, extra_facts={"interest_expense": 90, "operating_lease_cost": 25}),
+        _quality_row(2024, 950, -20, -30, 10, 140, 70, 1000, 350, 116, receivables=150, extra_facts={"interest_expense": 100, "operating_lease_cost": 25}),
+        _quality_row(2025, 800, -60, -80, 5, 150, 60, 1050, 300, 125, receivables=230, extra_facts={"interest_expense": 110, "operating_lease_cost": 25}),
+    ]
+    metrics = metrics_from_history(history, company_type="Consumer / Brand")
+    policy = metrics["valuation_policy"]
+    cases = default_cases(metrics, "Consumer / Brand")
+    assert cases["BASE"]["equity_discount_rate"] == 0.10 + policy["risk_premium_bps"] / 10000.0
+    assert cases["BEAR"]["probability"] > 0.25
+    assert cases["BULL"]["probability"] < 0.25
+    assert cases["BASE"]["terminal_growth"] <= 0.025
+    assert cases["BASE"]["growth"] <= (metrics["revenue_growth"] or 0.0)
+
+
+def test_030_method_exclusions_cannot_be_reenabled_by_saved_weights():
+    metrics = {
+        "revenue": 1_000.0,
+        "net_income": 100.0,
+        "fcf": 100.0,
+        "net_debt": 200.0,
+        "shares": 100.0,
+        "basis_usable": True,
+        "revenue_growth": 0.05,
+        "net_margin": 0.10,
+        "fcf_margin": 0.10,
+        "valuation_policy": {
+            "method_exclusions": ["pe", "ev_sales"],
+            "ledger": [],
+        },
+        "company_quality": {"state": "UNRESOLVED"},
+    }
+    cases = default_cases(metrics, "Generic")
+    result = evaluate(
+        metrics,
+        {name: cases[name] for name in ("BEAR", "BASE", "BULL")},
+        {"pe": 0.8, "ev_sales": 0.1, "fcf_yield": 0.1},
+        current_price=10.0,
+        allow_reference_fallback=False,
+    )
+    assert result["effective_input_weights"]["pe"] == 0.0
+    assert result["effective_input_weights"]["ev_sales"] == 0.0
+    assert result["effective_input_weights"]["fcf_yield"] == 0.1
+    assert result["method_exclusions"] == ["ev_sales", "pe"]
+
+
+def test_030_valuation_ledger_distinguishes_lease_classification_from_price_penalty():
+    row, _economic = _cmg_like_snapshot()
+    metrics = metrics_from_history([{"fiscal_year": 2025, "period_end": "2025-12-31", **row}], company_type="Consumer / Brand")
+    ledger = list((metrics.get("valuation_policy") or {}).get("ledger") or [])
+    lease = next(item for item in ledger if item["item"] == "Operating leases")
+    assert lease["effect"] == "CLASSIFICATION_AND_RISK"
+    assert "Excluded from financial net debt" in lease["impact"]
+    assert metrics["net_debt"] == -1_000_000_000.0
+
+
+def test_030_production_state_sync_changes_only_canonical_production_line():
+    source = (
+        "# Market Forensics — CURRENT STATE\n\n"
+        "**State-Version: 0.3.0**  \n"
+        "**Production:** 0.2.13 old state  \n"
+        "**Historical note:** production once was 0.2.11.\n"
+    )
+    updated = sync_current_state(
+        source,
+        version="0.3.0",
+        source_sha="abcdef1234567890",
+        run_id="12345",
+        run_number="77",
+        deployed_at="2026-09-21T14:00:00Z",
+    )
+    assert "**Production:** 0.3.0 on Namecheap" in updated
+    assert "manual deploy run " + chr(96) + "12345" + chr(96) + " / deploy #77" in updated
+    assert chr(96) + "abcdef1234567890" + chr(96) in updated
+    assert "**Historical note:** production once was 0.2.11." in updated
+    assert updated.count("**Production:**") == 1
