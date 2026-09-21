@@ -414,6 +414,9 @@ def test_032_all_core_authenticated_pages_and_apis_render(tmp_path, monkeypatch)
         assert response.status_code == 200, (path, response.status_code, response.data[:1000])
         assert response.is_json, path
 
+    history_payload = client.get("/company/TST/price/history/live").get_json()
+    assert history_payload["cache"]["target_years"] == 10
+
     pdf = client.get("/company/TST/report/pdf?mode=executive")
     assert pdf.status_code == 200
     assert pdf.data.startswith(b"%PDF")
@@ -460,6 +463,13 @@ def test_032_missing_fiscal_year_is_visible_and_blocks_fundamentals_readiness(tm
         fundamentals = next(row for row in readiness["gates"] if row["key"] == "fundamentals")
         assert fundamentals["evidence_ready"] is False
         assert 2021 in fundamentals["evidence"]["annual_missing_years"]
+
+        from mfapp.report_contract import _fundamentals
+        report_history, _current = _fundamentals(db.session.get(Security, coverage.security_id).company_id)
+        assert len(report_history) == 10
+        report_gap = next(row for row in report_history if row["period"] == "FY2021")
+        assert report_gap["missing_year"] is True
+        assert report_gap["history_status"] == "MISSING"
 
     client = app.test_client(); login(client, uid)
     response = client.get("/company/TST/fundamentals")
