@@ -198,6 +198,8 @@ def test_032_core_research_pages_render_populated_stored_evidence(tmp_path, monk
     assert "FY2025" in fhtml
     assert "No normalized financials stored yet." not in fhtml
     assert "COMPLETE FILED HISTORY" in fhtml
+    assert "10Y history coverage" in fhtml
+    assert "NOT STORED" in fhtml
 
     expectations = client.get("/company/TST/expectations")
     assert expectations.status_code == 200, expectations.data[:1000]
@@ -297,3 +299,137 @@ def test_032_degraded_control_blocks_cached_decision():
     assert lenses["research_conclusion"] == "DATA REVIEW"
     assert lenses["model_confidence"] == "UNVALIDATED"
     assert lenses["thesis_control"] == "CONTROL UNAVAILABLE"
+
+
+
+def test_032_secondary_fundamentals_can_restore_missing_fiscal_years(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "av_history_backfill")
+    with app.app_context():
+        db.create_all()
+        company = Company(
+            legal_name="Backfill Co", display_name="Backfill Co",
+            sector="Industrials", industry="Machinery",
+        )
+        db.session.add(company); db.session.flush()
+        security = Security(
+            company_id=company.id, ticker="BFIL", exchange="NYSE", currency="USD",
+            validation_source="TEST", active=True, is_primary=True,
+        )
+        db.session.add(security); db.session.commit()
+
+        years = list(range(2016, 2026))
+        income = {"annualReports": [{
+            "fiscalDateEnding": f"{year}-12-31", "reportedCurrency": "USD",
+            "totalRevenue": str(1000 + (year - 2016) * 100),
+            "costOfRevenue": str(400 + (year - 2016) * 40),
+            "grossProfit": str(600 + (year - 2016) * 60),
+            "operatingIncome": str(180 + (year - 2016) * 20),
+            "incomeBeforeTax": str(160 + (year - 2016) * 18),
+            "incomeTaxExpense": str(32 + (year - 2016) * 4),
+            "netIncome": str(128 + (year - 2016) * 14),
+        } for year in years], "quarterlyReports": []}
+        balance = {"annualReports": [{
+            "fiscalDateEnding": f"{year}-12-31", "reportedCurrency": "USD",
+            "cashAndCashEquivalentsAtCarryingValue": str(150 + year - 2016),
+            "currentNetReceivables": "120", "inventory": "80",
+            "currentAccountsPayable": "90", "totalAssets": "1800",
+            "totalLiabilities": "700", "totalShareholderEquity": "1100",
+            "shortLongTermDebtTotal": "200",
+        } for year in years], "quarterlyReports": []}
+        cash = {"annualReports": [{
+            "fiscalDateEnding": f"{year}-12-31", "reportedCurrency": "USD",
+            "operatingCashflow": str(220 + (year - 2016) * 20),
+            "capitalExpenditures": str(60 + (year - 2016) * 2),
+        } for year in years], "quarterlyReports": []}
+        payloads = {
+            "INCOME_STATEMENT": income,
+            "BALANCE_SHEET": balance,
+            "CASH_FLOW": cash,
+        }
+
+        monkeypatch.setattr("mfapp.secdata.get_secret", lambda *_args, **_kwargs: "configured")
+        monkeypatch.setattr(
+            "mfapp.secdata._alpha_vantage_statement",
+            lambda function, _ticker, _user_id: payloads[function],
+        )
+
+        from mfapp.secdata import _alpha_vantage_fill_missing
+        from mfapp.current_financials import annual_history_coverage, annual_rows
+
+        result = _alpha_vantage_fill_missing(company, security, 1)
+        db.session.commit()
+
+        assert result["periods_created"] == 10
+        assert result["years_backfilled"] == list(range(2025, 2015, -1))
+        coverage = annual_history_coverage(company.id)
+        assert coverage["complete"] is True
+        assert coverage["missing_years"] == []
+        rows = annual_rows(company.id, 16)
+        assert len(rows) == 10
+        assert all(row["revenue"] is not None for row in rows)
+        assert all(row["fcf"] is not None for row in rows)
+
+
+def test_032_all_core_authenticated_pages_and_apis_render(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "core_surfaces")
+    uid, coverage_id = seed_full_research(app)
+    client = app.test_client(); login(client, uid)
+
+    pages = [
+        "/", "/discovery", "/portfolio", "/portfolio/TST", "/publications",
+        "/settings", "/control", "/trace", "/settings/notifications",
+        "/alerts/email", f"/alerts/subscription/{coverage_id}",
+    ]
+    for path in pages:
+        response = client.get(path, follow_redirects=True)
+        assert response.status_code == 200, (path, response.status_code, response.data[:1000])
+
+    json_paths = [
+        "/jobs/status",
+        "/company/TST/price/live",
+        "/company/TST/price/history/live",
+        "/company/TST/api/surface/overview",
+        "/company/TST/api/surface/business",
+        "/company/TST/api/surface/expectations",
+        "/company/TST/api/surface/valuation",
+        "/company/TST/api/surface/financial-flows",
+        "/company/TST/api/surface/tape",
+        "/company/TST/api/surface/monitoring",
+        "/company/TST/api/surface/audit",
+        "/company/TST/api/surface-detail/overview",
+        "/company/TST/api/surface-detail/expectations",
+        "/company/TST/api/surface-detail/valuation",
+        "/company/TST/api/surface-detail/financial-flows",
+        "/company/TST/api/surface-detail/tape",
+        "/company/TST/api/surface-detail/monitoring",
+        "/company/TST/api/surface-detail/audit",
+    ]
+    for path in json_paths:
+        response = client.get(path)
+        assert response.status_code == 200, (path, response.status_code, response.data[:1000])
+        assert response.is_json, path
+
+    pdf = client.get("/company/TST/report/pdf?mode=executive")
+    assert pdf.status_code == 200
+    assert pdf.data.startswith(b"%PDF")
+    docx = client.get("/company/TST/report/docx?mode=full")
+    assert docx.status_code == 200
+    assert docx.data.startswith(b"PK")
+
+
+def test_032_price_history_core_defaults_are_ten_years():
+    from pathlib import Path
+
+    files = {
+        path: Path(path).read_text()
+        for path in (
+            "mfapp/routes.py", "mfapp/routes_edit.py", "mfapp/routes_publish.py",
+            "mfapp/research_routes.py", "mfapp/jobs.py",
+        )
+    }
+    combined = "\n".join(files.values())
+    assert '"lookback_years": 10' in combined
+    assert 'payload["lookback_years"] = 10' in combined
+    assert 'get("lookback_years") or 10' in files["mfapp/jobs.py"]
+    assert '"lookback_years": 3' not in combined
+    assert 'payload["lookback_years"] = 3' not in combined
