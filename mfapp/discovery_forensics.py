@@ -465,8 +465,6 @@ def _valuation_from_history(
         revenue = _num(current_ttm.get("revenue"))
         net_income = _num(current_ttm.get("net_income"))
         fcf = _num(current_ttm.get("fcf"))
-        cash = _num(current_ttm.get("cash")) or 0.0
-        debt = _num(current_ttm.get("debt")) or 0.0
         economic = economic_from_row(current_ttm)
         economic_net_debt = economic_metric(economic, "economic_net_debt")
         valuation_fcf = fcf
@@ -474,21 +472,21 @@ def _valuation_from_history(
             after_sbc = economic_metric(economic, "fcf_after_sbc")
             if after_sbc is not None and fcf is not None:
                 valuation_fcf = min(fcf, after_sbc)
-        if economic.get("material_unresolved"):
-            current_net_debt = None
-        elif economic_net_debt is not None:
-            current_net_debt = economic_net_debt
-        else:
-            current_net_debt = debt - cash
+        economic_ready = bool(economic) and not bool(economic.get("material_unresolved")) and economic_net_debt is not None
+        current_net_debt = economic_net_debt if economic_ready else None
         shares = _num(current_ttm.get("shares_outstanding")) or _num(current_ttm.get("diluted_shares")) or _num(metrics.get("shares"))
         metrics.update({
             "revenue": revenue,
             "net_income": net_income,
             "fcf": fcf,
             "net_debt": current_net_debt,
-            "net_debt_basis": str(economic.get("debt_basis") or "REPORTED_DEBT_MINUS_CASH_FALLBACK"),
+            "net_debt_basis": (
+                str(economic.get("debt_basis") or "ECONOMIC_REALITY")
+                if economic_ready
+                else ("ECONOMIC_CLASSIFICATION_UNRESOLVED" if economic else "ECONOMIC_REALITY_NOT_MATERIALIZED")
+            ),
             "economic_reality": economic,
-            "economic_reality_unresolved": bool(economic.get("material_unresolved")),
+            "economic_reality_unresolved": (not bool(economic)) or bool(economic.get("material_unresolved")),
             "shares": shares,
             "basis_usable": shares not in (None, 0),
             "basis_issue": "" if shares not in (None, 0) else "No usable current share denominator.",
