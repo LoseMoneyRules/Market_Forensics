@@ -460,7 +460,7 @@ def _valuation_from_history(
 ) -> dict[str, Any]:
     """Reuse the canonical valuation engine; Discovery owns no duplicate valuation model."""
     quality_history = list(annual) + ([current_ttm] if current_ttm else [])
-    metrics = metrics_from_history(quality_history, company_type=company_type)
+    metrics = metrics_from_history(quality_history) if company_type == "Generic" else metrics_from_history(quality_history, company_type=company_type)
     if current_ttm and _num(current_ttm.get("revenue")) is not None:
         revenue = _num(current_ttm.get("revenue"))
         net_income = _num(current_ttm.get("net_income"))
