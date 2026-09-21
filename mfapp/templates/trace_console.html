@@ -14,7 +14,7 @@
     <div><div class="panel-label">TRACE STATUS</div><h2>Production request log</h2></div>
     <form method="post" action="{{ url_for('trace.clear') }}" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="secondary" type="submit">Clear log</button>
+      <button class="button" type="submit">Clear log</button>
     </form>
   </div>
   <p class="micro left">File: {{ trace_path }}</p>
