@@ -165,16 +165,19 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
     debt = n(latest.get("debt")) or 0.0
     economic = economic_from_row(latest)
     economic_net_debt = economic_metric(economic, "economic_net_debt")
-    economic_unresolved = bool(economic.get("material_unresolved"))
-    if economic and economic_unresolved:
+    economic_unresolved = (not bool(economic)) or bool(economic.get("material_unresolved"))
+    if not economic:
+        net_debt = None  # 0.3.0 requires Economic Reality before an EV-to-equity bridge is decision-grade.
+        net_debt_basis = "ECONOMIC_REALITY_NOT_MATERIALIZED"
+    elif economic_unresolved:
         net_debt = None  # exclude EV/Sales rather than guess an equity bridge
         net_debt_basis = "ECONOMIC_CLASSIFICATION_UNRESOLVED"
     elif economic_net_debt is not None:
         net_debt = economic_net_debt
         net_debt_basis = str(economic.get("debt_basis") or "ECONOMIC_REALITY")
     else:
-        net_debt = debt - cash
-        net_debt_basis = "REPORTED_DEBT_MINUS_CASH_FALLBACK"
+        net_debt = None
+        net_debt_basis = "ECONOMIC_NET_DEBT_UNRESOLVED"
     revenues = [n(x.get("revenue")) for x in rows]
     net_margins = []
     fcf_margins = []
@@ -234,10 +237,10 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         warnings.append("Tax/non-operating earnings anomalies are excluded from P/E margin calibration rather than normalized by guess.")
     if sbc_adjusted_fcf:
         warnings.append("Material share-based compensation is deducted from FCF calibration for FCF-yield/DCF evidence.")
-    if economic and economic_unresolved:
+    if not economic:
+        warnings.append("Economic Reality is not materialized on this filing basis yet; EV/Sales is excluded and a fresh SEC ingest is required.")
+    elif economic_unresolved:
         warnings.append("Economic debt classification is materially unresolved; EV/Sales is excluded until the financing bridge is classified.")
-    elif not economic:
-        warnings.append("Economic Reality classification is not stored on this filing basis yet; valuation uses reported debt minus cash as a transparent fallback.")
     company_quality = build_company_quality(rows, company_type)
     valuation_policy = dict(company_quality.get("valuation_policy") or {})
     return {
