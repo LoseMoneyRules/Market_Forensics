@@ -417,7 +417,7 @@ def queue_refresh(ticker, kind):
     priorities = {"market": 10, "sec": 30, "prices": 35, "recalculate": 45, "prefill": 50, "macro": 55, "finra": 60, "positioning": 65, "validate": 70, "management": 80}
     payload = {"coverage_id": ctx["coverage"].id}
     if kind == "prices":
-        payload["lookback_years"] = 3
+        payload["lookback_years"] = 10
     if kind == "management":
         # A user-requested scan is an explicit re-read, even when this parser
         # version previously completed with zero extracted promises.
