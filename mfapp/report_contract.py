@@ -13,7 +13,7 @@ from .core_models import (
 from .current_financials import annual_rows, current_row
 
 
-REPORT_CONTRACT_VERSION = "0.2.14"
+REPORT_CONTRACT_VERSION = "0.3.0"
 
 
 def _n(value: Any) -> float | None:
