@@ -108,23 +108,50 @@ The canonical valuation equity bridge uses classified economic net debt when ava
 
 Discovery Stage 2 uses the same Economic Reality engine as Research. A material unresolved accounting classification cannot become a P1/P2 candidate; it remains WATCH until Research verifies the bridge.
 
-### 3.4 Price is the decision interface, not the thesis
+### 3.4 Company quality and stock value are separate questions
+
+Market Forensics must be able to answer two different questions without collapsing them into one score:
+
+1. **Is this economically a good company?**
+2. **Is the security attractive at the current price?**
+
+The canonical Company Quality read is dimension-based, not a hidden composite score. It evaluates, when evidence exists:
+
+- operating durability;
+- profitability and returns on capital;
+- cash quality;
+- balance-sheet and fixed-charge resilience;
+- reinvestment efficiency;
+- capital allocation and dilution;
+- accounting quality / unresolved distortions.
+
+Dimension states are explicit: STRONG, SOUND, WATCH, RED FLAG or UNKNOWN. The overall filed-evidence state may be STRONG, SOUND, MIXED, FRAGILE, UNRESOLVED or INSUFFICIENT EVIDENCE.
+
+A strong company does **not** receive a hidden valuation premium merely because the quality engine likes it. Its quality should already appear through observed growth, margins, returns and cash generation. Evidence-backed weaknesses may, however, conservatively reduce an automatically generated valuation through a bounded and visible Quality → Valuation policy: higher discount rate, lower forward/terminal growth, a Bear-probability shift, or exclusion of a valuation method whose accounting basis is unreliable.
+
+Every automatic price effect must appear in a Valuation Impact Ledger. Items that are only context — for example a growth-capex proxy or R&D intensity without a defensible capitalization model — remain context and must not silently alter fair value.
+
+User-edited valuation assumptions remain explicit human inputs. Automatic policy may define/rebuild defaults and enforce data-integrity method exclusions, but it must not secretly rewrite a reviewed manual assumption.
+
+Company Quality is a filed/economic evidence read, not a claim that moat, competitive durability, customer concentration or product quality has been proven. Those qualitative questions remain part of the Business gate and require sourced review.
+
+### 3.5 Price is the decision interface, not the thesis
 
 The current price is used to compare against Bear / Base / Bull fair value and to reverse-engineer market-implied expectations.
 
 Price movement by itself does not validate or invalidate a fundamental thesis.
 
-### 3.5 ADD ON EVIDENCE, NOT ON PRICE
+### 3.6 ADD ON EVIDENCE, NOT ON PRICE
 
 Position additions must be justified by improved evidence, not merely by a lower share price.
 
-### 3.6 Invalidation is fixed before investment
+### 3.7 Invalidation is fixed before investment
 
 Numerical thesis invalidation thresholds are set before investment and are not rewritten after earnings or price movement to preserve the narrative.
 
 A locked pre-investment invalidation cannot be silently changed retroactively.
 
-### 3.7 Research and Portfolio remain separate
+### 3.8 Research and Portfolio remain separate
 
 Research asks:
 
@@ -138,19 +165,19 @@ Portfolio asks:
 
 Shares, average cost, P/L, position size, money-loss budget, Portfolio sizing and Position Action live under Portfolio, not Research.
 
-### 3.8 Human approval is explicit
+### 3.9 Human approval is explicit
 
 Process Readiness is not a machine confidence score.
 
 It is a record that CONTROL reviewed the current evidence for each research gate.
 
-### 3.9 Validation cannot rescue incomplete research
+### 3.10 Validation cannot rescue incomplete research
 
 Validate is downstream of Research.
 
 A historical score cannot bypass missing Research gates or substitute for a thesis, valuation, bear case, monitoring rule or source review.
 
-### 3.10 Diagnostics cannot override canonical decision states
+### 3.11 Diagnostics cannot override canonical decision states
 
 Evidence score, Tape score, macro context, management score, peer comparison and similar diagnostics support interpretation.
 
@@ -162,13 +189,13 @@ They cannot bypass:
 - Research Conclusion logic;
 - locked invalidation discipline.
 
-### 3.10 Manual analyst work wins
+### 3.12 Manual analyst work wins
 
 Automatic drafting may populate blank fields or fields still marked as auto-generated.
 
 Manual analyst edits are never silently overwritten by a refresh.
 
-### 3.11 Normal navigation stays fast
+### 3.13 Normal navigation stays fast
 
 Normal GET requests read stored/materialized data and render.
 
@@ -183,7 +210,7 @@ They must not:
 
 Heavy work is queued.
 
-### 3.12 Fail visibly, not silently
+### 3.14 Fail visibly, not silently
 
 When something cannot be proven or computed:
 
@@ -193,7 +220,7 @@ When something cannot be proven or computed:
 - preserve last-good information only when clearly labeled;
 - never silently pretend a fallback is equivalent to primary evidence.
 
-### 3.13 Minimal bold, institutional readability
+### 3.15 Minimal bold, institutional readability
 
 Use as little bold as possible.
 
@@ -220,7 +247,7 @@ UI rules also include:
 - Research → Financial Flows remains inside Research, not a separate primary product;
 - Validate remains immediately after Sources / Audit.
 
-### 3.14 No patch-on-patch implementation
+### 3.16 No patch-on-patch implementation
 
 Do not solve product regressions with stacked duplicate implementations.
 
@@ -234,7 +261,7 @@ Avoid:
 
 There should be one canonical implementation for a capability.
 
-### 3.15 Local parity is preserved deliberately
+### 3.17 Local parity is preserved deliberately
 
 Local V3.1.12 is not a runtime dependency, but accepted capabilities cannot silently disappear.
 
@@ -1801,6 +1828,10 @@ Normal deploy must not retransmit the persistent reporting vendor when its requi
 Code merged to main and production deployment are always separate states. Never infer one from the other.
 
 CURRENT_STATE must be updated after material main/deploy transitions.
+
+Release metadata is a hard gate: VERSION, CURRENT_STATE State-Version and HOW_MARKET_FORENSICS_WORKS Current product line must agree before CI/deploy can pass.
+
+After a successful production health check, the deploy workflow synchronizes the single top-level Production line in CURRENT_STATE back to main with the verified deployed VERSION, source SHA and workflow run. Historical release notes are never rewritten by this automation. If production is healthy but that source-of-truth sync cannot be committed, the deploy workflow must surface the failure rather than silently leave documentation stale.
 
 ---
 
