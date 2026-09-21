@@ -31,6 +31,7 @@
         <span class="status-chip">Stage 0 · {{ market_scan.stage0_count }} names</span>
         <span class="status-chip">Stage 1 FULL MARKET · {{ market_scan.stage1_scanned_count }}/{{ market_scan.stage0_count }} checked · {{ market_scan.stage1_qualified_count }} liquid</span>
         <span class="status-chip">Fundamentals · {{ market_scan.fundamental_screen.get('usable_count',0) }}/{{ market_scan.fundamental_screen.get('total_liquid_names',0) }} usable</span>
+        <span class="status-chip">Valuation evidence · {{ market_scan.fundamental_screen.get('valuation_usable_count',0) }}/{{ market_scan.fundamental_screen.get('total_liquid_names',0) }} usable</span>
         <span class="status-chip">Stage 1.5 MISPRICING · {{ market_scan.stage15_mispricing_count }} hypotheses · {{ market_scan.stage15_long_count }} long / {{ market_scan.stage15_short_count }} short</span>
         <span class="status-chip">Stage 2 DEEP · {{ market_scan.stage2_selected_count }} selected / {{ market_scan.stage2_enriched_count }} enriched</span>
         <span class="status-chip">{{ market_scan.candidate_count }} leads</span>
@@ -50,6 +51,7 @@
         <span>Scan mode: FULL UNIVERSE · no rotating slice</span>
         <span>Unknown Stage-2 names require SEC fundamental evidence + a valuation-versus-operating mispricing hypothesis</span>
         <span>Fundamental coverage: {{ market_scan.fundamental_screen.get('usable_pct',0) }}%</span>
+        <span>Valuation-evidence coverage: {{ market_scan.fundamental_screen.get('valuation_usable_pct',0) }}%</span>
         <span>Stage 1.5 mispricing hypotheses: {{ market_scan.stage15_mispricing_count }} · no filler quota</span>
         <span>Deep selection ignores daily movers; liquidity is only the final evidence tie-break</span>
         <span>P1 strong edge ≥ ±{{ '%.0f'|format(market_scan.guardrails.get('strong_edge_pct',25)) }}% + operating confirmation</span>
