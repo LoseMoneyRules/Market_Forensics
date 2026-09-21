@@ -9,6 +9,8 @@ from .core_models import (
     Security, ValuationModel,
 )
 from .data_providers import latest_snapshot
+from .current_financials import current_row, history_with_current, numbers_completeness
+from .fundamentals_forensics import build_fundamentals_forensics
 from .decision_lenses import build_decision_lenses
 from .decision_support import company_brief, management_accountability, management_engine, tape_series
 from .discovery_engine import classify_coverage
@@ -19,7 +21,7 @@ from .triangulation_engine import apply_peer_valuation_overlay, automatic_triang
 from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
-from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, stored_model_base_quality, valuation_is_decision_grade
+from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, infer_company_type, stored_model_base_quality, valuation_is_decision_grade
 
 
 CACHE_PREFIX = "RESEARCH_CACHE_"
@@ -129,6 +131,13 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     management_accountability_rows = management_accountability(company.id)
     management_promises = evaluate_promises(company.id)
     tape = tape_series(security, 12)
+    company_type = str((model.assumptions or {}).get("company_type") or infer_company_type(company.sector, company.industry))
+    fundamentals = build_fundamentals_forensics(
+        history_with_current(company.id, 15),
+        current=current_row(company.id),
+        completeness=numbers_completeness(company.id),
+        company_type=company_type,
+    )
     lenses = build_decision_lenses(
         coverage=coverage,
         company=company,
@@ -171,6 +180,7 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
             "reasons": brief.get("reasons") or [],
         },
         "management": management,
+        "fundamentals_forensics": fundamentals,
         "management_accountability": management_accountability_rows,
         "management_promises": [{
             "metric": row.get("metric"), "target_year": row.get("target_year"),
