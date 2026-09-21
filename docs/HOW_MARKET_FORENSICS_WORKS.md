@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.1  
+**Current product line:** 0.3.2  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -79,6 +79,8 @@ Important automated conclusions should be traceable to sources, transformations 
 ### 3.2 Missing data stays missing
 
 Do not cosmetically fill unavailable accounting facts.
+
+Stored evidence is a data-room surface and must remain readable independently of derived Research-control health. A failure in readiness, cache synthesis, valuation diagnostics or another analytical control may force the decision layer to `DATA REVIEW`, but it must not hide already-stored Fundamentals, Expectations, Financial Flows or Sources. Display fails open to evidence; approval, validation and publication fail closed to safety.
 
 Exact accounting bridges are allowed when mathematically deterministic, for example:
 

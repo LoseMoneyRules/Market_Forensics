@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from .core_models import FinancialPeriod, NormalizedFinancial, Source
@@ -17,6 +18,22 @@ FINANCIAL_REVIEW_GATES = {
 def _hash(value: Any) -> str:
     raw = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _utc_naive(value: Any) -> datetime | None:
+    """Normalize legacy/driver datetime variants before comparing evidence times."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 def _empty_basis() -> dict[str, Any]:
@@ -60,8 +77,8 @@ def latest_financial_basis(company_id: int | None) -> dict[str, Any]:
     for row in rows:
         normalized = getattr(row, "normalized", None)
         row_source = db.session.get(Source, row.source_id) if row.source_id else None
-        created = row.created_at
-        updated = normalized.updated_at if normalized is not None else None
+        created = _utc_naive(row.created_at)
+        updated = _utc_naive(normalized.updated_at) if normalized is not None else None
         materialized = updated if updated is not None and (created is None or updated > created) else created
         if materialized is not None:
             materialized_times.append(materialized)

@@ -11,8 +11,13 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.3.1**  
+**State-Version: 0.3.2**  
 **Product:** Market Forensics  
+**0.3.2 source branch:** `release/0.3.2-research-integrity`, created directly from clean main `60091bbf69caff005df245206313c7b9f5b6dc56`; no patch-on-patch ancestry.  
+**0.3.2 scope:** RESEARCH INTEGRITY RECOVERY — Fundamentals, Expectations, Financial Flows and the rest of Company Research must remain readable from stored MariaDB evidence even if derived readiness/control metadata fails. Decision/approval/publication remain fail-closed.  
+**0.3.2 readiness hardening:** financial-basis and thesis-version timestamps are normalized to UTC-naive comparison semantics before review-reset checks; mixed legacy/driver timezone shapes must never raise during Company GET rendering.  
+**0.3.2 evidence-visibility invariant:** normal Company GETs use a degraded readiness fallback only for display continuity. Stored evidence stays visible; no gate is treated as approved, and validation/publication remain blocked until the control layer is healthy. Mutation routes continue to use strict readiness.  
+**0.3.2 regression rule:** active CI now includes the still-live 0.3.1 regression suites plus a populated Company Research integrity suite that opens Fundamentals, Expectations, Financial Flows and every Research navigation route with stored financial/expectation/flow data. A generic `/health` success is no longer considered sufficient release evidence for Research pages.  
 **0.3.1 source branch:** `release/0.3.1-rerating-peer-research-reset`, created directly from clean main `ed5f5e4c948acc36b93d0388fcfd2c55d247b3ff`; no patch-on-patch branch ancestry.  
 **0.3.1 Discovery full-market correction branch:** `fix/0.3.1-full-universe-discovery`, created directly from current clean main `4d674707c04dc91aebeb89357049b2122386a5e6`; VERSION remains 0.3.1.  
 **0.3.1 pull request:** #52 `0.3.1: Re-rating, Peer Triangulation & Research Reset` merged by squash to `main` as `917bf3eccaf07e4339df6d31a60b30aa7e7956a3`.  

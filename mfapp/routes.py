@@ -96,6 +96,40 @@ def _research_readiness(coverage: Coverage) -> dict:
     return research_readiness(coverage)
 
 
+def _safe_research_readiness(coverage: Coverage) -> dict:
+    """Keep stored evidence readable when a derived Research-control read fails.
+
+    Normal GET navigation is a data-room read. A readiness/control exception must
+    not hide filed Fundamentals, Expectations, Financial Flows, Sources or other
+    stored evidence. The decision layer fails closed instead: no gate is treated
+    as approved, validation/publication remain blocked, and the page surfaces a
+    degraded-control banner. Mutation routes continue to use research_readiness()
+    directly so CONTROL actions never proceed on a degraded state.
+    """
+    try:
+        return research_readiness(coverage)
+    except Exception as exc:
+        current_app.logger.exception(
+            "Research readiness unavailable on GET for coverage_id=%s",
+            coverage.id,
+        )
+        fallback = _fallback_readiness()
+        fallback.update({
+            "degraded": True,
+            "degraded_reason": type(exc).__name__,
+            "review_required": True,
+            "review_required_count": 0,
+            "reopened_gates": [],
+            "financial_review_required": False,
+            "financial_review_required_count": 0,
+            "thesis_review_required": False,
+            "thesis_review_required_count": 0,
+            "financial_basis": {"available": False},
+            "review_banner": "RESEARCH CONTROL UNAVAILABLE — STORED EVIDENCE REMAINS VISIBLE",
+        })
+        return fallback
+
+
 def _intelligence(coverage: Coverage, company: Company, model: ValuationModel, market, valuation: dict, readiness: dict | None = None) -> dict:
     rows = list(reversed(history_with_current(company.id, 8)))
     issues = DataQualityIssue.query.filter_by(company_id=company.id, status="OPEN").count()
@@ -212,6 +246,45 @@ def _fail_closed_cached_research(
     return intelligence, lenses
 
 
+def _fail_closed_degraded_control(
+    readiness: dict,
+    intelligence: dict,
+    lenses: dict,
+) -> tuple[dict, dict]:
+    """Never let a cached decision survive a degraded Research-control read."""
+    if not readiness.get("degraded"):
+        return intelligence, lenses
+
+    intelligence = dict(intelligence or {})
+    intelligence["action"] = "WAIT"
+    intelligence["stance"] = "DATA REVIEW"
+    intelligence["confidence"] = "LOW"
+    warning = "Research control is unavailable; stored evidence remains visible but decisions are blocked."
+    warnings = list(intelligence.get("warnings") or [])
+    if warning not in warnings:
+        warnings.insert(0, warning)
+    intelligence["warnings"] = warnings
+    blockers = list(intelligence.get("blockers") or [])
+    if warning not in blockers:
+        blockers.insert(0, warning)
+    intelligence["blockers"] = blockers
+
+    lenses = dict(lenses or {})
+    lenses["research_conclusion"] = "DATA REVIEW"
+    lenses["model_confidence"] = "UNVALIDATED"
+    lenses["thesis_control"] = "CONTROL UNAVAILABLE"
+    rows = []
+    for row in list(lenses.get("rows") or []):
+        item = dict(row)
+        if item.get("key") == "model_confidence":
+            item["state"] = "UNVALIDATED"
+        elif item.get("key") == "thesis_control":
+            item["state"] = "CONTROL UNAVAILABLE"
+        rows.append(item)
+    lenses["rows"] = rows
+    return intelligence, lenses
+
+
 def _fast_brief(valuation: dict, model: ValuationModel | None, lenses: dict) -> dict:
     price = valuation.get("current_price"); base = valuation.get("base")
     try:
@@ -283,11 +356,14 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
     # Readiness is intentionally live DB state. It is lightweight and user-edited;
     # serving a materialized copy made Monitoring / Journal and gate approvals look
     # stale until a heavy recalculation happened.
-    readiness = research_readiness(coverage)
+    readiness = _safe_research_readiness(coverage)
     intelligence = dict((cache or {}).get("intelligence") or _fallback_intelligence(readiness, updating=cache_pending))
     decision_lenses = dict((cache or {}).get("decision_lenses") or _fallback_lenses(valuation, cache_pending))
     intelligence, decision_lenses = _fail_closed_cached_research(valuation, readiness, intelligence, decision_lenses)
+    intelligence, decision_lenses = _fail_closed_degraded_control(readiness, intelligence, decision_lenses)
     brief = dict((cache or {}).get("brief") or _fast_brief(valuation, model, decision_lenses))
+    if readiness.get("degraded"):
+        brief["confidence"] = "UNVALIDATED"
 
     return {
         "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
