@@ -82,6 +82,10 @@ Do not cosmetically fill unavailable accounting facts.
 
 Stored evidence is a data-room surface and must remain readable independently of derived Research-control health. A failure in readiness, cache synthesis, valuation diagnostics or another analytical control may force the decision layer to `DATA REVIEW`, but it must not hide already-stored Fundamentals, Expectations, Financial Flows or Sources. Display fails open to evidence; approval, validation and publication fail closed to safety.
 
+Fundamentals has an explicit long-history integrity contract: target at least 10 consecutive fiscal years, retain/display up to 16 FY when stored, and never hide a missing year by compressing the time series. SEC is the canonical source. A configured secondary fundamentals provider may fill only evidence that SEC did not resolve, including a wholly missing fiscal period, and every such value must retain explicit provider provenance. If the 10Y target cannot be reached, the gap remains visible and Research stays in review rather than inventing history.
+
+The persistent market-price cache targets 10 years by default. Individual visualizations may deliberately show a shorter window, but short chart windows must not be confused with the historical cache required by calibration, validation and portfolio analytics.
+
 Exact accounting bridges are allowed when mathematically deterministic, for example:
 
 - Gross Profit = Revenue − COGS;
