@@ -19,7 +19,7 @@ from .triangulation_engine import apply_peer_valuation_overlay, automatic_triang
 from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
-from .valuation_engine import stored_model_base_quality, valuation_is_decision_grade
+from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, stored_model_base_quality, valuation_is_decision_grade
 
 
 CACHE_PREFIX = "RESEARCH_CACHE_"
@@ -279,6 +279,13 @@ def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: Valu
     if coverage.updated_at and coverage.updated_at > generated_at:
         return True
     if model and model.updated_at and model.updated_at > generated_at:
+        return True
+    if model:
+        saved_engine = str((model.assumptions or {}).get("engine_version") or "")
+        if saved_engine != VALUATION_ENGINE_VERSION:
+            return True
+    cached_engine = str(((cache.get("valuation") or {}).get("engine_version") or ""))
+    if cached_engine and cached_engine != VALUATION_ENGINE_VERSION:
         return True
     return False
 
