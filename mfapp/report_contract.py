@@ -371,7 +371,7 @@ def build_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict
             "blockers": [str(x) for x in (intelligence.get("blockers") or [])],
         },
         "business": {"summary": _text(research.business)},
-        "fundamentals": {"current": current, "history": fundamentals, "summary": _text(research.numbers)},
+        "fundamentals": {"current": current, "history": fundamentals, "summary": _text(research.numbers), "forensics": dict(cache.get("fundamentals_forensics") or {})},
         "expectations": {
             "summary": _text(research.expectations),
             "implied": dict(lenses.get("implied_expectations") or {}),
