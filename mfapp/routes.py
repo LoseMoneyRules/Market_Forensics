@@ -360,12 +360,40 @@ def _cached_tape_for_months(tape: dict, months: int) -> dict:
     return out
 
 
-def _research_version(coverage: Coverage, research: ResearchState, reason: str) -> None:
+def _research_version(
+    coverage: Coverage,
+    research: ResearchState,
+    reason: str,
+    *,
+    version_meta: dict | None = None,
+) -> None:
     version = (db.session.query(db.func.max(ResearchVersion.version)).filter(ResearchVersion.coverage_id == coverage.id).scalar() or 0) + 1
     payload = {column.name: getattr(research, column.name) for column in research.__table__.columns if column.name not in {"id", "coverage_id", "updated_at"}}
     for key, value in list(payload.items()):
         if isinstance(value, datetime): payload[key] = value.isoformat()
-    db.session.add(ResearchVersion(coverage_id=coverage.id, version=version, payload=payload, reason=reason[:160], created_by=g.user.id))
+
+    # Thesis invalidation is versioned with the thesis. The live RiskPlan keeps
+    # only the CURRENT thesis control; ResearchVersion preserves prior pairs.
+    risk = RiskPlan.query.filter_by(coverage_id=coverage.id).first()
+    payload["_thesis_control"] = {
+        "invalidation": str(getattr(risk, "thesis_invalidation", "") or ""),
+        "locked_at": (
+            risk.invalidation_locked_at.isoformat()
+            if risk and risk.invalidation_locked_at
+            else None
+        ),
+        "locked": bool(risk and risk.invalidation_locked_at),
+    }
+    if version_meta:
+        payload["_version_meta"] = dict(version_meta)
+
+    db.session.add(ResearchVersion(
+        coverage_id=coverage.id,
+        version=version,
+        payload=payload,
+        reason=reason[:160],
+        created_by=g.user.id,
+    ))
 
 
 def _published_for_role(role: str):
@@ -945,12 +973,34 @@ def company_section(ticker, section):
             if latest_history and str(latest_history.status or "").upper() in {"WATCH", "FAIL"}:
                 exceptions.append({"rule": rule, "history": latest_history})
         alerts = Alert.query.filter_by(user_id=g.user.id, coverage_id=coverage.id).order_by(Alert.created_at.desc()).limit(20).all()
+
+        thesis_invalidation_history = []
+        archived_versions = (
+            ResearchVersion.query
+            .filter_by(coverage_id=coverage.id)
+            .filter(ResearchVersion.reason.like("Thesis revised · archived prior thesis%"))
+            .order_by(ResearchVersion.created_at.desc(), ResearchVersion.id.desc())
+            .limit(12)
+            .all()
+        )
+        for row in archived_versions:
+            payload = dict(row.payload or {})
+            control = dict(payload.get("_thesis_control") or {})
+            thesis_invalidation_history.append({
+                "version": row.version,
+                "created_at": row.created_at,
+                "thesis": str(payload.get("thesis") or ""),
+                "invalidation": str(control.get("invalidation") or ""),
+                "locked_at": control.get("locked_at"),
+            })
+
         extra.update({
             "monitor_rules": rules,
             "monitor_histories": histories,
             "monitor_exceptions": exceptions,
             "monitor_alerts": alerts,
             "monitor_plan": monitoring_plan(company.id, ctx["valuation"], ctx["intelligence"], ctx["model"]),
+            "thesis_invalidation_history": thesis_invalidation_history,
         })
     elif section == "journal":
         extra["journal_rows"] = DecisionJournal.query.filter_by(coverage_id=coverage.id, user_id=g.user.id).order_by(DecisionJournal.created_at.desc()).all()
