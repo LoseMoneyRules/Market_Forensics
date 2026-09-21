@@ -455,7 +455,7 @@ def save_portfolio_position():
     db.session.commit()
     enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"portfolio": True}, priority=20)
     if created:
-        enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"portfolio": True, "lookback_years": 3}, priority=35)
+        enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"portfolio": True, "lookback_years": 10}, priority=35)
     enqueue_job("PORTFOLIO_RECALCULATE", user_id=g.user.id, payload={}, priority=99)
     flash(f"{security.ticker} position saved. Research is optional and can be attached later.", "success")
     return redirect(url_for("web.portfolio_security", ticker=security.ticker))
