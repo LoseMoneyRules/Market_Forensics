@@ -457,7 +457,9 @@
         <div><span>Current basis</span><strong>{{ numbers_completeness.current_label or '—' }}</strong></div>
         <div><span>Normalized fields</span><strong>{{ numbers_completeness.current_populated_field_count }}/{{ numbers_completeness.normalized_field_count }}</strong><small>populated on current basis</small></div>
         <div><span>Mapped populated fields</span><strong>{{ numbers_completeness.source_covered_field_count }}/{{ numbers_completeness.current_populated_field_count }}</strong><small>source/provenance mapping</small></div>
-        <div><span>Unresolved inputs / metrics</span><strong>{{ numbers_completeness.unresolved_count }}</strong></div>
+        <div><span>Decision-critical gaps</span><strong>{{ numbers_completeness.critical_unresolved_count }}</strong><small>core statement / continuity / derived</small></div>
+        <div><span>All visible gaps</span><strong>{{ numbers_completeness.unresolved_count }}</strong><small>includes non-critical historically expected fields</small></div>
+        <div><span>Economic Reality</span><strong>{{ 'READY' if numbers_completeness.economic_reality_ready else 'REVIEW' }}</strong><small>required for canonical leverage / EV bridge</small></div>
       </div>
       {% if numbers_completeness.quarter_gaps %}<div class="notice amber">{% for message in numbers_completeness.quarter_gaps %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
       {% if numbers_completeness.missing_current_fields %}<p class="muted"><strong>Statement gaps:</strong> {{ numbers_completeness.missing_current_fields|join(', ') }}.</p>{% endif %}
