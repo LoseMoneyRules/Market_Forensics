@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 from mfapp import create_app
 from mfapp.core_models import (
     Company, Coverage, FinancialPeriod, NormalizedFinancial, ResearchGateApproval,
-    ResearchState, Security, Snapshot,
+    ResearchState, ResearchVersion, RiskPlan, Security, Snapshot,
 )
 from mfapp.extensions import db
 from mfapp.models import User
@@ -320,3 +320,159 @@ def test_business_peer_table_is_null_safe_for_missing_canonical_multiples():
     assert "MISSING" in template
     assert "Independent cross-check; never blended into Bear / Base / Bull" in template
     assert "Peer overlay applied, max ±10% shift" not in template
+
+
+def test_locked_invalidation_is_immutable_per_thesis_but_new_thesis_gets_fresh_control(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "thesis-version")
+    uid, _, coverage_id = seed_workspace(app, "TVR")
+    old_thesis = "Installed-base recovery drives margin normalization."
+    old_invalidation = "Operating margin stays below 8% for two filed quarters."
+    approval_time = datetime.now() - timedelta(days=1)
+
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        research = coverage.research
+        risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first()
+        research.thesis = old_thesis
+        research.counter_evidence = "Demand could remain structurally weak."
+        research.variant_us = "Recovery is stronger than priced."
+        risk.thesis_invalidation = old_invalidation
+        risk.invalidation_locked_at = approval_time
+        research.risk_summary = old_invalidation
+        db.session.commit()
+
+        readiness = research_readiness(coverage)
+        for key in ("overview", "monitoring"):
+            gate = next(row for row in readiness["gates"] if row["key"] == key)
+            db.session.add(ResearchGateApproval(
+                coverage_id=coverage_id,
+                gate_key=key,
+                approved_by=uid,
+                approved_at=approval_time,
+                evidence_hash=gate["evidence_hash"],
+                note="approved old thesis",
+            ))
+        db.session.commit()
+
+    client = app.test_client()
+    login(client, uid)
+
+    # Same thesis version: the locked invalidation cannot be rewritten.
+    response = client.post(
+        "/company/TVR/thesis-invalidation",
+        data={"thesis_invalidation": "A softer retroactive rule."},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first()
+        assert risk.thesis_invalidation == old_invalidation
+        assert risk.invalidation_locked_at is not None
+
+    # Explicit Core Thesis revision starts a new thesis version.
+    new_thesis = "Direct-to-consumer mix, not installed-base recovery, drives the re-rating."
+    response = client.post(
+        "/company/TVR/research/overview",
+        data={
+            "thesis": new_thesis,
+            "counter_evidence": "DTC economics could fail to scale.",
+            "variant_us": "The market underestimates DTC margin leverage.",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        research = coverage.research
+        risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first()
+        assert research.thesis == new_thesis
+        assert risk.thesis_invalidation == ""
+        assert risk.invalidation_locked_at is None
+        assert research.risk_summary == ""
+
+        archived = (
+            ResearchVersion.query
+            .filter_by(coverage_id=coverage_id)
+            .filter(ResearchVersion.reason.like("Thesis revised · archived prior thesis%"))
+            .order_by(ResearchVersion.id.desc())
+            .first()
+        )
+        assert archived is not None
+        assert archived.payload["thesis"] == old_thesis
+        assert archived.payload["_thesis_control"]["invalidation"] == old_invalidation
+        assert archived.payload["_thesis_control"]["locked"] is True
+
+        readiness = research_readiness(coverage)
+        gates = {row["key"]: row for row in readiness["gates"]}
+        assert readiness["thesis_review_required"] is True
+        assert set(key for key in readiness["reopened_gates"] if key in {"overview", "monitoring"}) == {"overview", "monitoring"}
+        assert gates["overview"]["approved"] is False
+        assert gates["overview"]["thesis_review_required"] is True
+        assert gates["monitoring"]["approved"] is False
+        assert gates["monitoring"]["thesis_review_required"] is True
+        assert gates["monitoring"]["evidence_ready"] is False
+        # Prior human approvals are preserved until they are re-reviewed.
+        assert ResearchGateApproval.query.filter_by(coverage_id=coverage_id).count() == 2
+
+    # A new invalidation can now be written and locked for the new thesis.
+    new_invalidation = "DTC gross margin fails to improve for two filed quarters."
+    response = client.post(
+        "/company/TVR/thesis-invalidation",
+        data={"thesis_invalidation": new_invalidation, "lock_invalidation": "1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first()
+        assert risk.thesis_invalidation == new_invalidation
+        assert risk.invalidation_locked_at is not None
+        readiness = research_readiness(coverage)
+        gates = {row["key"]: row for row in readiness["gates"]}
+        assert gates["monitoring"]["evidence_ready"] is True
+        assert gates["monitoring"]["thesis_review_required"] is True
+
+    page = client.get("/company/TVR/monitoring")
+    assert page.status_code == 200
+    assert b"Previous thesis versions and invalidations" in page.data
+    assert old_invalidation.encode() in page.data
+
+
+def test_invalidation_cannot_be_locked_without_a_core_thesis(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "no-thesis-lock")
+    uid, _, coverage_id = seed_workspace(app, "NTL")
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        coverage.research.thesis = ""
+        db.session.commit()
+
+    client = app.test_client()
+    login(client, uid)
+    response = client.post(
+        "/company/NTL/thesis-invalidation",
+        data={"thesis_invalidation": "Revenue falls below threshold.", "lock_invalidation": "1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first()
+        assert risk.invalidation_locked_at is None
+        assert risk.thesis_invalidation == ""
+
+
+def test_thesis_version_ui_and_documentation_contract():
+    company = Path("mfapp/templates/company_section.html").read_text()
+    readiness = Path("mfapp/templates/_process_readiness.html").read_text()
+    how = Path("docs/HOW_MARKET_FORENSICS_WORKS.md").read_text()
+    current = Path("docs/CURRENT_STATE.md").read_text()
+
+    assert "The lock belongs to this thesis version, not forever." in company
+    assert "Previous thesis versions and invalidations" in company
+    assert "THESIS CHANGED — NEW INVALIDATION REQUIRED" in readiness
+    assert "NEW THESIS VERSION" in readiness
+    assert "Invalidation is immutable per thesis version" in how
+    assert "0.3.1 thesis-invalidation rule" in current
+    assert Path("VERSION").read_text().strip() == "0.3.1"

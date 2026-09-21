@@ -59,7 +59,9 @@ def _mutate_research_gate(ticker: str, gate_key: str, action: str):
     existing = ResearchGateApproval.query.filter_by(coverage_id=ctx["coverage"].id, gate_key=gate_key).first()
     prior_evidence_hash = str(existing.evidence_hash or "") if existing else ""
     was_financial_review = bool(gate.get("financial_review_required"))
-    review_basis = dict((research_readiness(ctx["coverage"]).get("financial_basis") or {}))
+    was_thesis_review = bool(gate.get("thesis_review_required"))
+    readiness_before = research_readiness(ctx["coverage"])
+    review_basis = dict((readiness_before.get("financial_basis") or {}))
     if action == "revoke":
         if existing:
             db.session.delete(existing)
@@ -76,26 +78,44 @@ def _mutate_research_gate(ticker: str, gate_key: str, action: str):
         existing.approved_at = utcnow()
         existing.evidence_hash = gate["evidence_hash"]
         existing.note = str(request.form.get("note") or "")[:240]
+        rereview = was_financial_review or was_thesis_review
+        if was_thesis_review:
+            review_reason = "THESIS_REVISION"
+        elif was_financial_review:
+            review_reason = "NEW_FINANCIAL_EVIDENCE"
+        else:
+            review_reason = "MANUAL_APPROVAL"
         audit(
-            "research_gate.rereview" if was_financial_review else "research_gate.approve",
+            "research_gate.rereview" if rereview else "research_gate.approve",
             "coverage",
             ctx["coverage"].id,
             {
                 "gate": gate_key,
                 "old_evidence_hash": prior_evidence_hash,
                 "evidence_hash": gate["evidence_hash"],
-                "review_reason": "NEW_FINANCIAL_EVIDENCE" if was_financial_review else "MANUAL_APPROVAL",
+                "review_reason": review_reason,
                 "financial_basis": review_basis if was_financial_review else {},
+                "thesis_revision_at": (
+                    readiness_before.get("thesis_revision_at")
+                    if was_thesis_review else None
+                ),
             },
         )
     db.session.flush()
     fresh_readiness = research_readiness(ctx["coverage"])
-    if was_financial_review and not fresh_readiness.get("review_required"):
+    if was_financial_review and not fresh_readiness.get("financial_review_required"):
         audit(
             "research_basis.review_completed",
             "coverage",
             ctx["coverage"].id,
             {"financial_basis": fresh_readiness.get("financial_basis") or review_basis},
+        )
+    if was_thesis_review and not fresh_readiness.get("thesis_review_required"):
+        audit(
+            "research_thesis.review_completed",
+            "coverage",
+            ctx["coverage"].id,
+            {"thesis_revision_at": readiness_before.get("thesis_revision_at")},
         )
     updated_lenses = patch_research_cache_readiness(ctx["coverage"].id, fresh_readiness)
     db.session.commit()
