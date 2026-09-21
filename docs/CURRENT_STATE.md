@@ -68,6 +68,7 @@
 **Accepted opportunity-funnel merge:** `adfd99593f6db378cf8cf99a41976a2e85c6c49d`.  
 **Verified opportunity-funnel post-merge main CI:** run `35469221771` / #1117 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
 **Release phase:** 0.3.0 Economic Reality + Company Quality is the active source release. PR #48 carries the 0.3.0 implementation from clean 0.2.14 main; merge, post-merge CI and Namecheap production remain independently verified states. The top-level Production line is canonical for what is actually live.
+**Verified 0.3.0 implementation head before final state sync:** `401e0a673119e1591b699db597e20170974683bb`; branch push CI run `35608969414` and PR CI run `35608973870` / #1382 both completed successfully, including release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
