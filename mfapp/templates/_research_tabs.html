@@ -17,4 +17,10 @@
     <a href="{{ href }}" class="{% if section == key %}active{% endif %}">{{ label }}</a>
   {% endfor %}
 </nav>
+{% if readiness is defined and readiness and readiness.degraded %}
+<div class="notice amber research-control-degraded">
+  <strong>RESEARCH CONTROL TEMPORARILY UNAVAILABLE.</strong>
+  Stored evidence remains visible. Approval, validation and publication remain blocked until the control layer is healthy.
+</div>
+{% endif %}
 {% include "_research_kpis.html" %}
