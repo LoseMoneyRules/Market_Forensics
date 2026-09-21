@@ -62,8 +62,17 @@ def _stage1_row(ticker="QUIET", *, shortable=True, activity=False):
         "stage1_lanes": ["FULL_UNIVERSE"], "stage1_reasons": ["Full-market screen."],
         "snapshot_as_of": "2026-09-19T15:00:00Z",
         "fundamental_screen": {
-            "status": "READY", "eligible": True, "side": "LONG", "strength": 6,
-            "signals": [{"side": "LONG", "label": "FCF YIELD", "detail": "FCF yield proxy 8.5%", "points": 3}],
+            "status": "READY", "eligible": True, "side": "LONG", "strength": 8,
+            "signals": [
+                {"side": "LONG", "label": "FCF YIELD", "detail": "FCF yield proxy 8.5%", "points": 3},
+                {"side": "LONG", "label": "OPERATING LEVERAGE", "detail": "Operating margin +2.0 pp YoY", "points": 3},
+            ],
+            "metrics": {
+                "revenue_yoy_pct": 8.0, "operating_margin_pct": 12.0,
+                "operating_margin_change_pp": 2.0, "fcf_margin_pct": 10.0,
+                "inventory_growth_pct": 0.0, "receivables_growth_pct": 0.0,
+                "pe_proxy": 14.0, "ps_proxy": 1.5, "fcf_yield_pct": 8.5,
+            },
         },
     }
 
@@ -362,7 +371,7 @@ def test_0212_stage2_is_bounded_after_full_market_prescreen():
     import mfapp.discovery_universe as du
     import mfapp.market_discovery as md
 
-    assert df.FORENSIC_ENRICH_LIMIT == 20
+    assert df.FORENSIC_ENRICH_LIMIT == 52
     assert du.STAGE1_BATCH_SIZE == 0
     assert du.STAGE1_ACTIVITY_LIMIT == 0
     assert du.STAGE1_COVERAGE_LIMIT == 0
@@ -370,7 +379,7 @@ def test_0212_stage2_is_bounded_after_full_market_prescreen():
     assert du.SNAPSHOT_MAX_WORKERS == 4
     rows = [_stage1_row(f"Q{i:03d}") for i in range(100)]
     selected = md._select_stage2_finalists(rows, {}, limit=df.FORENSIC_ENRICH_LIMIT)
-    assert len(selected) == 20
+    assert len(selected) == 52
     assert all(row["fundamental_screen"]["eligible"] for row in selected)
     assert md.MIN_DOLLAR_VOLUME == 15_000_000.0
     assert md.MIN_DAILY_VOLUME == 200_000.0
@@ -516,7 +525,7 @@ def test_0212_discovery_page_renders_sparse_stage2_rejection(tmp_path, monkeypat
             payload={},
             result={
                 "market_scan": {
-                    "contract_version": "FULL_MARKET_FORENSIC_DISCOVERY_V4",
+                    "contract_version": "FULL_MARKET_MISPRICING_DISCOVERY_V5",
                     "configured": True,
                     "candidates": [],
                     "errors": [],
