@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from cryptography.fernet import Fernet
@@ -468,3 +468,44 @@ def test_032_missing_fiscal_year_is_visible_and_blocks_fundamentals_readiness(tm
     assert "FY2021" in html
     assert "NOT STORED" in html
     assert "10Y ANNUAL HISTORY GAP" in html
+
+
+
+def test_032_price_history_falls_through_partial_provider_to_full_ten_year_source(monkeypatch):
+    from mfapp.historical_data import fetch_history
+
+    today = date.today()
+    requested_start = today - timedelta(days=366 * 10 + 45)
+
+    def rows(start, end, step_days, provider):
+        out = []
+        day = start
+        while day <= end:
+            out.append({
+                "trade_date": day,
+                "provider": provider,
+                "close_raw": 100.0,
+                "close_split_adjusted": 100.0,
+                "split_basis_factor": 1.0,
+                "volume": 1_000_000,
+                "quality": "TEST",
+                "payload": {},
+            })
+            day += timedelta(days=step_days)
+        return out
+
+    partial = rows(today - timedelta(days=366 * 3), today, 3, "Alpaca IEX historical")
+    full = rows(requested_start, today, 3, "Tiingo historical")
+
+    monkeypatch.setattr("mfapp.historical_data._alpaca_history", lambda *_args: partial)
+    monkeypatch.setattr("mfapp.historical_data._tiingo_history", lambda *_args: full)
+    monkeypatch.setattr(
+        "mfapp.historical_data._public_history",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("public fallback should not be needed")),
+    )
+
+    result, errors = fetch_history("TST", 1, 10)
+    assert result
+    assert result[0]["provider"] == "Tiingo historical"
+    assert (result[-1]["trade_date"] - result[0]["trade_date"]).days >= 3650
+    assert any("Alpaca: partial historical span" in item for item in errors)
