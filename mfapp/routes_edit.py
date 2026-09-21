@@ -58,22 +58,109 @@ def _sync_portfolio_investment_state(security: Security, side: str) -> Coverage 
 @bp.post("/company/<ticker>/research/<section>")
 @role_required("CONTROL")
 def save_research(ticker, section):
-    require_control_view(); ctx = _ctx(ticker)
-    if section not in RESEARCH_FIELDS and section != "overview": abort(404)
+    require_control_view()
+    ctx = _ctx(ticker)
+    if section not in RESEARCH_FIELDS and section != "overview":
+        abort(404)
+
     research = ctx["research"]
+    thesis_revised = False
+    prior_thesis = str(research.thesis or "").strip()
+    prior_invalidation = str(ctx["risk"].thesis_invalidation or "").strip()
+    prior_invalidation_locked_at = ctx["risk"].invalidation_locked_at
+
     if section in RESEARCH_FIELDS:
         setattr(research, RESEARCH_FIELDS[section], str(request.form.get("text") or "").strip())
     else:
-        for field in ("thesis", "counter_evidence", "variant_market", "variant_us", "variant_evidence", "narrative_fit_notes", "confirmation_bias_notes", "thesis_drift_notes"):
-            if field in request.form: setattr(research, field, str(request.form.get(field) or "").strip())
+        proposed_thesis = (
+            str(request.form.get("thesis") or "").strip()
+            if "thesis" in request.form
+            else prior_thesis
+        )
+        thesis_revised = proposed_thesis != prior_thesis
+
+        if thesis_revised:
+            # Freeze the old thesis/control pair before changing the live state.
+            # This is append-only ResearchVersion history; the old locked
+            # invalidation is never edited in place.
+            _research_version(
+                ctx["coverage"],
+                research,
+                "Thesis revised · archived prior thesis",
+                version_meta={
+                    "thesis_revision": True,
+                    "archived_prior_thesis": True,
+                },
+            )
+
+        for field in (
+            "thesis", "counter_evidence", "variant_market", "variant_us",
+            "variant_evidence", "narrative_fit_notes",
+            "confirmation_bias_notes", "thesis_drift_notes",
+        ):
+            if field in request.form:
+                setattr(research, field, str(request.form.get(field) or "").strip())
+
+        if thesis_revised:
+            # Invalidation is scoped to a thesis version. A genuinely new thesis
+            # gets a fresh control surface; the prior pair remains in history.
+            ctx["risk"].thesis_invalidation = ""
+            ctx["risk"].invalidation_locked_at = None
+            ctx["risk"].updated_by = g.user.id
+            research.risk_summary = ""
+            audit(
+                "research.thesis.revise",
+                "coverage",
+                ctx["coverage"].id,
+                {
+                    "prior_thesis": prior_thesis,
+                    "new_thesis": str(research.thesis or "").strip(),
+                    "prior_invalidation": prior_invalidation,
+                    "prior_invalidation_locked_at": (
+                        prior_invalidation_locked_at.isoformat()
+                        if prior_invalidation_locked_at else None
+                    ),
+                    "current_invalidation_reset": True,
+                },
+            )
+
         state = str(request.form.get("research_state") or ctx["coverage"].research_state).upper()
-        if state in {"UNRATED", "UNDER_REVIEW", "ATTRACTIVE", "NEUTRAL", "DETERIORATING", "READY", "ARCHIVED"}: ctx["coverage"].research_state = state
+        if state in {"UNRATED", "UNDER_REVIEW", "ATTRACTIVE", "NEUTRAL", "DETERIORATING", "READY", "ARCHIVED"}:
+            ctx["coverage"].research_state = state
         status = str(request.form.get("coverage_status") or ctx["coverage"].status).upper()
-        if status in {"MONITOR", "RESEARCH", "READY", "ARCHIVED"}: ctx["coverage"].status = status
+        if status in {"MONITOR", "RESEARCH", "READY", "ARCHIVED"}:
+            ctx["coverage"].status = status
         ctx["coverage"].owner_summary = str(request.form.get("owner_summary") or ctx["coverage"].owner_summary).strip()
-    research.updated_by = g.user.id; _research_version(ctx["coverage"], research, f"Saved {section}")
-    audit("research.save", "coverage", ctx["coverage"].id, {"section": section}); db.session.commit(); _queue_recalc(ctx); flash("Research saved. Research cache queued for update.", "success")
-    return redirect(url_for("web.company_section", ticker=ticker.upper(), section=section if section in SECTION_KEYS else "overview"))
+
+    research.updated_by = g.user.id
+    reason = "Saved overview · thesis revised" if thesis_revised else f"Saved {section}"
+    _research_version(
+        ctx["coverage"],
+        research,
+        reason,
+        version_meta={"thesis_revision": thesis_revised} if section == "overview" else None,
+    )
+    audit(
+        "research.save",
+        "coverage",
+        ctx["coverage"].id,
+        {"section": section, "thesis_revised": thesis_revised},
+    )
+    db.session.commit()
+    _queue_recalc(ctx)
+
+    if thesis_revised:
+        flash(
+            "Core thesis revised. The prior thesis/invalidation pair was archived; define and lock a new invalidation for the new thesis.",
+            "success",
+        )
+    else:
+        flash("Research saved. Research cache queued for update.", "success")
+    return redirect(url_for(
+        "web.company_section",
+        ticker=ticker.upper(),
+        section=section if section in SECTION_KEYS else "overview",
+    ))
 
 
 @bp.post("/company/<ticker>/triangulation")
@@ -268,28 +355,64 @@ def update_monitoring(ticker, rule_id):
 @bp.post("/company/<ticker>/thesis-invalidation")
 @role_required("CONTROL")
 def save_thesis_invalidation(ticker):
-    """Research invalidation belongs to the thesis, not to portfolio sizing."""
+    """Research invalidation is immutable inside one thesis version."""
     require_control_view()
     ctx = _ctx(ticker)
     risk = ctx["risk"]
+    thesis = str(ctx["research"].thesis or "").strip()
     proposed = str(request.form.get("thesis_invalidation") or "").strip()
+    wants_lock = request.form.get("lock_invalidation") == "1"
+
     if risk.invalidation_locked_at and proposed != risk.thesis_invalidation:
-        flash("The locked thesis invalidation cannot be changed retroactively. Record a new thesis instead.", "error")
+        flash(
+            "This invalidation is locked for the current thesis and cannot be rewritten retroactively. Revise the Core Thesis first to start a new thesis version.",
+            "error",
+        )
         return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
+
+    if wants_lock and not thesis:
+        flash("Define the Core Thesis before locking a thesis invalidation.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
+
     risk.thesis_invalidation = proposed
-    if request.form.get("lock_invalidation") == "1" and not risk.invalidation_locked_at:
+    if wants_lock and not risk.invalidation_locked_at:
         if not proposed:
             flash("Enter thesis invalidation before locking it.", "error")
             return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
         risk.invalidation_locked_at = utcnow()
+
     risk.updated_by = g.user.id
     ctx["research"].risk_summary = proposed
     ctx["research"].updated_by = g.user.id
-    _research_version(ctx["coverage"], ctx["research"], "Updated thesis invalidation")
-    audit("research.invalidation.save", "coverage", ctx["coverage"].id, {"locked": bool(risk.invalidation_locked_at)})
+    _research_version(
+        ctx["coverage"],
+        ctx["research"],
+        "Locked thesis invalidation" if risk.invalidation_locked_at else "Updated thesis invalidation draft",
+        version_meta={
+            "thesis_invalidation_update": True,
+            "locked": bool(risk.invalidation_locked_at),
+        },
+    )
+    audit(
+        "research.invalidation.save",
+        "coverage",
+        ctx["coverage"].id,
+        {
+            "locked": bool(risk.invalidation_locked_at),
+            "thesis": thesis,
+            "invalidation": proposed,
+        },
+    )
     db.session.commit()
     _queue_recalc(ctx)
-    flash("Thesis invalidation saved. Research cache queued for update.", "success")
+
+    if risk.invalidation_locked_at:
+        flash(
+            "Thesis invalidation locked for the current thesis. It stays immutable unless a new Core Thesis is created.",
+            "success",
+        )
+    else:
+        flash("Thesis invalidation draft saved. Lock it when this thesis control is final.", "success")
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section="monitoring"))
 
 
