@@ -4,7 +4,7 @@ from math import isfinite
 from statistics import median
 from typing import Any
 
-from .economic_reality import economic_from_row, metric as economic_metric
+from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 
 ENGINE_VERSION = "0.2.0"
 
@@ -175,18 +175,38 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         net_debt = debt - cash
         net_debt_basis = "REPORTED_DEBT_MINUS_CASH_FALLBACK"
     revenues = [n(x.get("revenue")) for x in rows]
-    net_margins = [
-        (n(x.get("net_income")) / n(x.get("revenue")))
-        if n(x.get("net_income")) is not None and n(x.get("revenue")) not in (None, 0)
-        else None
-        for x in rows
-    ]
-    fcf_margins = [
-        (n(x.get("fcf")) / n(x.get("revenue")))
-        if n(x.get("fcf")) is not None and n(x.get("revenue")) not in (None, 0)
-        else None
-        for x in rows
-    ]
+    net_margins = []
+    fcf_margins = []
+    reported_fcf_margins = []
+    earnings_normalization_review = False
+    sbc_adjusted_fcf = False
+    for x in rows:
+        x_revenue = n(x.get("revenue"))
+        x_net_income = n(x.get("net_income"))
+        x_fcf = n(x.get("fcf"))
+        x_economic = economic_from_row(x)
+        if has_suppression(x_economic, "PE_EARNINGS_NORMALIZATION_REVIEW"):
+            net_margins.append(None)
+            earnings_normalization_review = True
+        else:
+            net_margins.append(
+                (x_net_income / x_revenue)
+                if x_net_income is not None and x_revenue not in (None, 0) else None
+            )
+        reported_fcf_margins.append(
+            (x_fcf / x_revenue)
+            if x_fcf is not None and x_revenue not in (None, 0) else None
+        )
+        valuation_fcf = x_fcf
+        if has_suppression(x_economic, "FCF_POSITIVE_UNADJUSTED"):
+            after_sbc = economic_metric(x_economic, "fcf_after_sbc")
+            if after_sbc is not None and x_fcf is not None:
+                valuation_fcf = min(x_fcf, after_sbc)
+                sbc_adjusted_fcf = True
+        fcf_margins.append(
+            (valuation_fcf / x_revenue)
+            if valuation_fcf is not None and x_revenue not in (None, 0) else None
+        )
     operating_margins = [
         (n(x.get("operating_income")) / n(x.get("revenue")))
         if n(x.get("operating_income")) is not None and n(x.get("revenue")) not in (None, 0)
@@ -209,6 +229,10 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         warnings.append("Net income is unavailable; P/E is excluded from the intrinsic blend.")
     if fcf is None:
         warnings.append("Free cash flow is unavailable; FCF-yield and DCF evidence are weaker.")
+    if earnings_normalization_review:
+        warnings.append("Tax/non-operating earnings anomalies are excluded from P/E margin calibration rather than normalized by guess.")
+    if sbc_adjusted_fcf:
+        warnings.append("Material share-based compensation is deducted from FCF calibration for FCF-yield/DCF evidence.")
     if economic and economic_unresolved:
         warnings.append("Economic debt classification is materially unresolved; EV/Sales is excluded until the financing bridge is classified.")
     elif not economic:
@@ -227,6 +251,8 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         "revenue_growth": _cagr(revenues, 3) or _median_growth(revenues),
         "net_margin": median([x for x in net_margins[-3:] if x is not None]) if any(x is not None for x in net_margins[-3:]) else None,
         "fcf_margin": median([x for x in fcf_margins[-3:] if x is not None]) if any(x is not None for x in fcf_margins[-3:]) else None,
+        "reported_fcf_margin": median([x for x in reported_fcf_margins[-3:] if x is not None]) if any(x is not None for x in reported_fcf_margins[-3:]) else None,
+        "fcf_margin_basis": "FCF_AFTER_SBC_WHEN_MATERIAL" if sbc_adjusted_fcf else "REPORTED_FCF",
         "operating_margin": median([x for x in operating_margins[-3:] if x is not None]) if any(x is not None for x in operating_margins[-3:]) else None,
         "shares": shares,
         "share_source": resolved_source or "UNRESOLVED",
