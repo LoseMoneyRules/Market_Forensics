@@ -529,7 +529,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
-    if scan and scan.get("contract_version") != "BROAD_FORENSIC_DISCOVERY_V2":
+    if scan and scan.get("contract_version") != "BROAD_FORENSIC_DISCOVERY_V3":
         return {
             "candidates": [], "long_candidates": [], "short_candidates": [], "watch_candidates": [],
             "candidate_count": 0, "long_count": 0, "short_count": 0, "watch_count": 0,
