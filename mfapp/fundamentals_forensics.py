@@ -307,6 +307,7 @@ def build_fundamentals_forensics(
     # Data completeness / source continuity.
     gap_groups = (
         ("STATEMENT_GAPS", "Statement gaps", completeness.get("missing_current_fields") or []),
+        ("EXPECTED_FIELD_GAPS", "Historically expected normalized fields missing now", completeness.get("missing_expected_fields") or []),
         ("CONTINUITY_GAPS", "Balance-sheet continuity gaps", completeness.get("missing_continuity_fields") or []),
         ("DERIVED_GAPS", "Derived-analysis gaps", completeness.get("missing_derived_metrics") or []),
     )
