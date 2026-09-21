@@ -105,13 +105,31 @@
     });
   });
 
-  // Localize visible server timestamps while keeping UTC in storage.
-  const isoLike = /\b(20\d{2}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?\b/g;
-  document.querySelectorAll('main time[data-utc], main [data-local-time]').forEach((el) => {
-    const raw = el.getAttribute('datetime') || el.dataset.utc || el.textContent.trim();
-    const normalized = /Z$|[+-]\d\d:\d\d$/.test(raw) ? raw : raw.replace(' ', 'T') + 'Z';
+  // Storage/API timestamps are UTC. Presentation follows the browser/OS timezone.
+  function normalizeUtcTimestamp(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return '';
+    if (/Z$|[+-]\d\d:\d\d$/.test(value)) return value;
+    return value.replace(' ', 'T') + 'Z';
+  }
+  function browserLocalTime(raw, options = {}) {
+    const normalized = normalizeUtcTimestamp(raw);
+    if (!normalized) return '';
     const d = new Date(normalized);
-    if (!Number.isNaN(d.getTime())) el.textContent = d.toLocaleString();
+    return Number.isNaN(d.getTime()) ? String(raw || '') : d.toLocaleString([], options);
+  }
+
+  const isoLike = /\b(20\d{2}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?\b/g;
+  document.querySelectorAll('time[data-utc], [data-local-time]').forEach((el) => {
+    const raw = el.getAttribute('datetime') || el.dataset.utc || el.textContent.trim();
+    const local = browserLocalTime(raw, {
+      year:'numeric', month:'short', day:'numeric',
+      hour:'numeric', minute:'2-digit', timeZoneName:'short',
+    });
+    if (local) {
+      el.textContent = local;
+      el.title = 'Local browser time';
+    }
   });
   document.querySelectorAll('main td, main small, main p, main strong').forEach((el) => {
     if (el.children.length) return;
@@ -119,8 +137,10 @@
     if (!isoLike.test(value)) { isoLike.lastIndex = 0; return; }
     isoLike.lastIndex = 0;
     el.textContent = value.replace(isoLike, (all, d, t) => {
-      const parsed = new Date(d + 'T' + t + ':00Z');
-      return Number.isNaN(parsed.getTime()) ? all : parsed.toLocaleString([], {year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+      return browserLocalTime(d + 'T' + t + ':00Z', {
+        year:'numeric', month:'short', day:'numeric',
+        hour:'numeric', minute:'2-digit',
+      }) || all;
     });
   });
 
@@ -148,9 +168,11 @@
   const priceMeta = document.querySelector('[data-live-price-meta]');
   const marketBox = priceNode?.closest('.company-market');
   function fmtTime(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    return browserLocalTime(iso, {
+      month:'short', day:'numeric',
+      hour:'numeric', minute:'2-digit',
+      timeZoneName:'short',
+    });
   }
   function showQuoteUnavailable(message = 'Live quote unavailable') {
     if (!priceMeta) return;
