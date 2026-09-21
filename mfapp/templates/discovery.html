@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">BROAD UNIVERSE DISCOVERY</p>
         <h2>Fair-value forensic radar</h2>
-        <p class="muted">Stage 0 maintains the operating-equity universe. Stage 1 checks every eligible name on every run. A market-wide SEC fundamental pre-screen then ranks real operating/valuation signals before a bounded shortlist spends deeper Companyfacts/valuation budget in Stage 2.</p>
+        <p class="muted">Stage 0 maintains the operating-equity universe. Stage 1 checks every eligible name on every run. Stage 1.5 then looks across the full market for valuation tension that conflicts with filed operating reality: cheap + improving for Long, expensive + deteriorating for Short. Only those auditable hypotheses can spend deeper Companyfacts/canonical-valuation budget in Stage 2.</p>
       </div>
       <div class="button-row">
         <form method="post" action="{{ url_for('web.queue_global_job', kind='discovery') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Run Discovery</button></form>
@@ -26,11 +26,12 @@
     {% if scan_failure %}<div class="notice amber"><strong>LAST SCAN FAILED.</strong> {{ scan_failure }}. Any prior successful scan remains visible below.</div>{% endif %}
     {% if market_scan.stale_contract %}<div class="notice amber"><strong>OLD DISCOVERY RESULT IGNORED.</strong> The stored result predates the full-market evidence-first contract. Run Discovery again; rotating or mover-biased results are intentionally not displayed.</div>{% endif %}
 
-    {% if market_scan.contract_version == 'FULL_MARKET_FORENSIC_DISCOVERY_V4' %}
+    {% if market_scan.contract_version == 'FULL_MARKET_MISPRICING_DISCOVERY_V5' %}
       <div class="scan-summary">
         <span class="status-chip">Stage 0 · {{ market_scan.stage0_count }} names</span>
         <span class="status-chip">Stage 1 FULL MARKET · {{ market_scan.stage1_scanned_count }}/{{ market_scan.stage0_count }} checked · {{ market_scan.stage1_qualified_count }} liquid</span>
         <span class="status-chip">Fundamentals · {{ market_scan.fundamental_screen.get('usable_count',0) }}/{{ market_scan.fundamental_screen.get('total_liquid_names',0) }} usable</span>
+        <span class="status-chip">Stage 1.5 MISPRICING · {{ market_scan.stage15_mispricing_count }} hypotheses · {{ market_scan.stage15_long_count }} long / {{ market_scan.stage15_short_count }} short</span>
         <span class="status-chip">Stage 2 DEEP · {{ market_scan.stage2_selected_count }} selected / {{ market_scan.stage2_enriched_count }} enriched</span>
         <span class="status-chip">{{ market_scan.candidate_count }} leads</span>
         <span class="status-chip">{{ market_scan.p1_count }} P1</span>
@@ -47,9 +48,10 @@
       <div class="discovery-method">
         <span>Universe: active + tradable operating equities on major US exchanges</span>
         <span>Scan mode: FULL UNIVERSE · no rotating slice</span>
-        <span>Unknown Stage-2 names require SEC fundamental pre-screen evidence</span>
+        <span>Unknown Stage-2 names require SEC fundamental evidence + a valuation-versus-operating mispricing hypothesis</span>
         <span>Fundamental coverage: {{ market_scan.fundamental_screen.get('usable_pct',0) }}%</span>
-        <span>Fundamental pre-screen leads: {{ market_scan.fundamental_screen.get('eligible_count',0) }}</span>
+        <span>Stage 1.5 mispricing hypotheses: {{ market_scan.stage15_mispricing_count }} · no filler quota</span>
+        <span>Deep selection ignores daily movers; liquidity is only the final evidence tie-break</span>
         <span>P1 strong edge ≥ ±{{ '%.0f'|format(market_scan.guardrails.get('strong_edge_pct',25)) }}% + operating confirmation</span>
         <span>P2 valuation edge ≥ ±{{ '%.0f'|format(market_scan.guardrails.get('fair_value_edge_pct',20)) }}% with decision-grade Base</span>
         <span>WATCH from ±{{ '%.0f'|format(market_scan.guardrails.get('watch_edge_pct',12)) }}% when evidence is emerging or needs verification</span>
