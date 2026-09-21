@@ -45,10 +45,10 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
     operating_income = _n(current.get("operating_income"))
     pretax_income = _n(current.get("pretax_income"))
     income_tax = _n(current.get("income_tax"))
+    economic_quality = str(metrics.get("economic_reality_quality") or "UNAVAILABLE").upper()
     economic_unresolved = bool(metrics.get("economic_reality_unresolved"))
-    net_debt = None if economic_unresolved else _n(metrics.get("economic_net_debt"))
-    if net_debt is None and not economic_unresolved:
-        net_debt = _n(metrics.get("net_debt"))
+    economic_ready = economic_quality not in {"", "UNAVAILABLE", "LOW"} and not economic_unresolved
+    net_debt = _n(metrics.get("economic_net_debt")) if economic_ready else None
     equity = _n(current.get("equity"))
     shares = _n(current.get("diluted_shares")) or _n(current.get("shares_outstanding"))
 
@@ -113,6 +113,7 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
         "shares": shares,
         "net_debt": net_debt,
         "economic_reality_unresolved": economic_unresolved,
+        "economic_reality_quality": economic_quality,
     }
 
 
