@@ -347,6 +347,7 @@ UI rules also include:
 - forms around 14 px;
 - micro metadata no smaller than 13 px;
 - chart labels 13–14 px;
+- stored/system timestamps remain UTC; user-facing clock times are rendered in the browser/OS local timezone, with a short timezone label where time-of-day matters, so DST and travel are handled automatically;
 - light and dark modes must both remain usable;
 - semantic state color is canonical across all status chips and equivalent state surfaces: positive/approved/strong = green; negative/failed/red-flag = red; watch/review/unresolved = amber; neutral/fair/lateral = gray; informational/running/queued = blue;
 - neutral must never be rendered as caution merely because it is undecided, and dark mode must preserve the same semantic meaning rather than flattening all chips to one generic color;

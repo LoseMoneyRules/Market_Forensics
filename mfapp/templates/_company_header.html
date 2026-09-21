@@ -12,7 +12,7 @@
     <div class="company-market">
       <span>Current price · refreshes every 5 min</span>
       <strong data-live-price>{% if market %}${{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</strong>
-      <small data-live-price-meta>{% if market %}<i class="live-dot"></i>{{ market.provider }} · {{ market.as_of.strftime('%Y-%m-%d %H:%M') }}{% else %}<i class="live-dot stale"></i>No stored quote{% endif %}</small>
+      <small data-live-price-meta>{% if market %}<i class="live-dot"></i>{{ market.provider }} · <time data-local-time datetime="{{ market.as_of.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ market.as_of.strftime('%Y-%m-%d %H:%M') }} UTC</time>{% else %}<i class="live-dot stale"></i>No stored quote{% endif %}</small>
     </div>
   </div>
 </div>
