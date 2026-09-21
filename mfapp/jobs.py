@@ -12,6 +12,7 @@ from typing import Any
 
 from .autofill import prefill_coverage
 from .calculations import CALCULATION_VERSION, build_cash_flow, build_income_statement_flow, calculate_valuation, financial_metrics
+from .current_financials import current_row
 from .core_models import (
     Alert, CalculationRun, Company, Coverage, DataQualityIssue, Event, FinancialFlow,
     FinancialPeriod, HistoricalPrice, Job, NormalizedFinancial, RefreshRun, Security, Source,
@@ -750,7 +751,23 @@ def _execute(job: Job) -> dict[str, Any]:
         return result
     if kind == "RECALCULATE":
         if not job.company_id: raise RuntimeError("company_id is required")
-        return recalculate_company(job.company_id, coverage_id)
+        result = recalculate_company(job.company_id, coverage_id)
+        current = current_row(job.company_id)
+        economic = dict(((current or {}).get("quality") or {}).get("economic_reality") or {})
+        if current and not economic and security and provider_status(job.user_id).get("sec"):
+            sec_job = enqueue_job(
+                "SEC_INGEST",
+                user_id=job.user_id,
+                company_id=job.company_id,
+                security_id=security.id,
+                payload={"coverage_id": coverage_id},
+                priority=40,
+            )
+            result["economic_reality_refresh_job_id"] = sec_job.id
+            result["economic_reality_state"] = "REFRESH_QUEUED"
+        elif current and economic:
+            result["economic_reality_state"] = "MATERIALIZED"
+        return result
     if kind == "RESEARCH_PREFILL":
         if not coverage_id: raise RuntimeError("coverage_id is required")
         return prefill_coverage(coverage_id, job.user_id)
