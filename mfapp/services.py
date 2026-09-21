@@ -155,6 +155,13 @@ def valuation_result(coverage: Coverage) -> dict[str, Any]:
         "quality": overall_quality,
         "base_quality": base_quality,
         "decision_grade": valuation_is_decision_grade({"base_quality": base_quality}),
+        "company_quality": dict(latest_engine.get("company_quality") or {}),
+        "valuation_policy": dict(latest_engine.get("valuation_policy") or {}),
+        "valuation_impact_ledger": list(latest_engine.get("valuation_impact_ledger") or []),
+        "method_exclusions": list(latest_engine.get("method_exclusions") or []),
+        "effective_input_weights": dict(latest_engine.get("effective_input_weights") or {}),
+        "engine_version": latest_engine.get("engine_version"),
+        "warnings": list(latest_engine.get("warnings") or []),
     })
     return out
 
