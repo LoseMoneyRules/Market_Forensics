@@ -856,7 +856,7 @@ def add_coverage():
         create_meta["discovery_provenance"] = discovery_provenance
     audit("coverage.create", "coverage", coverage.id, create_meta); db.session.commit()
     enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
-    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 3}, priority=35)
+    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 10}, priority=35)
     if provider_status(g.user.id).get("sec"):
         enqueue_job("SEC_INGEST", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=40)
     else:
