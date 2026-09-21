@@ -613,7 +613,7 @@ def _bulk(user_id: int) -> dict[str, Any]:
         for kind, priority in specs:
             payload = {"coverage_id": coverage.id}
             if kind == "PRICE_HISTORY_REFRESH":
-                payload["lookback_years"] = 3
+                payload["lookback_years"] = 10
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload=payload, priority=priority)
             if getattr(job, "_mf_reused", False): reused += 1
             else: queued += 1
@@ -668,7 +668,7 @@ def _stale(user_id: int) -> dict[str, Any]:
         for kind, priority in specs:
             payload = {"coverage_id": coverage.id}
             if kind == "PRICE_HISTORY_REFRESH":
-                payload["lookback_years"] = 3
+                payload["lookback_years"] = 10
             job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload=payload, priority=priority)
             if getattr(job, "_mf_reused", False):
                 reused += 1
@@ -726,7 +726,7 @@ def _execute(job: Job) -> dict[str, Any]:
         return {"provider": result.provider, "price": result.price, "quality": result.quality, "as_of": result.as_of.isoformat() if result.as_of else None, "evidence": result.payload or {}, "recalculate_job_id": recalc_job_id}
     if kind == "PRICE_HISTORY_REFRESH":
         if not security: raise RuntimeError("Security not found")
-        lookback_years = max(2, min(int((job.payload or {}).get("lookback_years") or 3), 10))
+        lookback_years = max(2, min(int((job.payload or {}).get("lookback_years") or 10), 20))
         return refresh_historical_prices(security, job.user_id, lookback_years)
     if kind == "SEC_INGEST":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))

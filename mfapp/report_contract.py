@@ -10,10 +10,10 @@ from .core_models import (
     HistoricalPrice, HistoricalTestRun, HistoricalTestSample, ManagementAssessment,
     MonitoringHistory, MonitoringRule, Source,
 )
-from .current_financials import annual_rows, current_row
+from .current_financials import annual_history_grid, current_row
 
 
-REPORT_CONTRACT_VERSION = "0.3.1"
+REPORT_CONTRACT_VERSION = "0.3.2"
 
 
 def _n(value: Any) -> float | None:
@@ -41,12 +41,14 @@ def _compact(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
 
 
 def _fundamentals(company_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    history = list(reversed(annual_rows(company_id, 8)))
+    history = list(reversed(annual_history_grid(company_id, target_years=10, display_years=10)))
     out = []
     for row in history:
         metrics = dict(row.get("metrics") or {})
         out.append({
             "period": f"FY{row.get('fiscal_year')}",
+            "missing_year": bool(row.get("missing_year")),
+            "history_status": _text(row.get("history_status") or ("MISSING" if row.get("missing_year") else "STORED")),
             "period_end": _iso(row.get("period_end")),
             "revenue": _n(row.get("revenue")),
             "gross_profit": _n(row.get("gross_profit")),

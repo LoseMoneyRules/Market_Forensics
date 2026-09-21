@@ -10,6 +10,7 @@ from .autofill import _financial_history, _point_in_time_calibration, prefill_co
 from .core_models import FinancialFlow, FinancialPeriod, HistoricalPrice, HistoricalTestRun, HistoricalTestSample, Job, ValuationScenario
 from .extensions import db
 from .jobs import enqueue_job
+from .historical_data import preferred_provider
 from .routes import SECTIONS, _ctx, bp
 from .security import role_required
 from .research_synthesis import valuation_price_history
@@ -41,18 +42,43 @@ def _reference_price(ctx: dict) -> tuple[float | None, str, bool]:
 
 
 def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
+    # Valuation plots the recent 2Y window, but the core cache must retain a 10Y
+    # history for calibration, validation, portfolio correlation and audit.
     history = valuation_price_history(ctx["security"].id, 730)
     today = date.today()
-    cutoff = today - timedelta(days=730)
-    first = date.fromisoformat(history[0]["date"]) if history else None
-    last = date.fromisoformat(history[-1]["date"]) if history else None
-    needs_refresh = (
-        len(history) < 100
-        or first is None
-        or first > cutoff + timedelta(days=75)
-        or last is None
-        or last < today - timedelta(days=10)
+    chart_cutoff = today - timedelta(days=730)
+    chart_first = date.fromisoformat(history[0]["date"]) if history else None
+    chart_last = date.fromisoformat(history[-1]["date"]) if history else None
+    chart_complete = bool(
+        len(history) >= 100
+        and chart_first is not None
+        and chart_first <= chart_cutoff + timedelta(days=75)
+        and chart_last is not None
+        and chart_last >= today - timedelta(days=10)
     )
+
+    provider = preferred_provider(ctx["security"].id)
+    full_query = HistoricalPrice.query.filter_by(security_id=ctx["security"].id)
+    if provider:
+        full_query = full_query.filter(HistoricalPrice.provider == provider)
+    full_rows = full_query.count()
+    full_first = db.session.query(db.func.min(HistoricalPrice.trade_date)).filter(
+        HistoricalPrice.security_id == ctx["security"].id,
+        *([HistoricalPrice.provider == provider] if provider else []),
+    ).scalar()
+    full_last = db.session.query(db.func.max(HistoricalPrice.trade_date)).filter(
+        HistoricalPrice.security_id == ctx["security"].id,
+        *([HistoricalPrice.provider == provider] if provider else []),
+    ).scalar()
+    target_start = today - timedelta(days=366 * 10)
+    core_history_complete = bool(
+        full_rows >= 1000
+        and full_first is not None
+        and full_first <= target_start + timedelta(days=120)
+        and full_last is not None
+        and full_last >= today - timedelta(days=10)
+    )
+    needs_refresh = not (chart_complete and core_history_complete)
 
     active = Job.query.filter(
         Job.user_id == g.user.id,
@@ -71,8 +97,14 @@ def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
     job = active
     cooldown = False
     if needs_refresh and job is None and latest_terminal and latest_terminal.finished_at:
-        elapsed = max(0.0, (datetime.now(timezone.utc).replace(tzinfo=None) - latest_terminal.finished_at).total_seconds())
-        window = 5 * 60 if latest_terminal.status in {"FAILED", "CANCELLED"} else 30 * 60
+        elapsed = max(
+            0.0,
+            (datetime.now(timezone.utc).replace(tzinfo=None) - latest_terminal.finished_at).total_seconds(),
+        )
+        # A successful wide backfill may legitimately be shorter than 10Y for a
+        # newer issuer/provider. Do not thrash the queue: retry weekly, not every
+        # page load. Failed jobs can retry after a short diagnostic cooldown.
+        window = 15 * 60 if latest_terminal.status in {"FAILED", "CANCELLED"} else 7 * 24 * 60 * 60
         cooldown = elapsed < window
         if cooldown:
             job = latest_terminal
@@ -83,16 +115,23 @@ def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
             user_id=g.user.id,
             company_id=ctx["company"].id,
             security_id=ctx["security"].id,
-            payload={"coverage_id": ctx["coverage"].id, "lookback_years": 3},
+            payload={"coverage_id": ctx["coverage"].id, "lookback_years": 10},
             priority=35,
         )
 
     status = {
         "rows": len(history),
-        "first_date": first.isoformat() if first else None,
-        "last_date": last.isoformat() if last else None,
-        "provider": history[-1].get("provider") if history else None,
+        "first_date": chart_first.isoformat() if chart_first else None,
+        "last_date": chart_last.isoformat() if chart_last else None,
+        "provider": history[-1].get("provider") if history else provider,
         "needs_refresh": needs_refresh,
+        "chart_complete": chart_complete,
+        "history_target_years": 10,
+        "history_complete": core_history_complete,
+        "stored_rows": full_rows,
+        "cache_first_date": full_first.isoformat() if full_first else None,
+        "cache_last_date": full_last.isoformat() if full_last else None,
+        "cache_provider": provider,
         "job_id": job.id if job else None,
         "job_status": job.status if job else None,
         "job_error": (job.error_message or "")[:500] if job else "",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from cryptography.fernet import Fernet
@@ -110,10 +110,15 @@ def seed_full_research(app):
         ))
 
         period_rows = []
-        for year, rev, cogs, op, ni, cfo, capex, shares in (
-            (2024, 1000, 420, 220, 150, 240, 60, 100),
-            (2025, 1250, 500, 300, 205, 330, 80, 98),
-        ):
+        for year in range(2016, 2026):
+            step = year - 2016
+            rev = 700 + step * 60
+            cogs = 300 + step * 22
+            op = 120 + step * 15
+            ni = 80 + step * 10
+            cfo = 140 + step * 15
+            capex = 40 + step * 3
+            shares = 108 - step
             period = FinancialPeriod(
                 company_id=company.id, period_type="FY", fiscal_year=year,
                 start_date=date(year, 1, 1), end_date=date(year, 12, 31),
@@ -198,6 +203,8 @@ def test_032_core_research_pages_render_populated_stored_evidence(tmp_path, monk
     assert "FY2025" in fhtml
     assert "No normalized financials stored yet." not in fhtml
     assert "COMPLETE FILED HISTORY" in fhtml
+    assert "10Y history coverage" in fhtml
+    assert "10Y ANNUAL HISTORY GAP" not in fhtml
 
     expectations = client.get("/company/TST/expectations")
     assert expectations.status_code == 200, expectations.data[:1000]
@@ -297,3 +304,218 @@ def test_032_degraded_control_blocks_cached_decision():
     assert lenses["research_conclusion"] == "DATA REVIEW"
     assert lenses["model_confidence"] == "UNVALIDATED"
     assert lenses["thesis_control"] == "CONTROL UNAVAILABLE"
+
+
+
+def test_032_secondary_fundamentals_can_restore_missing_fiscal_years(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "av_history_backfill")
+    with app.app_context():
+        db.create_all()
+        company = Company(
+            legal_name="Backfill Co", display_name="Backfill Co",
+            sector="Industrials", industry="Machinery",
+        )
+        db.session.add(company); db.session.flush()
+        security = Security(
+            company_id=company.id, ticker="BFIL", exchange="NYSE", currency="USD",
+            validation_source="TEST", active=True, is_primary=True,
+        )
+        db.session.add(security); db.session.commit()
+
+        years = list(range(2016, 2026))
+        income = {"annualReports": [{
+            "fiscalDateEnding": f"{year}-12-31", "reportedCurrency": "USD",
+            "totalRevenue": str(1000 + (year - 2016) * 100),
+            "costOfRevenue": str(400 + (year - 2016) * 40),
+            "grossProfit": str(600 + (year - 2016) * 60),
+            "operatingIncome": str(180 + (year - 2016) * 20),
+            "incomeBeforeTax": str(160 + (year - 2016) * 18),
+            "incomeTaxExpense": str(32 + (year - 2016) * 4),
+            "netIncome": str(128 + (year - 2016) * 14),
+        } for year in years], "quarterlyReports": []}
+        balance = {"annualReports": [{
+            "fiscalDateEnding": f"{year}-12-31", "reportedCurrency": "USD",
+            "cashAndCashEquivalentsAtCarryingValue": str(150 + year - 2016),
+            "currentNetReceivables": "120", "inventory": "80",
+            "currentAccountsPayable": "90", "totalAssets": "1800",
+            "totalLiabilities": "700", "totalShareholderEquity": "1100",
+            "shortLongTermDebtTotal": "200",
+        } for year in years], "quarterlyReports": []}
+        cash = {"annualReports": [{
+            "fiscalDateEnding": f"{year}-12-31", "reportedCurrency": "USD",
+            "operatingCashflow": str(220 + (year - 2016) * 20),
+            "capitalExpenditures": str(60 + (year - 2016) * 2),
+        } for year in years], "quarterlyReports": []}
+        payloads = {
+            "INCOME_STATEMENT": income,
+            "BALANCE_SHEET": balance,
+            "CASH_FLOW": cash,
+        }
+
+        monkeypatch.setattr("mfapp.secdata.get_secret", lambda *_args, **_kwargs: "configured")
+        monkeypatch.setattr(
+            "mfapp.secdata._alpha_vantage_statement",
+            lambda function, _ticker, _user_id: payloads[function],
+        )
+
+        from mfapp.secdata import _alpha_vantage_fill_missing
+        from mfapp.current_financials import annual_history_coverage, annual_rows
+
+        result = _alpha_vantage_fill_missing(company, security, 1)
+        db.session.commit()
+
+        assert result["periods_created"] == 10
+        assert result["years_backfilled"] == list(range(2025, 2015, -1))
+        coverage = annual_history_coverage(company.id)
+        assert coverage["complete"] is True
+        assert coverage["missing_years"] == []
+        rows = annual_rows(company.id, 16)
+        assert len(rows) == 10
+        assert all(row["revenue"] is not None for row in rows)
+        assert all(row["fcf"] is not None for row in rows)
+
+
+def test_032_all_core_authenticated_pages_and_apis_render(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "core_surfaces")
+    uid, coverage_id = seed_full_research(app)
+    client = app.test_client(); login(client, uid)
+
+    pages = [
+        "/", "/discovery", "/portfolio", "/portfolio/TST", "/publications",
+        "/settings", "/control", "/trace", "/settings/notifications",
+        "/alerts/email", f"/alerts/subscription/{coverage_id}",
+    ]
+    for path in pages:
+        response = client.get(path, follow_redirects=True)
+        assert response.status_code == 200, (path, response.status_code, response.data[:1000])
+
+    json_paths = [
+        "/jobs/status",
+        "/company/TST/price/live",
+        "/company/TST/price/history/live",
+        "/company/TST/api/surface/overview",
+        "/company/TST/api/surface/business",
+        "/company/TST/api/surface/expectations",
+        "/company/TST/api/surface/valuation",
+        "/company/TST/api/surface/financial-flows",
+        "/company/TST/api/surface/tape",
+        "/company/TST/api/surface/monitoring",
+        "/company/TST/api/surface/audit",
+        "/company/TST/api/surface-detail/overview",
+        "/company/TST/api/surface-detail/expectations",
+        "/company/TST/api/surface-detail/valuation",
+        "/company/TST/api/surface-detail/financial-flows",
+        "/company/TST/api/surface-detail/tape",
+        "/company/TST/api/surface-detail/monitoring",
+        "/company/TST/api/surface-detail/audit",
+    ]
+    for path in json_paths:
+        response = client.get(path)
+        assert response.status_code == 200, (path, response.status_code, response.data[:1000])
+        assert response.is_json, path
+
+    history_payload = client.get("/company/TST/price/history/live").get_json()
+    assert history_payload["cache"]["target_years"] == 10
+
+    pdf = client.get("/company/TST/report/pdf?mode=executive")
+    assert pdf.status_code == 200
+    assert pdf.data.startswith(b"%PDF")
+    docx = client.get("/company/TST/report/docx?mode=full")
+    assert docx.status_code == 200
+    assert docx.data.startswith(b"PK")
+
+
+def test_032_price_history_core_defaults_are_ten_years():
+    from pathlib import Path
+
+    files = {
+        path: Path(path).read_text()
+        for path in (
+            "mfapp/routes.py", "mfapp/routes_edit.py", "mfapp/routes_publish.py",
+            "mfapp/research_routes.py", "mfapp/jobs.py",
+        )
+    }
+    combined = "\n".join(files.values())
+    assert '"lookback_years": 10' in combined
+    assert 'payload["lookback_years"] = 10' in combined
+    assert 'get("lookback_years") or 10' in files["mfapp/jobs.py"]
+    assert '"lookback_years": 3' not in combined
+    assert 'payload["lookback_years"] = 3' not in combined
+
+
+
+def test_032_missing_fiscal_year_is_visible_and_blocks_fundamentals_readiness(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "missing_fy")
+    uid, coverage_id = seed_full_research(app)
+    with app.app_context():
+        gap = FinancialPeriod.query.filter_by(company_id=1, period_type="FY", fiscal_year=2021).first()
+        assert gap is not None
+        NormalizedFinancial.query.filter_by(financial_period_id=gap.id).delete()
+        FinancialFlow.query.filter_by(financial_period_id=gap.id).delete()
+        db.session.delete(gap)
+        db.session.commit()
+
+        from mfapp.current_financials import annual_history_coverage
+        coverage = db.session.get(Coverage, coverage_id)
+        hist = annual_history_coverage(coverage.security.company_id if hasattr(coverage, "security") else db.session.get(Security, coverage.security_id).company_id)
+        assert 2021 in hist["missing_years"]
+        readiness = research_readiness(coverage)
+        fundamentals = next(row for row in readiness["gates"] if row["key"] == "fundamentals")
+        assert fundamentals["evidence_ready"] is False
+        assert 2021 in fundamentals["evidence"]["annual_missing_years"]
+
+        from mfapp.report_contract import _fundamentals
+        report_history, _current = _fundamentals(db.session.get(Security, coverage.security_id).company_id)
+        assert len(report_history) == 10
+        report_gap = next(row for row in report_history if row["period"] == "FY2021")
+        assert report_gap["missing_year"] is True
+        assert report_gap["history_status"] == "MISSING"
+
+    client = app.test_client(); login(client, uid)
+    response = client.get("/company/TST/fundamentals")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "FY2021" in html
+    assert "NOT STORED" in html
+    assert "10Y ANNUAL HISTORY GAP" in html
+
+
+
+def test_032_price_history_falls_through_partial_provider_to_full_ten_year_source(monkeypatch):
+    from mfapp.historical_data import fetch_history
+
+    today = date.today()
+    requested_start = today - timedelta(days=366 * 10 + 45)
+
+    def rows(start, end, step_days, provider):
+        out = []
+        day = start
+        while day <= end:
+            out.append({
+                "trade_date": day,
+                "provider": provider,
+                "close_raw": 100.0,
+                "close_split_adjusted": 100.0,
+                "split_basis_factor": 1.0,
+                "volume": 1_000_000,
+                "quality": "TEST",
+                "payload": {},
+            })
+            day += timedelta(days=step_days)
+        return out
+
+    partial = rows(today - timedelta(days=366 * 3), today, 3, "Alpaca IEX historical")
+    full = rows(requested_start, today, 3, "Tiingo historical")
+
+    monkeypatch.setattr("mfapp.historical_data._alpaca_history", lambda *_args: partial)
+    monkeypatch.setattr("mfapp.historical_data._tiingo_history", lambda *_args: full)
+    monkeypatch.setattr(
+        "mfapp.historical_data._public_history",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("public fallback should not be needed")),
+    )
+
+    result, errors = fetch_history("TST", 1, 10)
+    assert result
+    assert result[0]["provider"] == "Tiingo historical"
+    assert (result[-1]["trade_date"] - result[0]["trade_date"]).days >= 3650
+    assert any("Alpaca: partial historical span" in item for item in errors)

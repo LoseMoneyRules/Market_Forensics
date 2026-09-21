@@ -65,6 +65,106 @@ def annual_rows(company_id: int, limit: int = 15) -> list[dict[str, Any]]:
     return list(reversed(chronological))
 
 
+ANNUAL_HISTORY_TARGET_YEARS = 10
+ANNUAL_HISTORY_DISPLAY_YEARS = 16
+
+
+def _annual_history_coverage_from_rows(
+    rows: list[dict[str, Any]],
+    *,
+    target_years: int = ANNUAL_HISTORY_TARGET_YEARS,
+) -> dict[str, Any]:
+    years = sorted({int(row["fiscal_year"]) for row in rows if row.get("fiscal_year") is not None}, reverse=True)
+    if not years:
+        return {
+            "target_years": target_years, "stored_years": 0, "available_years": [],
+            "target_window": [], "missing_years": [], "complete": False,
+            "oldest_year": None, "latest_year": None, "continuous_span_years": 0,
+        }
+    latest = years[0]
+    target_window = list(range(latest, latest - target_years, -1))
+    available = set(years)
+    missing = [year for year in target_window if year not in available]
+    continuous = 0
+    for year in target_window:
+        if year not in available:
+            break
+        continuous += 1
+    return {
+        "target_years": target_years,
+        "stored_years": len(years),
+        "available_years": years,
+        "target_window": target_window,
+        "missing_years": missing,
+        "complete": len(missing) == 0,
+        "oldest_year": min(years),
+        "latest_year": latest,
+        "continuous_span_years": continuous,
+    }
+
+
+def annual_history_coverage(
+    company_id: int,
+    *,
+    target_years: int = ANNUAL_HISTORY_TARGET_YEARS,
+    display_years: int = ANNUAL_HISTORY_DISPLAY_YEARS,
+) -> dict[str, Any]:
+    rows = annual_rows(company_id, max(target_years, display_years))
+    return _annual_history_coverage_from_rows(rows, target_years=target_years)
+
+
+def annual_history_grid(
+    company_id: int,
+    *,
+    target_years: int = ANNUAL_HISTORY_TARGET_YEARS,
+    display_years: int = ANNUAL_HISTORY_DISPLAY_YEARS,
+) -> list[dict[str, Any]]:
+    """Display annual history without silently compressing missing fiscal years.
+
+    Real normalized rows are preserved exactly. A missing year becomes an explicit
+    placeholder row so the analyst can see the hole instead of reading a chart or
+    table that jumps from one fiscal year to another without warning.
+    """
+    rows = annual_rows(company_id, max(target_years, display_years))
+    if not rows:
+        return []
+    by_year: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        year = int(row.get("fiscal_year") or 0)
+        if year and year not in by_year:
+            by_year[year] = row
+    latest = max(by_year)
+    oldest_actual = min(by_year)
+    target_oldest = latest - max(1, int(target_years)) + 1
+    display_oldest = latest - max(1, int(display_years)) + 1
+    oldest = min(target_oldest, oldest_actual)
+    oldest = max(oldest, display_oldest)
+    out: list[dict[str, Any]] = []
+    for year in range(latest, oldest - 1, -1):
+        row = by_year.get(year)
+        if row is not None:
+            item = dict(row)
+            item["missing_year"] = False
+            item["history_status"] = "STORED"
+            out.append(item)
+            continue
+        out.append({
+            "period_id": None,
+            "period_type": "FY",
+            "fiscal_year": year,
+            "period_end": None,
+            "filed_at": None,
+            "period_label": f"FY{year}",
+            "source_map": {},
+            "quality": {"history_status": "MISSING"},
+            "metrics": {},
+            "missing_year": True,
+            "history_status": "MISSING",
+            **{field: None for field in FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",)},
+        })
+    return out
+
+
 def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
     periods = FinancialPeriod.query.filter(
         FinancialPeriod.company_id == company_id,
@@ -195,7 +295,7 @@ def history_with_current(company_id: int, annual_limit: int = 15) -> list[dict[s
 
 def numbers_completeness(company_id: int) -> dict[str, Any]:
     quarters = quarterly_rows(company_id, 12)
-    annual = annual_rows(company_id, 5)
+    annual = annual_rows(company_id, ANNUAL_HISTORY_DISPLAY_YEARS)
     current = current_row(company_id)
     metrics = dict((current or {}).get("metrics") or {})
 
@@ -266,8 +366,15 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
     unresolved_count = len(set(missing_current) | set(missing_continuity) | set(missing_expected_fields)) + len(missing_derived)
     economic = dict(((current or {}).get("quality") or {}).get("economic_reality") or {})
     economic_ready = bool(economic) and not bool(economic.get("material_unresolved"))
+    annual_history = _annual_history_coverage_from_rows(annual)
     return {
         "annual_count": len(annual),
+        "annual_history_target_years": annual_history["target_years"],
+        "annual_history_stored_years": annual_history["stored_years"],
+        "annual_history_missing_years": annual_history["missing_years"],
+        "annual_history_target_window": annual_history["target_window"],
+        "annual_history_complete": annual_history["complete"],
+        "annual_history_continuous_span_years": annual_history["continuous_span_years"],
         "quarter_count": len(quarters),
         "current_basis": current.get("period_type") if current else None,
         "current_label": current.get("period_label") if current else None,
@@ -284,7 +391,7 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
         "economic_reality_ready": economic_ready,
         "quarter_gaps": quarter_gaps,
         "ttm_ready": ttm_ready,
-        "analysis_ready": bool(ttm_ready and critical_unresolved_count == 0 and economic_ready),
+        "analysis_ready": bool(ttm_ready and critical_unresolved_count == 0 and economic_ready and annual_history["complete"]),
     }
 
 
@@ -343,4 +450,4 @@ def scenario_forecasts(company_id: int, model: ValuationModel | None, years: int
     return {name: forecast_rows(company_id, model, years, name) for name in ("BEAR", "BASE", "BULL")}
 
 
-__all__ = ["annual_rows", "quarterly_rows", "current_row", "history_with_current", "numbers_completeness", "forecast_rows", "scenario_forecasts"]
+__all__ = ["annual_rows", "annual_history_grid", "annual_history_coverage", "quarterly_rows", "current_row", "history_with_current", "numbers_completeness", "forecast_rows", "scenario_forecasts"]

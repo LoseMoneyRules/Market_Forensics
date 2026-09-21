@@ -9,7 +9,7 @@ from flask import Blueprint, abort, current_app, flash, g, redirect, render_temp
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
-from .current_financials import annual_rows, current_row, forecast_rows, history_with_current, numbers_completeness, quarterly_rows, scenario_forecasts
+from .current_financials import annual_history_grid, annual_rows, current_row, forecast_rows, history_with_current, numbers_completeness, quarterly_rows, scenario_forecasts
 from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_context_metrics, tape_series
 from .management_promises import evaluate_promises
 from .extensions import db
@@ -856,7 +856,7 @@ def add_coverage():
         create_meta["discovery_provenance"] = discovery_provenance
     audit("coverage.create", "coverage", coverage.id, create_meta); db.session.commit()
     enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
-    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 3}, priority=35)
+    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 10}, priority=35)
     if provider_status(g.user.id).get("sec"):
         enqueue_job("SEC_INGEST", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=40)
     else:
@@ -944,13 +944,19 @@ def company_section(ticker, section):
             or {"available": False, "classification": "CALCULATING" if ctx.get("cache_pending") else "UNAVAILABLE", "drivers": [], "errors": []}
         )
     elif section == "fundamentals":
-        financials = annual_rows(company.id, 15)
+        financials = annual_rows(company.id, 16)
+        annual_history_rows = annual_history_grid(company.id, target_years=10, display_years=16)
         quarterly_financials = quarterly_rows(company.id, 12)
         current_financial = current_row(company.id)
         forecasts = forecast_rows(company.id, ctx["model"], 3)
         scale_series = [
-            {"label": f"FY{row.get('fiscal_year')}", "revenue": row.get("revenue"), "fcf": row.get("fcf")}
-            for row in reversed(financials)
+            {
+                "label": f"FY{row.get('fiscal_year')}",
+                "revenue": row.get("revenue"),
+                "fcf": row.get("fcf"),
+                "missing_year": bool(row.get("missing_year")),
+            }
+            for row in reversed(annual_history_rows)
         ]
         if current_financial and current_financial.get("period_type") == "TTM":
             scale_series.append({
@@ -993,6 +999,7 @@ def company_section(ticker, section):
 
         extra.update({
             "financials": financials,
+            "annual_history_rows": annual_history_rows,
             "quarterly_financials": quarterly_financials,
             "current_financial": current_financial,
             "economic_reality": economic_reality,

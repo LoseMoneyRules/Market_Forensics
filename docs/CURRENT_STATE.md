@@ -13,6 +13,10 @@
 
 **State-Version: 0.3.2**  
 **Product:** Market Forensics  
+**0.3.2 core-data integrity branch:** `fix/0.3.2-core-data-integrity`, created directly from clean 0.3.2 main `43f15974780f432bc23ac96c0961285b92a7e43f`; VERSION remains 0.3.2.  
+**0.3.2 Fundamentals history rule:** Research targets at least 10 consecutive fiscal years and displays up to 16 stored FY. Missing fiscal years are never silently compressed: tables show explicit NOT STORED rows and charts preserve null gaps. SEC remains canonical; configured Alpha Vantage may create a missing FY or fill missing fields only when SEC-normalized evidence is absent, with provider-level provenance.  
+**0.3.2 historical-price rule:** the core price cache now targets 10Y by default across Coverage, Portfolio, manual refresh and bulk/stale refresh. Valuation may plot a 2Y window, but it audits the underlying 10Y cache. Historical validation can still request its wider explicit lookback independently. Successful partial backfills use a weekly retry cooldown to avoid page-load job thrash.  
+**0.3.2 core-surface regression rule:** the release suite traverses all Research company pages plus Dashboard, Discovery, Portfolio, Publications, Settings, Control, Trace, notification/alert settings, live price/history APIs, research surface APIs, and PDF/DOCX report generation against a populated workspace.  
 **0.3.2 source branch:** `release/0.3.2-research-integrity`, created directly from clean main `60091bbf69caff005df245206313c7b9f5b6dc56`; no patch-on-patch ancestry.  
 **0.3.2 scope:** RESEARCH INTEGRITY RECOVERY — Fundamentals, Expectations, Financial Flows and the rest of Company Research must remain readable from stored MariaDB evidence even if derived readiness/control metadata fails. Decision/approval/publication remain fail-closed.  
 **0.3.2 readiness hardening:** financial-basis and thesis-version timestamps are normalized to UTC-naive comparison semantics before review-reset checks; mixed legacy/driver timezone shapes must never raise during Company GET rendering.  

@@ -654,32 +654,56 @@ def _av_debt(report: dict[str, Any]) -> tuple[Decimal | None, str]:
 
 
 def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: int) -> dict[str, Any]:
-    """Fill only missing normalized facts from an already-configured AV key.
+    """Backfill missing fiscal periods and fields from configured Alpha Vantage.
 
-    SEC facts always win. Matching is by exact fiscal period end date, and every
-    filled value receives explicit Alpha Vantage provenance.
+    SEC remains canonical and always wins. Alpha Vantage is used only when a
+    stored normalized field is missing or the annual history itself has a hole /
+    insufficient depth. Provider-only fiscal periods are fully provenance-tagged
+    and never overwrite an SEC-populated value.
     """
     if not get_secret(user_id, "alpha_vantage_key"):
-        return {"configured": False, "filled": 0, "sources": []}
+        return {
+            "configured": False, "filled": 0, "periods_created": 0,
+            "years_backfilled": [], "sources": [],
+        }
 
-    pairs = (
-        db.session.query(FinancialPeriod, NormalizedFinancial)
-        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
-        .filter(FinancialPeriod.company_id == company.id)
-        .order_by(FinancialPeriod.end_date.desc())
-        .limit(40)
-        .all()
-    )
-    if not pairs:
-        return {"configured": True, "filled": 0, "sources": []}
+    def load_pairs() -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+        return (
+            db.session.query(FinancialPeriod, NormalizedFinancial)
+            .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+            .filter(FinancialPeriod.company_id == company.id)
+            .order_by(FinancialPeriod.end_date.desc())
+            .limit(80)
+            .all()
+        )
+
+    pairs = load_pairs()
+    annual_years = sorted({
+        int(period.fiscal_year) for period, _ in pairs
+        if period.period_type == "FY" and period.fiscal_year is not None
+    }, reverse=True)
+    history_needs_backfill = True
+    if annual_years:
+        latest = annual_years[0]
+        target = set(range(latest, latest - 10, -1))
+        history_needs_backfill = not target.issubset(set(annual_years))
 
     income_fields = tuple(_AV_INCOME_FIELDS)
     balance_fields = tuple(_AV_BALANCE_FIELDS) + ("debt",)
     cash_fields = tuple(_AV_CASH_FIELDS)
     needs = {
-        "INCOME_STATEMENT": any(any(getattr(row, field, None) is None for field in income_fields) for _, row in pairs),
-        "BALANCE_SHEET": any(any(getattr(row, field, None) is None for field in balance_fields) for _, row in pairs),
-        "CASH_FLOW": any(any(getattr(row, field, None) is None for field in cash_fields) for _, row in pairs),
+        "INCOME_STATEMENT": history_needs_backfill or not pairs or any(
+            any(getattr(row, field, None) is None for field in income_fields)
+            for _, row in pairs
+        ),
+        "BALANCE_SHEET": history_needs_backfill or not pairs or any(
+            any(getattr(row, field, None) is None for field in balance_fields)
+            for _, row in pairs
+        ),
+        "CASH_FLOW": history_needs_backfill or not pairs or any(
+            any(getattr(row, field, None) is None for field in cash_fields)
+            for _, row in pairs
+        ),
     }
 
     payloads: dict[str, dict[str, Any]] = {}
@@ -693,6 +717,124 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
         payloads[function] = payload
         sources[function] = _av_source(company, security.ticker, function, payload)
 
+    periods_created = 0
+    years_backfilled: list[int] = []
+
+    # Create an FY period when the year itself is absent from SEC-normalized
+    # history. This closes the previous blind spot where AV could fill fields only
+    # for an already-existing FinancialPeriod but could not restore a missing year.
+    annual_reports_by_end: dict[date, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for function, payload in payloads.items():
+        for report in payload.get("annualReports") or []:
+            try:
+                end_date = date.fromisoformat(str(report.get("fiscalDateEnding") or "")[:10])
+            except Exception:
+                continue
+            annual_reports_by_end[end_date][function] = report
+
+    existing_periods = (
+        FinancialPeriod.query
+        .filter_by(company_id=company.id, period_type="FY")
+        .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
+        .all()
+    )
+    existing_by_end = {period.end_date: period for period in existing_periods}
+    existing_by_year: dict[int, list[FinancialPeriod]] = defaultdict(list)
+    for period in existing_periods:
+        existing_by_year[int(period.fiscal_year)].append(period)
+
+    for end_date in sorted(annual_reports_by_end, reverse=True)[:16]:
+        fiscal_year = end_date.year
+        near_existing = existing_by_end.get(end_date)
+        if near_existing is None:
+            near_existing = next((
+                period for period in existing_by_year.get(fiscal_year, [])
+                if abs((period.end_date - end_date).days) <= 14
+            ), None)
+        if near_existing is not None:
+            continue
+
+        bundle = annual_reports_by_end[end_date]
+        candidates: dict[str, tuple[Decimal, str, str]] = {}
+        for function, report in bundle.items():
+            mapping = (
+                _AV_INCOME_FIELDS if function == "INCOME_STATEMENT"
+                else _AV_BALANCE_FIELDS if function == "BALANCE_SHEET"
+                else _AV_CASH_FIELDS
+            )
+            for field, keys in mapping.items():
+                value = _av_decimal(report, keys)
+                if value is None:
+                    continue
+                if field == "capex":
+                    value = abs(value)
+                provider_field = next(
+                    (key for key in keys if _as_decimal(report.get(key)) is not None),
+                    keys[0],
+                )
+                candidates.setdefault(field, (value, provider_field, function))
+            if function == "BALANCE_SHEET":
+                debt, debt_field = _av_debt(report)
+                if debt is not None:
+                    candidates.setdefault("debt", (debt, debt_field, function))
+        if not candidates:
+            continue
+
+        first_function = next(iter(bundle))
+        first_report = bundle[first_function]
+        source = sources[first_function]
+        period = FinancialPeriod(
+            company_id=company.id,
+            source_id=source.id,
+            period_type="FY",
+            fiscal_year=fiscal_year,
+            end_date=end_date,
+            currency=str(first_report.get("reportedCurrency") or "USD")[:8],
+        )
+        db.session.add(period)
+        db.session.flush()
+        normalized = _normalized(period)
+        source_map: dict[str, Any] = {}
+        for field, (value, provider_field, function) in candidates.items():
+            setattr(normalized, field, value)
+            field_source = sources[function]
+            source_map[field] = {
+                "tag": provider_field,
+                "source_id": field_source.id,
+                "provider": "Alpha Vantage",
+                "method": "MISSING_PERIOD_FALLBACK",
+                "period_end": end_date.isoformat(),
+            }
+            db.session.add(Provenance(
+                source_id=field_source.id,
+                object_type="normalized_financial",
+                object_id=str(period.id),
+                field_name=field,
+                raw_or_normalized="NORMALIZED",
+                financial_period_id=period.id,
+                provider="Alpha Vantage",
+                freshness_at=utcnow(),
+                calculation_version=CALCULATION_VERSION,
+                notes=f"{provider_field} / missing-period fallback / SEC unavailable for FY{fiscal_year}",
+            ))
+        _finish_normalized(normalized, source_map, period_type="FY")
+        quality = dict(normalized.quality or {})
+        quality.update({
+            "provider": "Alpha Vantage historical fallback",
+            "secondary_fundamental_source": "Alpha Vantage",
+            "sec_preferred": True,
+            "provider_only_period": True,
+        })
+        normalized.quality = quality
+        existing_by_end[end_date] = period
+        existing_by_year[fiscal_year].append(period)
+        periods_created += 1
+        years_backfilled.append(fiscal_year)
+
+    if periods_created:
+        db.session.flush()
+        pairs = load_pairs()
+
     filled = 0
     touched: set[int] = set()
     for period, row in pairs:
@@ -701,11 +843,18 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
         source_map = dict(row.source_map or {})
         quality = dict(row.quality or {})
         for function, payload in payloads.items():
-            report = next((item for item in payload.get(period_key, []) if str(item.get("fiscalDateEnding") or "")[:10] == end), None)
+            report = next((
+                item for item in payload.get(period_key, [])
+                if str(item.get("fiscalDateEnding") or "")[:10] == end
+            ), None)
             if not report:
                 continue
             source = sources[function]
-            mapping = _AV_INCOME_FIELDS if function == "INCOME_STATEMENT" else _AV_BALANCE_FIELDS if function == "BALANCE_SHEET" else _AV_CASH_FIELDS
+            mapping = (
+                _AV_INCOME_FIELDS if function == "INCOME_STATEMENT"
+                else _AV_BALANCE_FIELDS if function == "BALANCE_SHEET"
+                else _AV_CASH_FIELDS
+            )
             candidates: list[tuple[str, Decimal, str]] = []
             for field, keys in mapping.items():
                 if getattr(row, field, None) is not None:
@@ -715,7 +864,11 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
                     continue
                 if field == "capex":
                     value = abs(value)
-                candidates.append((field, value, next((key for key in keys if _as_decimal(report.get(key)) is not None), keys[0])))
+                candidates.append((
+                    field,
+                    value,
+                    next((key for key in keys if _as_decimal(report.get(key)) is not None), keys[0]),
+                ))
             if function == "BALANCE_SHEET" and row.debt is None:
                 debt, debt_field = _av_debt(report)
                 if debt is not None:
@@ -754,14 +907,107 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
         if period.id in touched:
             _finish_normalized(row, source_map, period_type=period.period_type)
             quality.update({
-                "provider": "SEC + Alpha Vantage fallback",
+                "provider": "SEC + Alpha Vantage fallback"
+                if not quality.get("provider_only_period")
+                else "Alpha Vantage historical fallback",
                 "secondary_fundamental_source": "Alpha Vantage",
                 "sec_preferred": True,
             })
             row.source_map = source_map
             row.quality = quality
 
-    return {"configured": True, "filled": filled, "sources": sorted(payloads)}
+    return {
+        "configured": True,
+        "filled": filled,
+        "periods_created": periods_created,
+        "years_backfilled": sorted(set(years_backfilled), reverse=True),
+        "sources": sorted(payloads),
+    }
+
+
+def _reconcile_annual_history_issues(company: Company, target_years: int = 10) -> dict[str, Any]:
+    """Persist visible quality issues for annual depth and holes between stored FYs."""
+    rows = (
+        FinancialPeriod.query
+        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+        .filter(FinancialPeriod.company_id == company.id, FinancialPeriod.period_type == "FY")
+        .order_by(FinancialPeriod.fiscal_year.desc(), FinancialPeriod.end_date.desc())
+        .all()
+    )
+    years = sorted({int(row.fiscal_year) for row in rows if row.fiscal_year is not None}, reverse=True)
+    if years:
+        latest, oldest = years[0], years[-1]
+        internal_missing = [
+            year for year in range(latest, oldest - 1, -1)
+            if year not in set(years)
+        ][:16]
+        target_window = list(range(latest, latest - target_years, -1))
+        target_missing = [year for year in target_window if year not in set(years)]
+    else:
+        internal_missing = []
+        target_window = []
+        target_missing = []
+
+    open_gap_issues = DataQualityIssue.query.filter_by(
+        company_id=company.id,
+        object_type="financial_history",
+        code="MISSING_FISCAL_YEAR",
+        status="OPEN",
+    ).all()
+    current_internal = {str(year) for year in internal_missing}
+    for issue in open_gap_issues:
+        if issue.object_id not in current_internal:
+            issue.status = "RESOLVED"
+            issue.resolved_at = utcnow()
+    for year in internal_missing:
+        if not any(issue.object_id == str(year) for issue in open_gap_issues):
+            db.session.add(DataQualityIssue(
+                company_id=company.id,
+                object_type="financial_history",
+                object_id=str(year),
+                code="MISSING_FISCAL_YEAR",
+                severity="REVIEW",
+                message=f"FY{year} is missing between stored fiscal years. Refresh SEC data and configured secondary fundamentals before relying on trend analysis.",
+            ))
+
+    depth = DataQualityIssue.query.filter_by(
+        company_id=company.id,
+        object_type="financial_history",
+        object_id="10Y",
+        code="ANNUAL_HISTORY_DEPTH",
+        status="OPEN",
+    ).first()
+    if len(years) < target_years:
+        if depth is None:
+            db.session.add(DataQualityIssue(
+                company_id=company.id,
+                object_type="financial_history",
+                object_id="10Y",
+                code="ANNUAL_HISTORY_DEPTH",
+                severity="REVIEW",
+                message=(
+                    f"Only {len(years)} fiscal year(s) are stored versus the {target_years}Y research target. "
+                    "This can reflect a shorter issuer history or incomplete provider coverage; review before relying on long-term trends."
+                ),
+            ))
+        else:
+            depth.message = (
+                f"Only {len(years)} fiscal year(s) are stored versus the {target_years}Y research target. "
+                "This can reflect a shorter issuer history or incomplete provider coverage; review before relying on long-term trends."
+            )
+    elif depth is not None:
+        depth.status = "RESOLVED"
+        depth.resolved_at = utcnow()
+
+    return {
+        "target_years": target_years,
+        "stored_years": len(years),
+        "years": years[:16],
+        "target_window": target_window,
+        "target_missing_years": target_missing,
+        "internal_missing_years": internal_missing,
+        "complete": len(years) >= target_years and not target_missing,
+    }
 
 
 
@@ -957,6 +1203,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         quarter_saved += 1
 
     fallback = _alpha_vantage_fill_missing(company, security, user_id)
+    annual_history = _reconcile_annual_history_issues(company, target_years=10)
 
     company.legal_name = meta["name"] or company.legal_name
     company.display_name = meta["name"] or company.display_name
@@ -972,4 +1219,5 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "years": years[-16:], "quarter_periods": [f"FY{fy}-{fp}" for fy, fp in quarter_keys[-24:]],
         "source_id": source.id,
         "fundamental_fallback": fallback,
+        "annual_history": annual_history,
     }

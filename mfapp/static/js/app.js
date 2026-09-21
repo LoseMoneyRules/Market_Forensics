@@ -527,7 +527,10 @@
         if(state){
           const span=(payload.first_date&&payload.last_date)?' · '+payload.first_date+' → '+payload.last_date:'';
           const provider=payload.provider?' · '+payload.provider:'';
-          state.textContent=String(payload.count||0)+' plotted points'+span+provider;
+          const cache=payload.cache||{};
+          const cacheSpan=(cache.first_date&&cache.last_date)?' · core '+cache.first_date+' → '+cache.last_date:'';
+          const cacheCount=cache.count!=null?' · '+String(cache.count)+' cached rows':'';
+          state.textContent=String(payload.count||0)+' plotted 2Y points'+span+provider+cacheCount+cacheSpan;
         }
         if(job && payload.job?.id) job.textContent='Job #'+payload.job.id+' · '+(payload.job.status||'');
         if(Array.isArray(payload.rows)&&payload.rows.length){
@@ -537,7 +540,7 @@
           return;
         }
         if(payload.job?.status==='FAILED'){
-          if(note)note.textContent='Historical price backfill failed: '+(payload.job.error||'provider unavailable')+'. Use Refresh 2Y price history to retry.';
+          if(note)note.textContent='Historical price backfill failed: '+(payload.job.error||'provider unavailable')+'. Use Refresh 10Y price history to retry.';
           return;
         }
         if(priceHistoryPolls<30)window.setTimeout(pollPriceHistory,4000);
