@@ -83,7 +83,7 @@ def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
             user_id=g.user.id,
             company_id=ctx["company"].id,
             security_id=ctx["security"].id,
-            payload={"coverage_id": ctx["coverage"].id, "lookback_years": 3},
+            payload={"coverage_id": ctx["coverage"].id, "lookback_years": 10},
             priority=35,
         )
 
