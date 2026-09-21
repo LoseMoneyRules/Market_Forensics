@@ -642,7 +642,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
-    if scan and scan.get("contract_version") != "FULL_MARKET_FORENSIC_DISCOVERY_V4":
+    if scan and scan.get("contract_version") != "FULL_MARKET_MISPRICING_DISCOVERY_V5":
         return {
             "candidates": [], "long_candidates": [], "short_candidates": [], "watch_candidates": [],
             "candidate_count": 0, "long_count": 0, "short_count": 0, "watch_count": 0,
@@ -728,6 +728,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
         "stage1_scanned_count", "stage1_qualified_count", "stage1_broad_rotation_count",
         "stage1_quiet_broad_count", "stage1_activity_count", "stage1_full_universe_count", "stage1_cursor_start",
         "stage1_cursor_end", "stage1_snapshot_requested_count", "stage1_snapshot_received_count",
+        "stage15_mispricing_count", "stage15_long_count", "stage15_short_count",
         "stage2_selected_count", "stage2_enriched_count", "provider_call_total", "excluded_count",
     ):
         scan[key] = as_int(scan.get(key), 0)
