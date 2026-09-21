@@ -117,3 +117,25 @@ def test_025_flows_full_width_without_redundant_legend():
     for old in ("Operating / bridge", "Profit / retained cash", "Cost / distribution / loss"):
         assert old not in template
     assert "Income Statement" in template and "Cash Flow" in template
+
+
+def test_025_discovery_legibility_and_valuation_visual_legend_contract():
+    discovery = Path("mfapp/templates/discovery.html").read_text()
+    valuation = Path("mfapp/templates/valuation.html").read_text()
+    css = Path("mfapp/static/css/app.css").read_text()
+
+    assert "discovery-list-row" in discovery and "BROAD UNIVERSE DISCOVERY" in discovery
+    assert ".discovery-list-title strong{font-size:15px" in css
+    assert ".discovery-list-title>span:last-child" in css and "font-size:14px" in css
+    assert ".discovery-list-metrics" in css and "font-size:13px" in css
+    assert ".discovery-forensic-signals span{font-size:13px" in css
+    assert ".discovery-method" in css and "font-size:13px" in css
+
+    assert 'class="kpi-grid valuation-scenario-kpis"' in valuation
+    assert 'valuation-kpi-{{ name|lower }}' in valuation
+    assert "valuation-quality-grid" in valuation
+    assert ".valuation-scenario-kpis .valuation-kpi-bear{border-top-color:var(--mf-chart-bear)}" in css
+    assert ".valuation-scenario-kpis .valuation-kpi-base{border-top-color:var(--mf-chart-price)}" in css
+    assert ".valuation-scenario-kpis .valuation-kpi-bull{border-top-color:var(--mf-chart-bull)}" in css
+    assert ".valuation-impact-ledger .valuation-quality-grid{grid-template-columns:repeat(4,minmax(0,1fr))}" in css
+    assert ".chart-key.base i{background:var(--mf-chart-price)}" in css

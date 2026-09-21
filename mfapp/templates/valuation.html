@@ -6,7 +6,7 @@
   {% include "_company_header.html" %}
   {% set section='valuation' %}{% include "_research_tabs.html" %}
 
-  <div class="kpi-grid">{% for name in ['BEAR','BASE','BULL'] %}{% set row=engine_result.get('scenarios',{}).get(name,{}) %}<div class="kpi"><span>{{ name|title }}</span><strong>{{ money(row.get('fair_value')) }}</strong><small>{% if row.get('gap_pct') is not none %}{{ '%+.1f'|format(row.get('gap_pct')|float) }}% vs market{% else %}{{ row.get('quality','PROVISIONAL')|replace('_',' ') }}{% endif %}</small></div>{% endfor %}<div class="kpi accent"><span>Expected value</span><strong>{{ money(engine_result.get('expected_value')) }}</strong><small>Probability weighted</small></div></div>
+  <div class="kpi-grid valuation-scenario-kpis">{% for name in ['BEAR','BASE','BULL'] %}{% set row=engine_result.get('scenarios',{}).get(name,{}) %}<div class="kpi valuation-kpi-{{ name|lower }}"><span>{{ name|title }}</span><strong>{{ money(row.get('fair_value')) }}</strong><small>{% if row.get('gap_pct') is not none %}{{ '%+.1f'|format(row.get('gap_pct')|float) }}% vs market{% else %}{{ row.get('quality','PROVISIONAL')|replace('_',' ') }}{% endif %}</small></div>{% endfor %}<div class="kpi accent valuation-kpi-expected"><span>Expected value</span><strong>{{ money(engine_result.get('expected_value')) }}</strong><small>Probability weighted</small></div></div>
 
   <div class="panel chart-card valuation-history">
     <div class="panel-head"><div><p class="eyebrow">PRICE / VALUE</p><h2>Historical market price vs current scenarios</h2></div><span class="status-chip">2Y context</span></div>
@@ -30,7 +30,7 @@
       <div><p class="eyebrow">QUALITY → VALUATION BRIDGE</p><h2>What actually changed the calculated price?</h2><p class="muted">Every automatic Economic Reality / Company Quality effect is explicit. Positive quality never receives a hidden premium.</p></div>
       <span class="status-chip">{{ cq.get('state','INSUFFICIENT EVIDENCE') }}</span>
     </div>
-    <div class="metric-grid">
+    <div class="metric-grid valuation-quality-grid">
       <div><span>Risk premium</span><strong>+{{ vp.get('risk_premium_bps',0)|int }} bps</strong><small>Auto discount-rate adjustment</small></div>
       <div><span>Growth haircut</span><strong>-{{ vp.get('growth_haircut_bps',0)|int }} bps</strong><small>Auto forward-growth adjustment</small></div>
       <div><span>Terminal haircut</span><strong>-{{ vp.get('terminal_growth_haircut_bps',0)|int }} bps</strong><small>Auto long-run adjustment</small></div>
