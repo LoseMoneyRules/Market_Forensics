@@ -187,9 +187,18 @@ def build_economic_reality(
         and total_liabilities not in (None, 0)
         and operating_leases / total_liabilities >= 0.50
     )
+    debt_source_tag = str(row.get("_debt_source_tag") or "")
+    standard_financing_source = debt_source_tag in {
+        "DebtLongtermAndShorttermCombinedAmount",
+        "LongTermDebtAndFinanceLeaseObligations",
+        "LongTermDebt",
+    }
     if classified_financing:
         base_financing = (financial_debt or 0.0) + (finance_leases or 0.0)
         debt_basis = "CLASSIFIED_FINANCIAL_DEBT_PLUS_FINANCE_LEASES"
+    elif reported_debt is not None and standard_financing_source:
+        base_financing = reported_debt
+        debt_basis = "REPORTED_STANDARD_FINANCING_CONCEPT"
     elif lease_dominant_no_debt:
         # The filing exposes a lease-heavy liability structure but no standard
         # financial-debt concept.  Treat financing debt as zero for the bridge,
@@ -353,7 +362,7 @@ def build_economic_reality(
 
     material_unknown = False
     unresolved: list[str] = []
-    if reported_debt is not None and abs(reported_debt) > 0 and not classified_financing:
+    if reported_debt is not None and abs(reported_debt) > 0 and not classified_financing and not standard_financing_source:
         unresolved.append("Debt composition is unresolved; using reported debt fallback.")
         material_unknown = True
     if total_liabilities not in (None, 0) and reported_debt is None and gross_economic_debt is None and not lease_dominant_no_debt:
