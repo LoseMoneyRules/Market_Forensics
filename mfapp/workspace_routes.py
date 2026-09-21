@@ -57,6 +57,9 @@ def _mutate_research_gate(ticker: str, gate_key: str, action: str):
     if action not in {"approve", "revoke"}:
         return jsonify({"ok": False, "message": "Unsupported readiness action."}), 400
     existing = ResearchGateApproval.query.filter_by(coverage_id=ctx["coverage"].id, gate_key=gate_key).first()
+    prior_evidence_hash = str(existing.evidence_hash or "") if existing else ""
+    was_financial_review = bool(gate.get("financial_review_required"))
+    review_basis = dict((research_readiness(ctx["coverage"]).get("financial_basis") or {}))
     if action == "revoke":
         if existing:
             db.session.delete(existing)
@@ -73,9 +76,27 @@ def _mutate_research_gate(ticker: str, gate_key: str, action: str):
         existing.approved_at = utcnow()
         existing.evidence_hash = gate["evidence_hash"]
         existing.note = str(request.form.get("note") or "")[:240]
-        audit("research_gate.approve", "coverage", ctx["coverage"].id, {"gate": gate_key, "evidence_hash": gate["evidence_hash"]})
+        audit(
+            "research_gate.rereview" if was_financial_review else "research_gate.approve",
+            "coverage",
+            ctx["coverage"].id,
+            {
+                "gate": gate_key,
+                "old_evidence_hash": prior_evidence_hash,
+                "evidence_hash": gate["evidence_hash"],
+                "review_reason": "NEW_FINANCIAL_EVIDENCE" if was_financial_review else "MANUAL_APPROVAL",
+                "financial_basis": review_basis if was_financial_review else {},
+            },
+        )
     db.session.flush()
     fresh_readiness = research_readiness(ctx["coverage"])
+    if was_financial_review and not fresh_readiness.get("review_required"):
+        audit(
+            "research_basis.review_completed",
+            "coverage",
+            ctx["coverage"].id,
+            {"financial_basis": fresh_readiness.get("financial_basis") or review_basis},
+        )
     updated_lenses = patch_research_cache_readiness(ctx["coverage"].id, fresh_readiness)
     db.session.commit()
 
