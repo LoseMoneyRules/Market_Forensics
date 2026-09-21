@@ -898,17 +898,8 @@ def company_section(ticker, section):
             completeness=completeness,
             company_type=company_type,
         )
-        economic_refresh_queued = False
-        if current_financial and not economic_reality and provider_status(g.user.id).get("sec"):
-            sec_job = enqueue_job(
-                "SEC_INGEST",
-                user_id=g.user.id,
-                company_id=company.id,
-                security_id=ctx["security"].id,
-                payload={"coverage_id": coverage.id},
-                priority=40,
-            )
-            economic_refresh_queued = sec_job is not None
+        economic_refresh_queued = bool(ctx.get("economic_reclass_pending"))
+
         extra.update({
             "financials": financials,
             "quarterly_financials": quarterly_financials,
