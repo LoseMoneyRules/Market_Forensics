@@ -260,9 +260,12 @@ UI rules also include:
 - institutional blue;
 - body typography normally 13–14 px;
 - forms around 14 px;
-- micro metadata no smaller than 12 px;
-- chart labels 12–14 px;
+- micro metadata no smaller than 13 px;
+- chart labels 13–14 px;
 - light and dark modes must both remain usable;
+- semantic state color is canonical across all status chips and equivalent state surfaces: positive/approved/strong = green; negative/failed/red-flag = red; watch/review/unresolved = amber; neutral/fair/lateral = gray; informational/running/queued = blue;
+- neutral must never be rendered as caution merely because it is undecided, and dark mode must preserve the same semantic meaning rather than flattening all chips to one generic color;
+- on company/research pages, once the main company header scrolls away, a compact ticker + latest stored/live price remains visible in the top bar so the active security is never ambiguous;
 - desktop problems are not solved only with horizontal scrolling;
 - empty decorative panels should not be rendered;
 - footer remains Lose Money Rules;
