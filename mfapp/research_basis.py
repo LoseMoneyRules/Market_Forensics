@@ -79,6 +79,10 @@ def latest_financial_basis(company_id: int | None) -> dict[str, Any]:
 
     source = db.session.get(Source, period.source_id) if period.source_id else None
     source_meta = dict((source.meta or {}) if source else {})
+    normalized = getattr(period, "normalized", None)
+    materialized_at = period.created_at
+    if normalized is not None and normalized.updated_at is not None and (materialized_at is None or normalized.updated_at > materialized_at):
+        materialized_at = normalized.updated_at
     material = {
         "period_id": period.id,
         "period_type": str(period.period_type or ""),
