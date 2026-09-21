@@ -100,6 +100,13 @@ Core contract:
 - Management execution, Research Evidence, Discovery and Valuation now consume the same Economic Reality definitions rather than maintaining parallel debt/FCF/working-capital interpretations;
 - pre-0.3 valuation/research caches are automatically marked stale by engine-version mismatch so existing Coverage is recalculated through the normal background path after upgrade;
 - Overview exposes Company Quality / alarm bells / strengths; Valuation exposes the Quality → Valuation bridge; PDF/Word carry both;
+- Fundamentals is rebuilt as the accounting evidence room: complete normalized current anatomy, complete annual income/cash-flow and balance-sheet history, derived operating-metric history, quarterly/TTM evidence, working-capital forensics and the full Economic Reality ledger;
+- Fundamentals Forensics is materialized in the Research cache and classifies evidence into strengths, WATCH, RED FLAG, deterministic reconciliation inconsistencies and data/classification gaps; normal GET navigation remains provider-free/heavy-engine-free;
+- deterministic accounting reconciliations (gross-profit bridge, FCF bridge, balance-sheet identity and pretax-to-net-income bridge) are surfaced as REVIEW evidence, never as an allegation of misconduct;
+- current filing and Economic Reality provenance is inspectable from Fundamentals; full visible gaps are separated from decision-critical gaps so optional missing facts are not silently hidden or allowed to block the whole process incorrectly;
+- pre-0.3 Coverage without an Economic Reality snapshot queues a deduplicated SEC re-ingest automatically; reported debt-minus-cash remains visible as reported context but cannot become canonical leverage/EV evidence until classification is materialized;
+- Discovery Stage 2 now follows the same fail-closed rule and no longer restores a raw debt-minus-cash fallback when Economic Reality is absent;
+- Full PDF/Word Research reports carry the materialized Fundamentals forensic strengths, risks, inconsistencies and unresolved gaps;
 - 0.3.0 regressions include a CMG-scale lease-heavy case plus finance leases/supplier finance/enterprise claims, restricted cash, deferred revenue, growth capex, SBC, sector-policy suppression and Discovery accounting-review gating.
 
 No accounting reinterpretation is allowed to erase contractual obligations. Economic Reality exists to prevent category errors in scoring and valuation, not to make liabilities disappear.
