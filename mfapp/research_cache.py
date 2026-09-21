@@ -17,7 +17,8 @@ from .discovery_engine import classify_coverage
 from .management_promises import evaluate_promises
 from .macro_context import macro_context
 from .research_synthesis import build_synthesis
-from .triangulation_engine import apply_peer_valuation_overlay, automatic_triangulation
+from .triangulation_engine import apply_peer_valuation_overlay, legacy_triangulation_from_peer
+from .valuation_forensics import build_valuation_forensics
 from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
@@ -118,8 +119,17 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
 
     market = latest_snapshot(security.id)
     intrinsic_valuation = valuation_result(coverage)
-    triangulation = automatic_triangulation(company.id, coverage.user_id)
+    valuation_forensics = build_valuation_forensics(
+        coverage=coverage,
+        company=company,
+        security=security,
+        model=model,
+        valuation=intrinsic_valuation,
+    )
+    triangulation = legacy_triangulation_from_peer(dict(valuation_forensics.get("peer_analysis") or {}))
     macro = macro_context(company.id)
+    # Compatibility metadata remains visible to older Business views, but the
+    # 0.3.1 peer cross-check never mutates intrinsic Bear/Base/Bull.
     valuation = apply_peer_valuation_overlay(intrinsic_valuation, triangulation)
     readiness = research_readiness(coverage)
 
@@ -200,6 +210,8 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
         "tape": tape,
         "tape_metrics": (tape.get("metrics") or {}),
         "triangulation": triangulation,
+        "valuation_forensics": valuation_forensics,
+        "research_basis": readiness.get("financial_basis") or valuation_forensics.get("financial_basis") or {},
         "macro": macro,
         "synthesis": synthesis,
         "discovery_labels": discovery_labels,
