@@ -107,6 +107,10 @@ def _metric_map(coverage: Coverage) -> dict[str, float | None]:
         "current_price": _num(market.price) if market else None,
         "revenue": _num(current.get("revenue")),
         "fcf": _num(current.get("fcf")),
+        "reported_fcf": _num(current.get("fcf")),
+        "fcf_after_sbc": _num(metrics.get("fcf_after_sbc")),
+        "owner_cash_proxy": _num(metrics.get("owner_cash_proxy")),
+        "economic_net_debt": _num(metrics.get("economic_net_debt")),
         "net_income": _num(current.get("net_income")),
         "bear": _num(valuation.get("bear")),
         "base": _num(valuation.get("base")),
@@ -250,7 +254,7 @@ def evaluate_coverage(coverage_id: int, user_id: int) -> dict[str, Any]:
         status = "FAIL" if triggered else "OK"
         if not last or last_status != status or (utcnow() - last.observed_at) >= timedelta(hours=prefs["cooldown_hours"]):
             db.session.add(MonitoringHistory(rule_id=rule.id, observed_value=observed, status=status,
-                                             note="Automatic 0.2.0 monitoring evaluation"))
+                                             note="Automatic 0.3.0 monitoring evaluation"))
             db.session.commit()
         if triggered:
             results.append(_emit_alert(
@@ -349,9 +353,23 @@ def monitoring_interpretation(coverage: Coverage) -> dict[str, Any]:
         add("Revenue direction", "BULLISH" if growth > 0 else ("BEARISH" if growth < 0 else "NEUTRAL"),
             f"Current revenue growth {growth:+.1f}%.", "Flip direction when filing evidence crosses the committed growth threshold, not on price action.")
     fcf_margin = _num(metrics.get("fcf_margin_pct"))
+    suppressions = set(metrics.get("economic_reality_suppressions") or [])
+    owner_cash = _num(metrics.get("owner_cash_proxy"))
+    fcf_after_sbc = _num(metrics.get("fcf_after_sbc"))
+    reported_fcf = _num(current.get("fcf"))
     if fcf_margin is not None:
-        add("Cash conversion", "BULLISH" if fcf_margin > 0 else ("BEARISH" if fcf_margin < 0 else "NEUTRAL"),
-            f"Current FCF margin {fcf_margin:+.1f}%.", "A sustained threshold breach or recovery should change the evidence state.")
+        if "NEGATIVE_FCF_AUTOMATIC" in suppressions and reported_fcf is not None and reported_fcf < 0 and owner_cash is not None and owner_cash > 0:
+            add("Cash conversion", "NEUTRAL",
+                f"Reported FCF margin {fcf_margin:+.1f}% includes material growth reinvestment; owner-cash proxy remains positive at {owner_cash:,.0f}.",
+                "Treat deterioration as bearish only if owner-cash/reinvestment economics also weaken.")
+        elif "FCF_POSITIVE_UNADJUSTED" in suppressions and fcf_after_sbc is not None:
+            adjusted_margin = (fcf_after_sbc / _num(current.get("revenue")) * 100.0) if _num(current.get("revenue")) not in (None, 0) else None
+            state = "BULLISH" if adjusted_margin is not None and adjusted_margin > 0 else "BEARISH"
+            detail = f"Reported FCF margin {fcf_margin:+.1f}%; FCF after SBC {fcf_after_sbc:,.0f}" + (f" ({adjusted_margin:+.1f}% of revenue)." if adjusted_margin is not None else ".")
+            add("Cash conversion", state, detail, "Monitor the post-SBC cash basis, not reported FCF alone.")
+        else:
+            add("Cash conversion", "BULLISH" if fcf_margin > 0 else ("BEARISH" if fcf_margin < 0 else "NEUTRAL"),
+                f"Current FCF margin {fcf_margin:+.1f}%.", "A sustained threshold breach or recovery should change the evidence state.")
 
     finra = finra_stored_summary(security.company_id)
     s5 = _num(finra.get("daily_5d_short_pct")); s20 = _num(finra.get("daily_20d_short_pct"))
