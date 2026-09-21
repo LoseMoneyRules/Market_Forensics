@@ -67,8 +67,11 @@
 **Verified opportunity-funnel PR CI:** run `35469153142` / #1116 = completed / success on `55f59f3fdc9099491110bfd7c72a16ade52eb281`.  
 **Accepted opportunity-funnel merge:** `adfd99593f6db378cf8cf99a41976a2e85c6c49d`.  
 **Verified opportunity-funnel post-merge main CI:** run `35469221771` / #1117 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
-**Release phase:** 0.3.0 Economic Reality + Company Quality is the active source release. PR #48 carries the 0.3.0 implementation from clean 0.2.14 main; merge, post-merge CI and Namecheap production remain independently verified states. The top-level Production line is canonical for what is actually live.
-**Verified 0.3.0 implementation head before final state sync:** `a353405daae22639ac0f64d8c885163eaadbba00`; branch push CI run `35609226334` / #1385 and PR CI run `35609233776` / #1386 both completed successfully, including release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke.  
+**Release phase:** 0.3.0 Economic Reality + Company Quality is merged to `main`. Namecheap production remains a separately verified state until explicit manual deploy; the top-level Production line is canonical for what is actually live.  
+**0.3.0 pull request:** #48 `0.3.0: Economic Reality, Company Quality & Valuation Integrity` = merged by squash.  
+**0.3.0 verified source candidate:** branch head `a927a99e2f7cc8429ec5fdb2cd16e455eb77dea3`; final branch push CI #1387 / run `35609399031` and PR CI #1388 / run `35609405574` completed successfully, including release tests, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke.  
+**0.3.0 merge commit:** `400cfab8c2a286208a1a77194d97e09a2a432900`.  
+**Verified 0.3.0 post-merge main CI:** run `35610326560` / #1389 = completed / success on `400cfab8c2a286208a1a77194d97e09a2a432900`; release suite, Python/YAML/JavaScript checks, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke all passed.  
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
