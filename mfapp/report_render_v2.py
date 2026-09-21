@@ -520,6 +520,69 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     for warning in (valuation.get("warnings") or [])[:4]:
         story.append(Paragraph("WATCH - " + escape(_txt(warning, 420)), styles["MFSmall"]))
 
+    vf = data.get("valuation_forensics") or {}
+    if vf:
+        bridge = vf.get("multiple_bridge") or {}
+        rerating = vf.get("rerating_conditions") or {}
+        peers = vf.get("peer_analysis") or {}
+        peer_adj = peers.get("peer_adjusted") or {}
+        tri = vf.get("triangulation") or {}
+        market_read = vf.get("market_read") or {}
+        timeline = vf.get("catalyst_timeline") or {}
+        section("Re-rating / peer triangulation", "Why this multiple today — and what could close the gap")
+        story.append(Paragraph("<b>MARKET READ</b> - " + escape(_txt(market_read.get("conclusion"), 700)), styles["MFBody"]))
+        if bridge.get("available"):
+            rows = [["Lens","Historical","Current","Justified range","Unexplained"]]
+            rows.append([
+                bridge.get("multiple_label"),
+                _num(bridge.get("historical_reference"),2,"x"),
+                _num(bridge.get("current_multiple"),2,"x"),
+                _num(bridge.get("justified_low"),2,"x")+" - "+_num(bridge.get("justified_high"),2,"x"),
+                _num(bridge.get("unexplained_gap"),2,"x"),
+            ])
+            story.append(rule_table(rows, widths=[1.25*inch,1.1*inch,1.0*inch,1.65*inch,1.3*inch]))
+            brow=[["Driver","Current","Historical","Effect","Status"]]
+            for item in (bridge.get("items") or [])[:9]:
+                brow.append([
+                    item.get("label"), _num(item.get("current"),2), _num(item.get("historical"),2),
+                    _num(item.get("estimated_multiple_effect"),2,"x"), item.get("status"),
+                ])
+            story.append(rule_table(brow, widths=[1.55*inch,1.0*inch,1.0*inch,1.0*inch,2.0*inch], font_style="MFCellSmall"))
+        if rerating.get("conditions"):
+            rows=[["Re-rating condition","Current","Reference","State"]]
+            for item in (rerating.get("conditions") or [])[:9]:
+                rows.append([item.get("label"),_num(item.get("current"),2),_num(item.get("target"),2),item.get("status")])
+            story.append(rule_table(rows,widths=[2.2*inch,1.1*inch,1.2*inch,2.0*inch],font_style="MFCellSmall"))
+        if peers.get("peers"):
+            rows=[["Peer","Fit","Score","P/E","EV/EBIT","EV/Sales","P/FCF"]]
+            for item in (peers.get("peers") or [])[:8]:
+                rows.append([
+                    item.get("ticker"),item.get("comparability"),_num(item.get("similarity_score"),0),
+                    _num(item.get("pe"),1,"x"),_num(item.get("ev_ebit"),1,"x"),_num(item.get("ev_sales"),2,"x"),_num(item.get("p_fcf"),1,"x"),
+                ])
+            story.append(rule_table(rows,widths=[.65*inch,1.15*inch,.55*inch,.7*inch,.8*inch,.85*inch,.75*inch],font_style="MFCellSmall"))
+        if peer_adj.get("available"):
+            story.append(Paragraph(
+                "<b>PEER-ADJUSTED MULTIPLE</b> - peer median "+escape(_num(peer_adj.get("peer_median"),2,"x"))+
+                " | justified "+escape(_num(peer_adj.get("justified_low"),2,"x"))+"-"+escape(_num(peer_adj.get("justified_high"),2,"x"))+
+                " | current "+escape(_num(peer_adj.get("current_multiple"),2,"x"))+
+                " | relative gap "+escape(_pct(peer_adj.get("relative_gap_pct"))),
+                styles["MFBody"],
+            ))
+        if tri.get("methods"):
+            rows=[["Method","Value","Basis"]]
+            for item in tri.get("methods") or []:
+                rows.append([item.get("method"),_money(item.get("value")),item.get("basis")])
+            story.append(rule_table(rows,widths=[2.2*inch,1.3*inch,3.0*inch]))
+            story.append(Paragraph("<b>"+escape(_txt(tri.get("state")))+"</b> - "+escape(_txt(tri.get("rule"),450)),styles["MFSmall"]))
+        two_for=" | ".join(_txt(x,220) for x in (market_read.get("market_may_be_getting_wrong") or [])[:4]) or "No independent evidence currently clears this bar."
+        two_against=" | ".join(_txt(x,220) for x in (market_read.get("market_may_be_getting_right") or [])[:4]) or "No independent counter-evidence currently clears this bar."
+        debate=Table([[rich("<b>MARKET MAY BE WRONG</b><br/>"+escape(two_for),"MFBody"),rich("<b>MARKET MAY BE RIGHT</b><br/>"+escape(two_against),"MFBody")]],colWidths=[3.25*inch,3.25*inch])
+        debate.setStyle(TableStyle([("BOX",(0,0),(-1,-1),.35,colors.HexColor(LINE)),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]))
+        story.extend([debate,Spacer(1,4)])
+        window=timeline.get("decision_window") or {}
+        story.append(Paragraph("<b>"+escape(_txt(window.get("state") or "NO URGENCY"))+"</b> - "+escape(_txt(window.get("reason"),550))+" "+escape(_txt(window.get("discipline"))),styles["MFBody"]))
+
     policy = valuation.get("valuation_policy") or {}
     ledger = valuation.get("valuation_impact_ledger") or []
     section("Quality → valuation", "Explicit automatic price adjustments")
@@ -1042,6 +1105,36 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         p=doc.add_paragraph();r=p.add_run("PROVISIONAL VALUATION. ");r.bold=True;r.font.color.rgb=rgb(CAUTION);p.add_run("Stored targets remain visible but are not decision-grade intrinsic evidence until the quality issue is resolved.")
     for warning in (valuation.get("warnings") or [])[:4]:
         p=doc.add_paragraph("WATCH - "+_txt(warning,420));p.style=styles["Normal"]
+
+    vf=data.get("valuation_forensics") or {}
+    if vf:
+        bridge=vf.get("multiple_bridge") or {};rr=vf.get("rerating_conditions") or {};peers=vf.get("peer_analysis") or {};pa=peers.get("peer_adjusted") or {};tri=vf.get("triangulation") or {};mr=vf.get("market_read") or {};timeline=vf.get("catalyst_timeline") or {}
+        heading("Re-rating / peer triangulation",1,"Why this multiple today — and what could close the gap")
+        p=doc.add_paragraph();p.add_run("MARKET READ · ").bold=True;p.add_run(_txt(mr.get("conclusion"),800))
+        if bridge.get("available"):
+            add_table(["Lens","Historical","Current","Justified range","Unexplained"],[[
+                bridge.get("multiple_label"),_num(bridge.get("historical_reference"),2,"x"),_num(bridge.get("current_multiple"),2,"x"),
+                _num(bridge.get("justified_low"),2,"x")+" - "+_num(bridge.get("justified_high"),2,"x"),_num(bridge.get("unexplained_gap"),2,"x")
+            ]],small=True)
+            add_table(["Driver","Current","Historical","Effect","Status"],[[
+                item.get("label"),_num(item.get("current"),2),_num(item.get("historical"),2),_num(item.get("estimated_multiple_effect"),2,"x"),item.get("status")
+            ] for item in (bridge.get("items") or [])[:9]],small=True)
+        if rr.get("conditions"):
+            add_table(["Re-rating condition","Current","Reference","State"],[[
+                item.get("label"),_num(item.get("current"),2),_num(item.get("target"),2),item.get("status")
+            ] for item in (rr.get("conditions") or [])[:9]],small=True)
+        if peers.get("peers"):
+            add_table(["Peer","Fit","Score","P/E","EV/EBIT","EV/Sales","P/FCF"],[[
+                item.get("ticker"),item.get("comparability"),_num(item.get("similarity_score"),0),_num(item.get("pe"),1,"x"),_num(item.get("ev_ebit"),1,"x"),_num(item.get("ev_sales"),2,"x"),_num(item.get("p_fcf"),1,"x")
+            ] for item in (peers.get("peers") or [])[:8]],small=True)
+        if pa.get("available"):
+            p=doc.add_paragraph("Peer-adjusted multiple: peer median "+_num(pa.get("peer_median"),2,"x")+" | justified "+_num(pa.get("justified_low"),2,"x")+"-"+_num(pa.get("justified_high"),2,"x")+" | current "+_num(pa.get("current_multiple"),2,"x")+" | relative gap "+_pct(pa.get("relative_gap_pct")))
+            for run in p.runs:run.font.size=Pt(9)
+        if tri.get("methods"):
+            add_table(["Method","Value","Basis"],[[item.get("method"),_money(item.get("value")),item.get("basis")] for item in tri.get("methods") or []],small=True)
+        two_panel("MARKET MAY BE WRONG"," | ".join(_txt(x,220) for x in (mr.get("market_may_be_getting_wrong") or [])[:4]) or "No independent evidence currently clears this bar.","MARKET MAY BE RIGHT"," | ".join(_txt(x,220) for x in (mr.get("market_may_be_getting_right") or [])[:4]) or "No independent counter-evidence currently clears this bar.")
+        window=timeline.get("decision_window") or {}
+        p=doc.add_paragraph();p.add_run(_txt(window.get("state") or "NO URGENCY")+" · ").bold=True;p.add_run(_txt(window.get("reason"),600)+" "+_txt(window.get("discipline")))
 
     heading("Quality → valuation",1,"Explicit automatic price adjustments")
     policy=valuation.get("valuation_policy") or {};ledger=valuation.get("valuation_impact_ledger") or []
