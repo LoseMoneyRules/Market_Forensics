@@ -425,6 +425,18 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     ]))
     story.extend([ev, Spacer(1,4)])
 
+    company_quality = data.get("company_quality") or valuation.get("company_quality") or {}
+    if company_quality:
+        alarms = list(company_quality.get("alarm_bells") or [])
+        strengths = list(company_quality.get("strengths") or [])
+        quality_rows = [
+            ["Company quality", _txt(company_quality.get("state") or "INSUFFICIENT EVIDENCE") + "  |  " + _txt(company_quality.get("headline"), 250)],
+            ["Alarm bells", " | ".join(_txt(x.get("detail"), 150) for x in alarms[:2]) or "No material automatic alarm bell."],
+            ["Strengths", " | ".join(_txt(x.get("detail"), 150) for x in strengths[:2]) or "No automatic strength clears the threshold yet."],
+        ]
+        story.append(rule_table(quality_rows, widths=[1.0*inch,5.55*inch], header=False))
+        story.append(Spacer(1,4))
+
     tape = data.get("tape") or {}
     tm = tape.get("metrics") or {}
     catalysts = data.get("catalysts") or []
@@ -508,6 +520,23 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     for warning in (valuation.get("warnings") or [])[:4]:
         story.append(Paragraph("WATCH - " + escape(_txt(warning, 420)), styles["MFSmall"]))
 
+    policy = valuation.get("valuation_policy") or {}
+    ledger = valuation.get("valuation_impact_ledger") or []
+    section("Quality → valuation", "Explicit automatic price adjustments")
+    kpi_strip([
+        ("Company quality", _txt((valuation.get("company_quality") or {}).get("state") or "INSUFFICIENT EVIDENCE"), NAVY),
+        ("Risk premium", "+" + str(int(_n(policy.get("risk_premium_bps")) or 0)) + " bps", NAVY),
+        ("Growth haircut", "-" + str(int(_n(policy.get("growth_haircut_bps")) or 0)) + " bps", NAVY),
+        ("Terminal haircut", "-" + str(int(_n(policy.get("terminal_growth_haircut_bps")) or 0)) + " bps", NAVY),
+        ("Bear probability", "+" + str(int(_n(policy.get("bear_probability_shift_pts")) or 0)) + " pts", NAVY),
+    ], 5)
+    if ledger:
+        rows = [["Item","Effect","Impact","Reason"]]
+        for item in ledger[:10]:
+            rows.append([item.get("item"), _txt(item.get("effect")).replace("_"," "), item.get("impact"), _txt(item.get("reason"),280)])
+        story.append(rule_table(rows, widths=[1.35*inch,1.05*inch,1.75*inch,2.4*inch], font_style="MFCellSmall"))
+    story.append(Paragraph("Positive company quality receives no automatic premium. Reported operating strength already enters through growth, margins, returns and cash flows.", styles["MFSmall"]))
+
     section("Thesis / variant", "Why the market may be wrong")
     story.append(quad)
     if thesis.get("variant_evidence"):
@@ -542,6 +571,19 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
             story.append(Paragraph("<b>BLOCKER</b> - "+escape(_txt(item,360)), styles["MFSmall"]))
         for item in (evidence.get("warnings") or [])[:4]:
             story.append(Paragraph("<b>WATCH</b> - "+escape(_txt(item,360)), styles["MFSmall"]))
+
+    section("Company quality", "Is the economic engine actually good?")
+    cq = data.get("company_quality") or {}
+    if cq:
+        story.append(Paragraph("<b>"+escape(_txt(cq.get("state")))+"</b> - "+escape(_txt(cq.get("headline"),520)), styles["MFBody"]))
+        qrows = [["Dimension","State","Read"]]
+        for d in cq.get("dimensions") or []:
+            qrows.append([d.get("label"), _txt(d.get("state")).replace("_"," "), _txt(d.get("detail"),300)])
+        story.append(rule_table(qrows, widths=[1.45*inch,1.0*inch,4.1*inch], font_style="MFCellSmall"))
+        for flag in (cq.get("alarm_bells") or [])[:6]:
+            story.append(Paragraph("<b>ALARM · "+escape(_txt(flag.get("severity")))+"</b> - "+escape(_txt(flag.get("detail"),380)), styles["MFSmall"]))
+    else:
+        story.append(P("Company-quality evidence is not materialized yet."))
 
     section("Business", "Operating reality")
     story.append(P((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
@@ -931,6 +973,16 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     against="\n".join("- "+_txt(r.get("label"))+": "+_txt(r.get("detail"),180) for r in (evidence.get("against") or [])[:4]) or "-"
     two_panel("FOR",fort,"AGAINST",against,"EDF7F1","FBEFEF")
 
+    company_quality=data.get("company_quality") or valuation.get("company_quality") or {}
+    if company_quality:
+        alarms=list(company_quality.get("alarm_bells") or [])
+        strengths=list(company_quality.get("strengths") or [])
+        add_table([],[
+            ["Company quality",_txt(company_quality.get("state"))+" | "+_txt(company_quality.get("headline"),300)],
+            ["Alarm bells"," | ".join(_txt(x.get("detail"),160) for x in alarms[:2]) or "No material automatic alarm bell."],
+            ["Strengths"," | ".join(_txt(x.get("detail"),160) for x in strengths[:2]) or "No automatic strength clears the threshold yet."],
+        ])
+
     tape=data.get("tape") or {};tm=tape.get("metrics") or {};cats=data.get("catalysts") or [];next_cat=cats[0] if cats else {};mon=data.get("monitoring") or {}
     add_table([],[
         ["Tape",f"Regime {_txt(tm.get('regime'))} | Rank {_txt(tm.get('rank'))} | Confidence {_txt(tm.get('confidence'))} | Net Tape {_num(tm.get('net_tape'),0)}"],
@@ -973,6 +1025,20 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     for warning in (valuation.get("warnings") or [])[:4]:
         p=doc.add_paragraph("WATCH - "+_txt(warning,420));p.style=styles["Normal"]
 
+    heading("Quality → valuation",1,"Explicit automatic price adjustments")
+    policy=valuation.get("valuation_policy") or {};ledger=valuation.get("valuation_impact_ledger") or []
+    kpis([
+        ("Company quality",_txt((valuation.get("company_quality") or {}).get("state") or "INSUFFICIENT EVIDENCE"),NAVY),
+        ("Risk premium","+"+str(int(_n(policy.get("risk_premium_bps")) or 0))+" bps",NAVY),
+        ("Growth haircut","-"+str(int(_n(policy.get("growth_haircut_bps")) or 0))+" bps",NAVY),
+        ("Terminal haircut","-"+str(int(_n(policy.get("terminal_growth_haircut_bps")) or 0))+" bps",NAVY),
+        ("Bear probability","+"+str(int(_n(policy.get("bear_probability_shift_pts")) or 0))+" pts",NAVY),
+    ],5)
+    if ledger:
+        add_table(["Item","Effect","Impact","Reason"],[[r.get("item"),_txt(r.get("effect")).replace("_"," "),r.get("impact"),_txt(r.get("reason"),300)] for r in ledger[:10]],small=True)
+    p=doc.add_paragraph("Positive company quality receives no automatic premium. Observed operating strength already enters through growth, margins, returns and cash flows.")
+    for r in p.runs:r.font.size=Pt(8.5);r.font.color.rgb=rgb(MUTED)
+
     heading("Thesis / variant",1,"Why the market may be wrong")
     two_panel("MARKET VIEW",_txt(thesis.get("market_view"),800),"OUR VIEW / VARIANT",_txt(thesis.get("our_view"),800))
     two_panel("WHAT MUST BE TRUE",must,"WHAT WOULD PROVE US WRONG",wrong)
@@ -993,6 +1059,16 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
 
     heading("Evidence for / against",1,"Research evidence")
     two_panel("FOR",fort,"AGAINST",against,"EDF7F1","FBEFEF")
+
+    heading("Company quality",1,"Is the economic engine actually good?")
+    cq=data.get("company_quality") or {}
+    if cq:
+        p=doc.add_paragraph();r=p.add_run(_txt(cq.get("state"))+" · ");r.bold=True;p.add_run(_txt(cq.get("headline"),600))
+        add_table(["Dimension","State","Read"],[[d.get("label"),_txt(d.get("state")).replace("_"," "),_txt(d.get("detail"),320)] for d in (cq.get("dimensions") or [])],small=True)
+        for flag in (cq.get("alarm_bells") or [])[:6]:
+            p=doc.add_paragraph();r=p.add_run("ALARM · "+_txt(flag.get("severity"))+" · ");r.bold=True;p.add_run(_txt(flag.get("detail"),420))
+    else:
+        doc.add_paragraph("Company-quality evidence is not materialized yet.")
 
     heading("Business",1,"Operating reality")
     doc.add_paragraph(_txt((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
