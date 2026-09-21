@@ -246,11 +246,23 @@ Price movement by itself does not validate or invalidate a fundamental thesis.
 
 Position additions must be justified by improved evidence, not merely by a lower share price.
 
-### 3.13 Invalidation is fixed before investment
+### 3.13 Invalidation is immutable per thesis version
 
-Numerical thesis invalidation thresholds are set before investment and are not rewritten after earnings or price movement to preserve the narrative.
+Thesis invalidation is a Research control tied to a specific Core Thesis version, not a permanent field that can never change again.
 
-A locked pre-investment invalidation cannot be silently changed retroactively.
+For the **current thesis version**:
+- the invalidation may be drafted while Research is still open;
+- once locked, it cannot be edited, softened or rewritten retroactively after earnings, price movement or contrary evidence;
+- Monitoring is not evidence-ready for Process Readiness until the current thesis has a non-empty **locked** invalidation.
+
+If the analyst genuinely changes the **Core Thesis**, Market Forensics must treat that as a new thesis version:
+- archive the prior thesis and its invalidation together in Research history;
+- preserve the old locked invalidation exactly as it was;
+- clear/unlock only the live invalidation field for the new thesis;
+- require a new invalidation to be written and locked for the new thesis;
+- reopen the Thesis / Variant and Monitoring approvals for human review.
+
+Changing only price, valuation, wording around the same thesis, or the outcome of a single data point is **not** permission to rewrite a locked invalidation. A thesis revision must be explicit and auditable.
 
 ### 3.14 Research and Portfolio remain separate
 
