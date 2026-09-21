@@ -11,6 +11,7 @@ import requests
 from .extensions import db
 from .data_providers import get_secret
 from .core_models import Company, DataQualityIssue, FinancialPeriod, NormalizedFinancial, Provenance, RawFinancialFact, Security, Source
+from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality
 
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
@@ -70,6 +71,70 @@ DEBT_NONCURRENT_TAGS = [
 ]
 DEBT_SHORT_TERM_TAGS = ["ShortTermBorrowings", "ShortTermDebt", "CommercialPaper"]
 DEBT_COMBINED_TAGS = {"DebtLongtermAndShorttermCombinedAmount", "LongTermDebtAndFinanceLeaseObligations"}
+
+
+def _economic_maps_annual(companyfacts: dict, fiscal_year_end: str) -> tuple[dict, dict]:
+    duration = {
+        key: _annual_duration(companyfacts, list(tags), fiscal_year_end)
+        for key, tags in ECONOMIC_DURATION_TAGS.items()
+    }
+    instant = {
+        key: _annual_instant(companyfacts, list(tags), fiscal_year_end=fiscal_year_end)
+        for key, tags in ECONOMIC_INSTANT_TAGS.items()
+    }
+    return duration, instant
+
+
+def _economic_maps_quarter(companyfacts: dict, fiscal_year_end: str) -> tuple[dict, dict]:
+    duration: dict[str, dict] = {}
+    for key, tags in ECONOMIC_DURATION_TAGS.items():
+        annual = _annual_duration(companyfacts, list(tags), fiscal_year_end)
+        duration[key] = _quarter_duration_values(
+            companyfacts, list(tags), annual, fiscal_year_end=fiscal_year_end
+        )
+    instant = {
+        key: _quarter_instants(companyfacts, list(tags), fiscal_year_end=fiscal_year_end)
+        for key, tags in ECONOMIC_INSTANT_TAGS.items()
+    }
+    return duration, instant
+
+
+def _economic_fact_bundle(duration: dict, instant: dict, key: Any) -> tuple[dict, dict]:
+    facts: dict[str, Any] = {}
+    sources: dict[str, Any] = {}
+    for field, rows in duration.items():
+        info = rows.get(key) or {}
+        record = info.get("record") if isinstance(info, dict) and "record" in info else info
+        value = info.get("value") if isinstance(info, dict) and "value" in info else _as_decimal((record or {}).get("val"))
+        if value is not None:
+            facts[field] = value
+            sources[field] = {
+                "tag": (record or {}).get("tag"),
+                "accession": (record or {}).get("accn"),
+                "filed": (record or {}).get("filed"),
+                "namespace": (record or {}).get("_mf_namespace") or (record or {}).get("namespace") or "us-gaap",
+            }
+    for field, rows in instant.items():
+        record = rows.get(key) or {}
+        value = _as_decimal(record.get("val"))
+        if value is not None:
+            facts[field] = value
+            sources[field] = {
+                "tag": record.get("tag"),
+                "accession": record.get("accn"),
+                "filed": record.get("filed"),
+                "namespace": record.get("_mf_namespace") or record.get("namespace") or "us-gaap",
+            }
+    return facts, sources
+
+
+def _economic_row_dict(row: NormalizedFinancial) -> dict[str, Any]:
+    fields = (
+        "revenue", "operating_income", "pretax_income", "income_tax", "cfo", "capex", "fcf",
+        "cash", "debt", "liabilities", "equity",
+    )
+    return {field: getattr(row, field, None) for field in fields}
+
 
 
 def _normalize_label(value: Any) -> str:
@@ -456,7 +521,13 @@ def _normalized(period: FinancialPeriod) -> NormalizedFinancial:
     return row
 
 
-def _finish_normalized(row: NormalizedFinancial, source_map: dict[str, Any], *, period_type: str) -> None:
+def _finish_normalized(
+    row: NormalizedFinancial,
+    source_map: dict[str, Any],
+    *,
+    period_type: str,
+    economic_reality: dict[str, Any] | None = None,
+) -> None:
     # Preserve direct filing facts first, then fill only exact accounting bridges.
     # Gross Profit is frequently absent from Companyfacts even when Revenue and
     # Cost of Revenue are both reported.
@@ -472,10 +543,14 @@ def _finish_normalized(row: NormalizedFinancial, source_map: dict[str, Any], *, 
     if row.cfo is not None and row.capex is not None:
         row.fcf = row.cfo - row.capex
     row.source_map = source_map
-    row.quality = {
+    quality = dict(row.quality or {})
+    quality.update({
         "provider": "SEC", "filing_aware": True, "raw_facts_persisted": True,
         "period_type": period_type, "ttm_eligible": period_type in {"Q1", "Q2", "Q3", "Q4"},
-    }
+    })
+    if economic_reality is not None:
+        quality["economic_reality"] = economic_reality
+    row.quality = quality
     row.calculation_version = CALCULATION_VERSION
 
 
@@ -714,6 +789,8 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     debt_noncurrent_annual = _annual_instant(companyfacts, DEBT_NONCURRENT_TAGS, fiscal_year_end=fiscal_year_end)
     debt_short_annual = _annual_instant(companyfacts, DEBT_SHORT_TERM_TAGS, fiscal_year_end=fiscal_year_end)
 
+    economic_duration_annual, economic_instant_annual = _economic_maps_annual(companyfacts, fiscal_year_end)
+
     dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_shares:
         instant["shares_outstanding"] = dei_shares
@@ -761,7 +838,18 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         elif str((instant.get("debt", {}).get(fy) or {}).get("tag") or "") == "LongTermDebt":
             normalized.debt = None
             source_map.pop("debt", None)
-        _finish_normalized(normalized, source_map, period_type="FY")
+        economic_facts, economic_sources = _economic_fact_bundle(
+            economic_duration_annual, economic_instant_annual, fy
+        )
+        economic_snapshot = build_economic_reality(
+            _economic_row_dict(normalized),
+            facts=economic_facts,
+            fact_sources=economic_sources,
+            company_type=meta.get("sic_description") or "",
+        )
+        _finish_normalized(
+            normalized, source_map, period_type="FY", economic_reality=economic_snapshot
+        )
         for field, ref in source_map.items():
             db.session.add(Provenance(source_id=source.id, object_type="normalized_financial", object_id=str(period.id), field_name=field, raw_or_normalized="NORMALIZED", financial_period_id=period.id, provider="SEC", freshness_at=utcnow(), calculation_version=CALCULATION_VERSION, notes=f"{ref.get('tag','')} / {ref.get('accession','')} / {ref.get('method','')}"))
         if normalized.revenue is None:
@@ -790,6 +878,8 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     debt_current_quarter = _quarter_instants(companyfacts, DEBT_CURRENT_TAGS, fiscal_year_end=fiscal_year_end)
     debt_noncurrent_quarter = _quarter_instants(companyfacts, DEBT_NONCURRENT_TAGS, fiscal_year_end=fiscal_year_end)
     debt_short_quarter = _quarter_instants(companyfacts, DEBT_SHORT_TERM_TAGS, fiscal_year_end=fiscal_year_end)
+
+    economic_duration_quarter, economic_instant_quarter = _economic_maps_quarter(companyfacts, fiscal_year_end)
 
     dei_quarter_shares = _quarter_instants(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_quarter_shares:
@@ -850,7 +940,18 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         elif str((quarter_instant.get("debt", {}).get((fy, fp)) or {}).get("tag") or "") == "LongTermDebt":
             normalized.debt = None
             source_map.pop("debt", None)
-        _finish_normalized(normalized, source_map, period_type=fp)
+        economic_facts, economic_sources = _economic_fact_bundle(
+            economic_duration_quarter, economic_instant_quarter, (fy, fp)
+        )
+        economic_snapshot = build_economic_reality(
+            _economic_row_dict(normalized),
+            facts=economic_facts,
+            fact_sources=economic_sources,
+            company_type=meta.get("sic_description") or "",
+        )
+        _finish_normalized(
+            normalized, source_map, period_type=fp, economic_reality=economic_snapshot
+        )
         quarter_saved += 1
 
     fallback = _alpha_vantage_fill_missing(company, security, user_id)
