@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: market-forensics-production
@@ -26,6 +26,22 @@ jobs:
           python-version: '3.13'
           cache: 'pip'
 
+      - name: Release metadata coherence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          current = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
+          how = Path("docs/HOW_MARKET_FORENSICS_WORKS.md").read_text(encoding="utf-8")
+          state = re.search(r"^\*\*State-Version:\s*([^*\n]+?)\*\*\s*$", current, re.M)
+          product = re.search(r"^\*\*Current product line:\*\*\s*([^\n]+?)\s*$", how, re.M)
+          assert state and state.group(1).strip() == version, "VERSION != CURRENT_STATE State-Version"
+          assert product and product.group(1).strip() == version, "VERSION != HOW current product line"
+          print("release metadata coherent:", version)
+          PY
+          echo "MF_DEPLOY_SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Test release before upload
         env:
           MF_SECRET_KEY: test-secret-key
@@ -581,3 +597,37 @@ jobs:
           printf '%s' "$body" | grep -q "\"version\":\"${MF_RELEASE_VERSION}\""
           printf '%s' "$body" | grep -q '"architecture":"web-native"'
           echo "$body"
+
+      - name: Sync verified production state back to main
+        if: steps.health.outcome == 'success'
+        env:
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+          DEPLOY_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          DEPLOYED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B production-state-sync origin/main
+            python tools/sync_production_state.py \
+              --version "$MF_RELEASE_VERSION" \
+              --source-sha "$MF_DEPLOY_SOURCE_SHA" \
+              --run-id "$DEPLOY_RUN_ID" \
+              --run-number "$DEPLOY_RUN_NUMBER" \
+              --deployed-at "$DEPLOYED_AT"
+            if git diff --quiet -- docs/CURRENT_STATE.md; then
+              echo "Production state already synchronized."
+              exit 0
+            fi
+            git add docs/CURRENT_STATE.md
+            git commit -m "deploy: sync production state $MF_RELEASE_VERSION"
+            if git push origin HEAD:main; then
+              echo "CURRENT_STATE.md synchronized to verified production."
+              exit 0
+            fi
+            echo "main moved while syncing production state; retrying ($attempt/3)."
+          done
+          echo "::error::Production is healthy but CURRENT_STATE.md could not be synchronized to main."
+          exit 1
