@@ -13,7 +13,7 @@ from .jobs import enqueue_job
 from .routes import SECTIONS, _ctx, bp
 from .security import role_required
 from .research_synthesis import valuation_price_history
-from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, n
+from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, default_cases, evaluate, infer_company_type, metrics_from_history, n
 from .validation_policy import state_for_run
 
 
@@ -212,9 +212,9 @@ def save_valuation_company(ticker):
         row.inputs = {"auto_prefill": False, **cases[name]}
         row.outputs = result["scenarios"][name]
     model.method = "MULTI_METHOD_INTRINSIC"
-    model.calculation_version = "0.3.0"
+    model.calculation_version = VALUATION_ENGINE_VERSION
     model.assumptions = saved | {
-        "engine_version": "0.3.0", "company_type": company_type, "current_shares": current_shares,
+        "engine_version": VALUATION_ENGINE_VERSION, "company_type": company_type, "current_shares": current_shares,
         "share_source": share_source, "share_basis_verified": share_verified, "share_basis_note": share_note,
         "weights": weights, "horizon_years": years, "calibration": calibration, "latest_engine_result": result,
         "notes": str(request.form.get("assumptions_notes") or saved.get("notes") or "").strip(),
@@ -238,7 +238,7 @@ def save_valuation_company(ticker):
 @role_required("CONTROL")
 def reset_valuation_company(ticker):
     require_control_view(); ctx = _ctx(ticker); result = prefill_coverage(ctx["coverage"].id, g.user.id, force=True)
-    audit("valuation.model.reset", "coverage", ctx["coverage"].id, {"engine": "0.2.0"}); db.session.commit()
+    audit("valuation.model.reset", "coverage", ctx["coverage"].id, {"engine": VALUATION_ENGINE_VERSION}); db.session.commit()
     flash(f"Valuation rebuilt from evidence for {result['ticker']}. Review inputs before relying on it.", "success")
     return redirect(url_for("web.valuation_company", ticker=ticker.upper()))
 
