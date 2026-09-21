@@ -355,6 +355,7 @@ def build_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict
             "rows": list(lenses.get("rows") or []),
         },
         "valuation": valuation,
+        "valuation_forensics": dict(cache.get("valuation_forensics") or {}),
         "company_quality": dict(synthesis.get("company_quality") or valuation.get("company_quality") or {}),
         "valuation_impact_ledger": list(synthesis.get("valuation_impact_ledger") or valuation.get("valuation_impact_ledger") or []),
         "thesis": {
