@@ -15,8 +15,9 @@ ENGINE_VERSION = "0.3.0"
 INSTANT_TAGS: dict[str, tuple[str, ...]] = {
     "financial_debt_current": (
         "ShortTermBorrowings", "ShortTermDebtCurrent", "LongTermDebtCurrent",
-        "CurrentPortionOfLongTermDebt",
+        "CurrentPortionOfLongTermDebt", "CommercialPaper", "CommercialPaperCurrent",
     ),
+    "cash_unrestricted": ("CashAndCashEquivalentsAtCarryingValue",),
     "financial_debt_noncurrent": ("LongTermDebtNoncurrent", "LongTermDebt"),
     "finance_lease_current": ("FinanceLeaseLiabilityCurrent", "FinanceLeaseObligationCurrent"),
     "finance_lease_noncurrent": ("FinanceLeaseLiabilityNoncurrent", "FinanceLeaseObligationNoncurrent"),
@@ -44,6 +45,10 @@ INSTANT_TAGS: dict[str, tuple[str, ...]] = {
         "RedeemableNoncontrollingInterestEquityCarryingAmount",
         "RedeemableNoncontrollingInterestCarryingAmount",
     ),
+    "noncontrolling_interest": ("NoncontrollingInterestInConsolidatedEntity", "MinorityInterest"),
+    "preferred_equity": ("PreferredStocksIncludingAdditionalPaidInCapital", "PreferredStockValue"),
+    "contingent_consideration_current": ("BusinessCombinationContingentConsiderationLiabilityCurrent",),
+    "contingent_consideration_noncurrent": ("BusinessCombinationContingentConsiderationLiabilityNoncurrent",),
     "deferred_revenue_current": ("ContractWithCustomerLiabilityCurrent", "DeferredRevenueCurrent"),
     "deferred_revenue_noncurrent": ("ContractWithCustomerLiabilityNoncurrent", "DeferredRevenueNoncurrent"),
     "deferred_tax_liability": ("DeferredTaxLiabilitiesNoncurrent", "DeferredIncomeTaxLiabilitiesNet"),
@@ -72,6 +77,8 @@ DURATION_TAGS: dict[str, tuple[str, ...]] = {
     "acquisition_related_costs": (
         "BusinessCombinationAcquisitionRelatedCosts", "BusinessAcquisitionCosts",
     ),
+    "research_and_development": ("ResearchAndDevelopmentExpense",),
+    "advertising_expense": ("AdvertisingExpense",),
 }
 
 DEBT_LIKE_KEYS = (
@@ -79,6 +86,7 @@ DEBT_LIKE_KEYS = (
     "finance_lease_current", "finance_lease_noncurrent",
     "supplier_finance_current", "supplier_finance_noncurrent",
     "pension_liability", "postretirement_liability", "redeemable_nci",
+    "contingent_consideration_current", "contingent_consideration_noncurrent",
 )
 OPERATING_LEASE_KEYS = ("operating_lease_current", "operating_lease_noncurrent")
 NON_DEBT_LIABILITY_KEYS = (
@@ -153,6 +161,9 @@ def build_economic_reality(
     supplier_finance = _sum_present(facts, ("supplier_finance_current", "supplier_finance_noncurrent"))
     pensions = _sum_present(facts, ("pension_liability", "postretirement_liability"))
     redeemable_nci = n(facts.get("redeemable_nci"))
+    noncontrolling_interest = n(facts.get("noncontrolling_interest"))
+    preferred_equity = n(facts.get("preferred_equity"))
+    contingent_consideration = _sum_present(facts, ("contingent_consideration_current", "contingent_consideration_noncurrent"))
     liquid_investments = n(facts.get("marketable_securities_current"))
     restricted_cash = _sum_present(facts, ("restricted_cash_current", "restricted_cash_noncurrent"))
     deferred_revenue = _sum_present(facts, ("deferred_revenue_current", "deferred_revenue_noncurrent"))
@@ -169,22 +180,43 @@ def build_economic_reality(
             "finance_lease_current", "finance_lease_noncurrent",
         )
     )
+    lease_dominant_no_debt = (
+        not classified_financing
+        and reported_debt is None
+        and operating_leases is not None
+        and total_liabilities not in (None, 0)
+        and operating_leases / total_liabilities >= 0.50
+    )
     if classified_financing:
         base_financing = (financial_debt or 0.0) + (finance_leases or 0.0)
         debt_basis = "CLASSIFIED_FINANCIAL_DEBT_PLUS_FINANCE_LEASES"
+    elif lease_dominant_no_debt:
+        # The filing exposes a lease-heavy liability structure but no standard
+        # financial-debt concept.  Treat financing debt as zero for the bridge,
+        # while retaining an explicit inference flag for audit.
+        base_financing = 0.0
+        debt_basis = "LEASE_HEAVY_NO_FILED_FINANCIAL_DEBT"
     else:
         base_financing = reported_debt
         debt_basis = "REPORTED_DEBT_FALLBACK" if reported_debt is not None else "UNRESOLVED"
 
-    debt_like_additions = sum(value or 0.0 for value in (supplier_finance, pensions, redeemable_nci))
-    gross_economic_debt = (
-        base_financing + debt_like_additions
-        if base_financing is not None
-        else (debt_like_additions if debt_like_additions else None)
+    debt_like_additions = sum(
+        value or 0.0 for value in (supplier_finance, pensions, redeemable_nci, contingent_consideration)
     )
+    enterprise_claim_additions = sum(value or 0.0 for value in (noncontrolling_interest, preferred_equity))
+    gross_economic_debt = (
+        base_financing + debt_like_additions + enterprise_claim_additions
+        if base_financing is not None
+        else ((debt_like_additions + enterprise_claim_additions) if (debt_like_additions + enterprise_claim_additions) else None)
+    )
+    unrestricted_cash = n(facts.get("cash_unrestricted"))
+    if unrestricted_cash is None and cash is not None:
+        # If only a broad cash total is available, conservatively remove known
+        # restricted cash instead of allowing it to offset financing.
+        unrestricted_cash = max(0.0, cash - (restricted_cash or 0.0))
     liquid_offset = None
-    if cash is not None or liquid_investments is not None:
-        liquid_offset = (cash or 0.0) + (liquid_investments or 0.0)
+    if unrestricted_cash is not None or liquid_investments is not None:
+        liquid_offset = (unrestricted_cash or 0.0) + (liquid_investments or 0.0)
     economic_net_debt = (
         gross_economic_debt - (liquid_offset or 0.0)
         if gross_economic_debt is not None else None
@@ -213,6 +245,9 @@ def build_economic_reality(
         owner_cash_proxy = cfo - maintenance_capex_proxy if cfo is not None else None
 
     sbc = n(facts.get("share_based_compensation"))
+    research_and_development = n(facts.get("research_and_development"))
+    rd_to_revenue = _pct(research_and_development, revenue)
+    advertising_expense = n(facts.get("advertising_expense"))
     fcf_after_sbc = fcf - sbc if fcf is not None and sbc is not None else None
     sbc_to_revenue = _pct(sbc, revenue)
 
@@ -253,6 +288,11 @@ def build_economic_reality(
             "detail": f"Operating leases are {lease_share:.1f}% of total liabilities; do not label total liabilities as financial leverage.",
         })
         suppressions.append("RAW_LIABILITY_LEVERAGE")
+    if lease_dominant_no_debt:
+        flags.append({
+            "code": "LEASE_HEAVY_NO_FILED_DEBT", "tone": "CONTEXT",
+            "detail": "The filing is lease-heavy and exposes no standard financial-debt fact; the EV bridge does not reclassify operating leases as borrowing.",
+        })
     if lease_productivity is not None and lease_productivity >= 1.5:
         flags.append({
             "code": "LEASE_PRODUCTIVE_OPERATING_CAPITAL", "tone": "CONTEXT",
@@ -270,6 +310,12 @@ def build_economic_reality(
             "detail": f"Share-based compensation is {sbc_to_revenue:.1f}% of revenue; cash FCF overstates post-dilution economics if SBC is ignored.",
         })
         suppressions.append("FCF_POSITIVE_UNADJUSTED")
+    if rd_to_revenue is not None and rd_to_revenue >= 8.0:
+        flags.append({
+            "code": "RND_INTANGIBLE_INVESTMENT", "tone": "CONTEXT",
+            "detail": f"R&D is {rd_to_revenue:.1f}% of revenue and is expensed under GAAP; current margins understate pre-R&D operating economics while book invested capital omits much internally created capital.",
+        })
+        suppressions.append("LOW_MARGIN_AUTOMATIC")
     if special_charges_to_revenue is not None and special_charges_to_revenue >= 1.0:
         flags.append({
             "code": "SPECIAL_CHARGES_MATERIAL", "tone": "CONTEXT",
@@ -303,14 +349,14 @@ def build_economic_reality(
             "code": "SECTOR_BALANCE_SHEET_POLICY", "tone": "REVIEW",
             "detail": "Financial/REIT balance sheets require sector-specific leverage and cash-flow interpretation; generic industrial rules are disabled.",
         })
-        suppressions.extend(("GENERIC_LEVERAGE_SCORE", "GENERIC_WORKING_CAPITAL_SCORE"))
+        suppressions.extend(("GENERIC_LEVERAGE_SCORE", "GENERIC_WORKING_CAPITAL_SCORE", "NEGATIVE_FCF_AUTOMATIC", "FCF_MARGIN_EROSION_AUTOMATIC"))
 
     material_unknown = False
     unresolved: list[str] = []
     if reported_debt is not None and abs(reported_debt) > 0 and not classified_financing:
         unresolved.append("Debt composition is unresolved; using reported debt fallback.")
         material_unknown = True
-    if total_liabilities not in (None, 0) and reported_debt is None and gross_economic_debt is None:
+    if total_liabilities not in (None, 0) and reported_debt is None and gross_economic_debt is None and not lease_dominant_no_debt:
         unresolved.append("Financial/debt-like obligations are unresolved against a non-zero liability base.")
         material_unknown = True
 
@@ -336,8 +382,12 @@ def build_economic_reality(
         "supplier_finance": supplier_finance,
         "pension_postretirement": pensions,
         "redeemable_nci": redeemable_nci,
+        "noncontrolling_interest": noncontrolling_interest,
+        "preferred_equity": preferred_equity,
+        "contingent_consideration": contingent_consideration,
         "gross_economic_debt": gross_economic_debt,
         "cash": cash,
+        "unrestricted_cash_for_debt_offset": unrestricted_cash,
         "marketable_securities_current": liquid_investments,
         "restricted_cash": restricted_cash,
         "liquid_offset": liquid_offset,
@@ -359,6 +409,9 @@ def build_economic_reality(
         "owner_cash_proxy": owner_cash_proxy,
         "share_based_compensation": sbc,
         "sbc_to_revenue_pct": sbc_to_revenue,
+        "research_and_development": research_and_development,
+        "rd_to_revenue_pct": rd_to_revenue,
+        "advertising_expense": advertising_expense,
         "fcf_after_sbc": fcf_after_sbc,
         "special_charges": special_charges,
         "special_charges_to_revenue_pct": special_charges_to_revenue,
