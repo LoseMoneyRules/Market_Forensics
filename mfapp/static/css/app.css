@@ -492,3 +492,17 @@ html[data-theme="dark"] .tape-flow-grid{background:var(--line);border-color:var(
 .valuation-impact-ledger .valuation-quality-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:900px){.valuation-impact-ledger .valuation-quality-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.valuation-impact-ledger .valuation-quality-grid{grid-template-columns:1fr}}
+
+
+/* 0.3.1 — re-rating / peer forensics */
+.valuation-forensics-head{margin-top:var(--space-5)}
+.valuation-forensics-head .metric-grid strong{font-size:clamp(14px,1.25vw,18px)}
+.timeline-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-3);margin:var(--space-3) 0}
+.timeline-bucket{min-width:0;border:1px solid var(--line);border-radius:var(--radius);padding:var(--space-3);background:var(--surface)}
+.timeline-bucket>strong{display:block;margin-bottom:6px}
+.timeline-bucket ul{margin:6px 0 8px;padding-left:18px}
+.timeline-bucket small{display:block;line-height:1.45}
+.valuation-audit summary{cursor:pointer;color:var(--navy)}
+.research-basis-alert{margin-bottom:var(--space-3)}
+@media (max-width:900px){.timeline-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:620px){.timeline-grid{grid-template-columns:1fr}.valuation-forensics-head .metric-grid{grid-template-columns:1fr 1fr}}
