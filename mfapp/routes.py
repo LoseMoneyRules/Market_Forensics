@@ -865,10 +865,12 @@ def company_section(ticker, section):
                         "reason": "",
                     }
                     break
+        economic_reality = dict(((current_financial or {}).get("quality") or {}).get("economic_reality") or {})
         extra.update({
             "financials": financials,
             "quarterly_financials": quarterly_financials,
             "current_financial": current_financial,
+            "economic_reality": economic_reality,
             "leverage_display": leverage_display,
             "numbers_completeness": numbers_completeness(company.id),
             "forecast_rows": forecasts,
