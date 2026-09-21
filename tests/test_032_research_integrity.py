@@ -274,3 +274,26 @@ def test_032_financial_basis_review_accepts_aware_and_naive_timestamps(tmp_path,
         fundamentals = next(row for row in result["gates"] if row["key"] == "fundamentals")
         assert fundamentals["financial_review_required"] is True
         assert fundamentals["status"] == "REVIEW REQUIRED"
+
+
+def test_032_degraded_control_blocks_cached_decision():
+    from mfapp.routes import _fail_closed_degraded_control
+
+    intelligence, lenses = _fail_closed_degraded_control(
+        {"degraded": True},
+        {"action": "BUY", "stance": "POSITIVE", "confidence": "HIGH", "warnings": [], "blockers": []},
+        {
+            "research_conclusion": "BUY", "model_confidence": "HIGH", "thesis_control": "LOCKED",
+            "rows": [
+                {"key": "model_confidence", "state": "HIGH"},
+                {"key": "thesis_control", "state": "LOCKED"},
+            ],
+        },
+    )
+    assert intelligence["action"] == "WAIT"
+    assert intelligence["stance"] == "DATA REVIEW"
+    assert intelligence["confidence"] == "LOW"
+    assert intelligence["blockers"]
+    assert lenses["research_conclusion"] == "DATA REVIEW"
+    assert lenses["model_confidence"] == "UNVALIDATED"
+    assert lenses["thesis_control"] == "CONTROL UNAVAILABLE"
