@@ -156,7 +156,7 @@
       <div class="current-kpi"><span>Operating margin</span><strong>{{ pct(current_financial.metrics.operating_margin_pct) if current_financial else '—' }}</strong></div>
       <div class="current-kpi"><span>FCF margin</span><strong>{{ pct(current_financial.metrics.fcf_margin_pct) if current_financial else '—' }}</strong></div>
       <div class="current-kpi"><span>CFO / Net income</span><strong>{% if current_financial and current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div>
-      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.roic_pct is none %}Needs operating income, tax & capital classification{% elif current_financial.metrics.roic_basis == 'ECONOMIC_CAPITAL' %}Economic capital basis{% else %}Reported debt/equity/cash basis{% endif %}</small></div>
+      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if not current_financial %}No current filed basis{% elif current_financial.metrics.roic_pct is none %}Needs operating income, tax & capital classification{% elif current_financial.metrics.roic_basis == 'ECONOMIC_CAPITAL' %}Economic capital basis{% else %}Reported debt/equity/cash basis{% endif %}</small></div>
       <div class="current-kpi"><span>Economic net debt / FCF</span><strong>{% if leverage_display and leverage_display.value is not none %}{{ '%.1f'|format(leverage_display.value) }}x{% else %}—{% endif %}</strong><small>{% if current_financial and current_financial.metrics.net_debt_basis %}{{ current_financial.metrics.net_debt_basis|replace('_', ' ') }}{% elif leverage_display %}{{ leverage_display.basis }}{% else %}Debt/cash classification unavailable{% endif %}</small></div>
     </div>
     {% if economic_reality %}
@@ -177,7 +177,7 @@
         <div><span>Owner-cash proxy</span><strong>{{ num(economic_reality.owner_cash_proxy) }}</strong><small>CFO − D&amp;A-based maintenance proxy</small></div>
         <div><span>FCF after SBC</span><strong>{{ num(economic_reality.fcf_after_sbc) }}</strong><small>Cash FCF less share-based compensation</small></div>
         <div><span>Economic ROIC</span><strong>{{ pct(economic_reality.economic_roic_pct) }}</strong><small>Excludes operating leases from financial debt</small></div>
-        <div><span>Lease-adjusted ROIC</span><strong>{{ pct(economic_reality.lease_adjusted_roic_pct) }}</strong><small>Conservative view adding operating leases to capital</small></div>
+        <div><span>ROIC incl. lease capital</span><strong>{{ pct(economic_reality.lease_adjusted_roic_pct) }}</strong><small>Conservative denominator view; not an accounting restatement</small></div>
       </div>
       {% if economic_reality.flags %}
       <div class="stack compact">
