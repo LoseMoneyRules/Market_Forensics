@@ -133,7 +133,9 @@ def _economic_row_dict(row: NormalizedFinancial) -> dict[str, Any]:
         "revenue", "operating_income", "pretax_income", "income_tax", "cfo", "capex", "fcf",
         "cash", "debt", "liabilities", "equity",
     )
-    return {field: getattr(row, field, None) for field in fields}
+    out = {field: getattr(row, field, None) for field in fields}
+    out["_debt_source_tag"] = str(((row.source_map or {}).get("debt") or {}).get("tag") or "")
+    return out
 
 
 
