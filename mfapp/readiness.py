@@ -7,7 +7,7 @@ from typing import Any
 from .core_models import (
     BearCaseItem, Catalyst, Company, Coverage, DecisionJournal, Expectation, FinancialFlow,
     FinancialPeriod, HistoricalTestRun, ManagementAssessment, MonitoringRule,
-    ResearchGateApproval, ResearchState, RiskPlan, Security, Source, ValuationModel,
+    ResearchGateApproval, ResearchState, ResearchVersion, RiskPlan, Security, Source, ValuationModel,
 )
 from .extensions import db
 from .services import valuation_result
@@ -46,6 +46,15 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     journal_count = DecisionJournal.query.filter_by(coverage_id=coverage.id).count()
     risk = RiskPlan.query.filter_by(coverage_id=coverage.id).first()
     invalidation_text = _text(risk.thesis_invalidation if risk else "")
+    invalidation_locked = bool(risk and risk.invalidation_locked_at)
+    latest_thesis_revision = (
+        ResearchVersion.query
+        .filter_by(coverage_id=coverage.id)
+        .filter(ResearchVersion.reason.like("Thesis revised · archived prior thesis%"))
+        .order_by(ResearchVersion.created_at.desc(), ResearchVersion.id.desc())
+        .first()
+    )
+    thesis_revision_at = latest_thesis_revision.created_at if latest_thesis_revision else None
     source_count = Source.query.filter_by(company_id=company.id).count() if company else 0
     flow_count = 0
     if company:
@@ -76,8 +85,13 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         _gate("Tape / Flows", "tape", {"text": _text(research.tape_summary if research else ""), "sources": source_count}, bool(research and _text(research.tape_summary))),
         _gate(
             "Monitoring", "monitoring",
-            {"rules": monitor_count, "thesis_invalidation": invalidation_text},
-            monitor_count > 0 or bool(invalidation_text),
+            {
+                "rules": monitor_count,
+                "thesis": _text(research.thesis if research else ""),
+                "thesis_invalidation": invalidation_text,
+                "invalidation_locked": invalidation_locked,
+            },
+            bool(invalidation_text and invalidation_locked),
         ),
         _gate("Decision Journal", "journal", {"entries": journal_count}, journal_count > 0),
         _gate("Sources / Audit", "audit", {"sources": source_count}, source_count > 0),
@@ -101,24 +115,36 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
             and approval.approved_at is not None
             and basis_materialized_at > approval.approved_at
         )
+        thesis_review_required = bool(
+            approval
+            and gate["key"] in {"overview", "monitoring"}
+            and thesis_revision_at is not None
+            and approval.approved_at is not None
+            and thesis_revision_at > approval.approved_at
+        )
+        review_required = financial_review_required or thesis_review_required
+
         # Preserve the historical human approval row. A new material financial
-        # basis invalidates only its CURRENT effectiveness; ordinary evidence
-        # drift remains visible without reopening unrelated gates.
+        # basis or a genuine thesis revision invalidates only its CURRENT
+        # effectiveness. The prior approval remains visible/auditable.
         gate["prior_approval_exists"] = bool(approval)
-        gate["approved"] = bool(approval) and not financial_review_required
+        gate["approved"] = bool(approval) and not review_required
         gate["financial_review_required"] = financial_review_required
-        gate["review_required"] = financial_review_required
-        gate["stale_approval"] = evidence_changed or financial_review_required
+        gate["thesis_review_required"] = thesis_review_required
+        gate["review_required"] = review_required
+        gate["stale_approval"] = evidence_changed or review_required
         gate["evidence_changed"] = evidence_changed
         gate["approved_at"] = approval.approved_at if approval else None
-        if financial_review_required:
+        if review_required:
             gate["status"] = "REVIEW REQUIRED"
         else:
             gate["status"] = "APPROVED" if approval else ("PENDING APPROVAL" if gate["evidence_ready"] else "MISSING EVIDENCE")
 
     done = sum(1 for gate in gates if gate["approved"])
     validation = validation_payload(hist)
-    reopened = [gate["key"] for gate in gates if gate.get("financial_review_required")]
+    financial_reopened = [gate["key"] for gate in gates if gate.get("financial_review_required")]
+    thesis_reopened = [gate["key"] for gate in gates if gate.get("thesis_review_required")]
+    reopened = list(dict.fromkeys(financial_reopened + thesis_reopened))
 
     return {
         "done": done,
@@ -129,8 +155,19 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         "review_required": bool(reopened),
         "review_required_count": len(reopened),
         "reopened_gates": reopened,
+        "financial_review_required": bool(financial_reopened),
+        "financial_review_required_count": len(financial_reopened),
+        "thesis_review_required": bool(thesis_reopened),
+        "thesis_review_required_count": len(thesis_reopened),
+        "thesis_revision_at": thesis_revision_at,
         "financial_basis": financial_basis,
-        "review_banner": "NEW FINANCIAL EVIDENCE — REVIEW REQUIRED" if reopened else "",
+        "review_banner": (
+            "THESIS CHANGED — NEW INVALIDATION REQUIRED"
+            if thesis_reopened
+            else "NEW FINANCIAL EVIDENCE — REVIEW REQUIRED"
+            if financial_reopened
+            else ""
+        ),
         "validation": validation,
         "bias_flags": [],
     }
