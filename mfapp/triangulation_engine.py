@@ -38,13 +38,17 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
     revenue = _n(current.get("revenue"))
     inventory = _n(current.get("inventory"))
     receivables = _n(current.get("receivables"))
-    fcf = _n(current.get("fcf"))
+    reported_fcf = _n(current.get("fcf"))
+    fcf_after_sbc = _n(metrics.get("fcf_after_sbc"))
+    fcf = min(reported_fcf, fcf_after_sbc) if reported_fcf is not None and fcf_after_sbc is not None else reported_fcf
     net_income = _n(current.get("net_income"))
     operating_income = _n(current.get("operating_income"))
     pretax_income = _n(current.get("pretax_income"))
     income_tax = _n(current.get("income_tax"))
-    debt = _n(current.get("debt")) or 0.0
-    cash = _n(current.get("cash")) or 0.0
+    economic_unresolved = bool(metrics.get("economic_reality_unresolved"))
+    net_debt = None if economic_unresolved else _n(metrics.get("economic_net_debt"))
+    if net_debt is None and not economic_unresolved:
+        net_debt = _n(metrics.get("net_debt"))
     equity = _n(current.get("equity"))
     shares = _n(current.get("diluted_shares")) or _n(current.get("shares_outstanding"))
 
@@ -68,8 +72,14 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
 
     market_cap = price * shares if price not in (None, 0) and shares not in (None, 0) else None
     fcf_yield = (fcf / market_cap * 100.0) if fcf is not None and market_cap not in (None, 0) else None
-    pe = (market_cap / net_income) if market_cap not in (None, 0) and net_income is not None and net_income > 0 else None
-    enterprise_value = (market_cap + debt - cash) if market_cap is not None else None
+    suppressions = set(metrics.get("economic_reality_suppressions") or [])
+    pe = (
+        market_cap / net_income
+        if "PE_EARNINGS_NORMALIZATION_REVIEW" not in suppressions
+        and market_cap not in (None, 0) and net_income is not None and net_income > 0
+        else None
+    )
+    enterprise_value = (market_cap + net_debt) if market_cap is not None and net_debt is not None else None
     ev_sales = (enterprise_value / revenue) if enterprise_value is not None and revenue not in (None, 0) else None
     # Reuse the canonical filing-backed ROIC. Do not inject a default tax rate
     # into peer comparisons; a missing peer ROIC is better than false precision.
@@ -99,9 +109,10 @@ def _metric_row(company: Company, user_id: int | None = None) -> dict[str, Any] 
         "revenue": revenue,
         "net_income": net_income,
         "fcf": fcf,
+        "reported_fcf": reported_fcf,
         "shares": shares,
-        "debt": debt,
-        "cash": cash,
+        "net_debt": net_debt,
+        "economic_reality_unresolved": economic_unresolved,
     }
 
 
@@ -215,8 +226,11 @@ def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_
         evs_vals = [r.get("ev_sales") for r in peer_rows if r.get("ev_sales") is not None and r.get("ev_sales") > 0]
         if len(evs_vals) >= 2 and target.get("revenue") is not None and target.get("revenue") > 0:
             multiple = median(evs_vals)
-            equity_value = target["revenue"] * multiple - (target.get("debt") or 0.0) + (target.get("cash") or 0.0)
-            if equity_value > 0:
+            if target.get("net_debt") is None:
+                equity_value = None
+            else:
+                equity_value = target["revenue"] * multiple - target["net_debt"]
+            if equity_value is not None and equity_value > 0:
                 peer_value_components.append({"method": "EV / Sales", "value": equity_value / shares, "peer_median": multiple, "sample_size": len(evs_vals)})
         fy_vals = [r.get("fcf_yield_pct") for r in peer_rows if r.get("fcf_yield_pct") is not None and r.get("fcf_yield_pct") > 0]
         if len(fy_vals) >= 2 and target.get("fcf") is not None and target.get("fcf") > 0:
