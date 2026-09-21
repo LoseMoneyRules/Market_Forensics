@@ -110,10 +110,15 @@ def seed_full_research(app):
         ))
 
         period_rows = []
-        for year, rev, cogs, op, ni, cfo, capex, shares in (
-            (2024, 1000, 420, 220, 150, 240, 60, 100),
-            (2025, 1250, 500, 300, 205, 330, 80, 98),
-        ):
+        for year in range(2016, 2026):
+            step = year - 2016
+            rev = 700 + step * 60
+            cogs = 300 + step * 22
+            op = 120 + step * 15
+            ni = 80 + step * 10
+            cfo = 140 + step * 15
+            capex = 40 + step * 3
+            shares = 108 - step
             period = FinancialPeriod(
                 company_id=company.id, period_type="FY", fiscal_year=year,
                 start_date=date(year, 1, 1), end_date=date(year, 12, 31),
@@ -199,7 +204,7 @@ def test_032_core_research_pages_render_populated_stored_evidence(tmp_path, monk
     assert "No normalized financials stored yet." not in fhtml
     assert "COMPLETE FILED HISTORY" in fhtml
     assert "10Y history coverage" in fhtml
-    assert "NOT STORED" in fhtml
+    assert "10Y ANNUAL HISTORY GAP" not in fhtml
 
     expectations = client.get("/company/TST/expectations")
     assert expectations.status_code == 200, expectations.data[:1000]
@@ -433,3 +438,33 @@ def test_032_price_history_core_defaults_are_ten_years():
     assert 'get("lookback_years") or 10' in files["mfapp/jobs.py"]
     assert '"lookback_years": 3' not in combined
     assert 'payload["lookback_years"] = 3' not in combined
+
+
+
+def test_032_missing_fiscal_year_is_visible_and_blocks_fundamentals_readiness(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "missing_fy")
+    uid, coverage_id = seed_full_research(app)
+    with app.app_context():
+        gap = FinancialPeriod.query.filter_by(company_id=1, period_type="FY", fiscal_year=2021).first()
+        assert gap is not None
+        NormalizedFinancial.query.filter_by(financial_period_id=gap.id).delete()
+        FinancialFlow.query.filter_by(financial_period_id=gap.id).delete()
+        db.session.delete(gap)
+        db.session.commit()
+
+        from mfapp.current_financials import annual_history_coverage
+        coverage = db.session.get(Coverage, coverage_id)
+        hist = annual_history_coverage(coverage.security.company_id if hasattr(coverage, "security") else db.session.get(Security, coverage.security_id).company_id)
+        assert 2021 in hist["missing_years"]
+        readiness = research_readiness(coverage)
+        fundamentals = next(row for row in readiness["gates"] if row["key"] == "fundamentals")
+        assert fundamentals["evidence_ready"] is False
+        assert 2021 in fundamentals["evidence"]["annual_missing_years"]
+
+    client = app.test_client(); login(client, uid)
+    response = client.get("/company/TST/fundamentals")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "FY2021" in html
+    assert "NOT STORED" in html
+    assert "10Y ANNUAL HISTORY GAP" in html
