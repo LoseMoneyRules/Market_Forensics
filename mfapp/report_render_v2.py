@@ -589,6 +589,24 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     story.append(P((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
 
     section("Fundamentals", "Trend before table")
+    ff=(data.get("fundamentals") or {}).get("forensics") or {}
+    if ff:
+        story.append(Paragraph("<b>"+escape(_txt(ff.get("state") or "DATA REVIEW"))+"</b> - "+escape(_txt(ff.get("headline"),520)), styles["MFBody"]))
+        strengths=list(ff.get("strengths") or [])[:4]
+        risks=(list(ff.get("red_flags") or []) + list(ff.get("watches") or []))[:5]
+        if strengths or risks:
+            left="<b>STRENGTHS</b><br/>"+("<br/>".join("- "+escape(_txt(x.get("label"),80))+": "+escape(_txt(x.get("detail"),180)) for x in strengths) if strengths else "-")
+            right="<b>RED FLAGS / WATCH</b><br/>"+("<br/>".join("- "+escape(_txt(x.get("label"),80))+": "+escape(_txt(x.get("detail"),180)) for x in risks) if risks else "-")
+            ft=Table([[rich(left,"MFBody"),rich(right,"MFBody")]],colWidths=[3.25*inch,3.25*inch])
+            ft.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(0,0),colors.HexColor("#edf7f1")),("BACKGROUND",(1,0),(1,0),colors.HexColor("#fbefef")),
+                ("BOX",(0,0),(-1,-1),.35,colors.HexColor(LINE)),("VALIGN",(0,0),(-1,-1),"TOP"),
+                ("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),
+                ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),
+            ]))
+            story.extend([ft,Spacer(1,4)])
+        for item in (list(ff.get("inconsistencies") or []) + list(ff.get("data_gaps") or []))[:5]:
+            story.append(Paragraph("<b>REVIEW</b> - "+escape(_txt(item.get("label"),90))+": "+escape(_txt(item.get("detail"),340)), styles["MFSmall"]))
     image("revenue_profitability", 6.55, 2.75)
     image("cash_conversion", 6.55, 2.3)
     image("working_capital", 6.55, 2.1)
@@ -1074,6 +1092,20 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     doc.add_paragraph(_txt((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
 
     heading("Fundamentals",1,"Trend before table")
+    ff=(data.get("fundamentals") or {}).get("forensics") or {}
+    if ff:
+        p=doc.add_paragraph();r=p.add_run(_txt(ff.get("state") or "DATA REVIEW")+" · ");r.bold=True;p.add_run(_txt(ff.get("headline"),600))
+        strengths=list(ff.get("strengths") or [])[:4]
+        risks=(list(ff.get("red_flags") or [])+list(ff.get("watches") or []))[:5]
+        two_panel(
+            "STRENGTHS",
+            "\n".join("- "+_txt(x.get("label"),80)+": "+_txt(x.get("detail"),190) for x in strengths) or "-",
+            "RED FLAGS / WATCH",
+            "\n".join("- "+_txt(x.get("label"),80)+": "+_txt(x.get("detail"),190) for x in risks) or "-",
+            "EDF7F1","FBEFEF",
+        )
+        for item in (list(ff.get("inconsistencies") or [])+list(ff.get("data_gaps") or []))[:5]:
+            p=doc.add_paragraph();r=p.add_run("REVIEW · "+_txt(item.get("label"),90)+" · ");r.bold=True;p.add_run(_txt(item.get("detail"),380))
     add_chart(charts,"revenue_profitability",6.9);add_chart(charts,"cash_conversion",6.9);add_chart(charts,"working_capital",6.9)
     current=(data.get("fundamentals") or {}).get("current") or {}
     kpis([
