@@ -5,8 +5,9 @@ from statistics import median
 from typing import Any
 
 from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
+from .company_quality import build_company_quality
 
-ENGINE_VERSION = "0.2.0"
+ENGINE_VERSION = "0.3.0"
 
 DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
 QUALITY_ALIASES = {
@@ -152,7 +153,7 @@ def _empty_metrics(issue: str) -> dict[str, Any]:
     }
 
 
-def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = None, share_source: str = "") -> dict[str, Any]:
+def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = None, share_source: str = "", company_type: str = "Generic") -> dict[str, Any]:
     rows = [row for row in history if n(row.get("revenue")) is not None]
     if not rows:
         return _empty_metrics("No annual filing-derived fundamentals are available.")
@@ -237,6 +238,8 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         warnings.append("Economic debt classification is materially unresolved; EV/Sales is excluded until the financing bridge is classified.")
     elif not economic:
         warnings.append("Economic Reality classification is not stored on this filing basis yet; valuation uses reported debt minus cash as a transparent fallback.")
+    company_quality = build_company_quality(rows, company_type)
+    valuation_policy = dict(company_quality.get("valuation_policy") or {})
     return {
         "fiscal_year": latest.get("fiscal_year"),
         "filed_at": latest.get("filed_at"),
@@ -248,6 +251,9 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         "economic_reality": economic,
         "economic_reality_quality": str(economic.get("quality") or "UNAVAILABLE"),
         "economic_reality_unresolved": economic_unresolved,
+        "company_quality": company_quality,
+        "company_quality_state": company_quality.get("state"),
+        "valuation_policy": valuation_policy,
         "revenue_growth": _cagr(revenues, 3) or _median_growth(revenues),
         "net_margin": median([x for x in net_margins[-3:] if x is not None]) if any(x is not None for x in net_margins[-3:]) else None,
         "fcf_margin": median([x for x in fcf_margins[-3:] if x is not None]) if any(x is not None for x in fcf_margins[-3:]) else None,
@@ -330,20 +336,59 @@ def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibr
     evs = calibration.get("ev_sales") or prior["ev_sales"]
     fy = calibration.get("fcf_yield") or prior["fcf_yield"]
     weights = {"pe": .40, "ev_sales": .25, "fcf_yield": .35}
-    if n(metrics.get("net_income")) is None or n(metrics.get("net_income")) <= 0:
+    policy = dict(metrics.get("valuation_policy") or {})
+    exclusions = set(policy.get("method_exclusions") or [])
+    if n(metrics.get("net_income")) is None or n(metrics.get("net_income")) <= 0 or "pe" in exclusions:
         weights["pe"] = 0.0
-    if n(metrics.get("fcf")) is None or n(metrics.get("fcf")) <= 0:
+    if n(metrics.get("fcf_margin")) is None or n(metrics.get("fcf_margin")) <= 0 or "fcf_yield" in exclusions:
         weights["fcf_yield"] = 0.0
+    if n(metrics.get("net_debt")) is None or "ev_sales" in exclusions:
+        weights["ev_sales"] = 0.0
     if company_type == "Financial / REIT":
-        weights = {"pe": 1.0, "ev_sales": 0.0, "fcf_yield": 0.0}
+        weights = {"pe": 0.0 if "pe" in exclusions else 1.0, "ev_sales": 0.0, "fcf_yield": 0.0}
+
+    risk_premium = (n(policy.get("risk_premium_bps")) or 0.0) / 10000.0
+    growth_haircut = (n(policy.get("growth_haircut_bps")) or 0.0) / 10000.0
+    terminal_haircut = (n(policy.get("terminal_growth_haircut_bps")) or 0.0) / 10000.0
+    bear_shift = (n(policy.get("bear_probability_shift_pts")) or 0.0) / 100.0
+    bear_probability = clamp(.25 + bear_shift, .10, .60)
+    base_probability = clamp(.50 - bear_shift / 2.0, .20, .70)
+    bull_probability = max(0.0, 1.0 - bear_probability - base_probability)
+
     return {
-        "BEAR": {"growth": clamp(growth - .05, -.30, .25), "net_margin": clamp(nm - .025, -.20, .50), "fcf_margin": clamp(fm - .03, -.20, .50), "pe": pe[0], "ev_sales": evs[0], "target_fcf_yield": fy[0], "equity_discount_rate": .11, "terminal_growth": .015, "probability": .25, "manual_override": None},
-        "BASE": {"growth": clamp(growth, -.20, .35), "net_margin": clamp(nm, -.15, .60), "fcf_margin": clamp(fm, -.15, .60), "pe": pe[1], "ev_sales": evs[1], "target_fcf_yield": fy[1], "equity_discount_rate": .10, "terminal_growth": .025, "probability": .50, "manual_override": None},
-        "BULL": {"growth": clamp(growth + .05, -.10, .50), "net_margin": clamp(nm + .025, -.10, .70), "fcf_margin": clamp(fm + .03, -.10, .70), "pe": pe[2], "ev_sales": evs[2], "target_fcf_yield": fy[2], "equity_discount_rate": .09, "terminal_growth": .030, "probability": .25, "manual_override": None},
+        "BEAR": {
+            "growth": clamp(growth - .05 - growth_haircut, -.30, .25),
+            "net_margin": clamp(nm - .025, -.20, .50),
+            "fcf_margin": clamp(fm - .03, -.20, .50),
+            "pe": pe[0], "ev_sales": evs[0], "target_fcf_yield": fy[0],
+            "equity_discount_rate": .11 + risk_premium,
+            "terminal_growth": clamp(.015 - terminal_haircut, -.01, .03),
+            "probability": bear_probability, "manual_override": None,
+        },
+        "BASE": {
+            "growth": clamp(growth - growth_haircut, -.20, .35),
+            "net_margin": clamp(nm, -.15, .60),
+            "fcf_margin": clamp(fm, -.15, .60),
+            "pe": pe[1], "ev_sales": evs[1], "target_fcf_yield": fy[1],
+            "equity_discount_rate": .10 + risk_premium,
+            "terminal_growth": clamp(.025 - terminal_haircut, -.005, .035),
+            "probability": base_probability, "manual_override": None,
+        },
+        "BULL": {
+            "growth": clamp(growth + .05 - growth_haircut, -.10, .50),
+            "net_margin": clamp(nm + .025, -.10, .70),
+            "fcf_margin": clamp(fm + .03, -.10, .70),
+            "pe": pe[2], "ev_sales": evs[2], "target_fcf_yield": fy[2],
+            "equity_discount_rate": .09 + risk_premium,
+            "terminal_growth": clamp(.030 - terminal_haircut, 0.0, .04),
+            "probability": bull_probability, "manual_override": None,
+        },
         "weights": weights,
         "horizon_years": 5,
         "company_type": company_type,
         "calibration": calibration,
+        "company_quality": metrics.get("company_quality") or {},
+        "valuation_policy": policy,
     }
 
 
@@ -517,11 +562,17 @@ def evaluate(
     fallback_values = fallback_values or {}
     scenarios: dict[str, dict[str, Any]] = {}
     price = n(current_price)
+    policy = dict(metrics.get("valuation_policy") or {})
+    exclusions = set(policy.get("method_exclusions") or [])
+    canonical_weights = dict(weights or {})
+    for method in exclusions:
+        if method in canonical_weights:
+            canonical_weights[method] = 0.0
     for name in ("BEAR", "BASE", "BULL"):
         row = scenario_value(
             metrics,
             cases.get(name) or {},
-            weights,
+            canonical_weights,
             years,
             fallback_value=fallback_values.get(name),
             reference_price=price,
@@ -559,6 +610,11 @@ def evaluate(
         "engine_version": ENGINE_VERSION,
         "quality": overall_quality,
         "warnings": warnings,
+        "company_quality": metrics.get("company_quality") or {},
+        "valuation_policy": policy,
+        "valuation_impact_ledger": list(policy.get("ledger") or []),
+        "method_exclusions": sorted(exclusions),
+        "effective_input_weights": canonical_weights,
     }
 
 
