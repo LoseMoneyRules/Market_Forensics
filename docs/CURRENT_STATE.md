@@ -11,7 +11,7 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.2.14**  
+**State-Version: 0.3.0**  
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
@@ -72,6 +72,32 @@
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
 ---
+
+## 0.3.0 release scope — Economic Reality / Accounting Distortion Engine
+
+0.3.0 starts from clean 0.2.14 main and changes the analytical interpretation layer without resetting MariaDB, users, credentials, 2FA, Portfolio, publications, audit history or server configuration.
+
+Core contract:
+- reported SEC accounting remains canonical and unchanged;
+- normalized rows now persist an auditable Economic Reality snapshot inside existing JSON quality metadata, so no destructive schema migration is required;
+- financial debt, finance leases, operating leases, supplier finance, pensions/postretirement obligations, preferred/minority enterprise claims, contingent consideration, restricted cash, liquid investments, deferred/contract revenue, deferred tax, ARO/provisions, goodwill/intangibles and treasury-stock distortion are separated rather than collapsed into one liability/debt concept;
+- operating leases remain real obligations but are kept separate from financial net debt by default; lease share of liabilities, revenue/lease-liability productivity and lease-adjusted ROIC are exposed as context;
+- classified economic net debt replaces raw debt-minus-cash in the canonical EV/Sales bridge when classification is usable; unresolved material debt classification disables the EV/Sales bridge instead of guessing;
+- cash offsets are conservative: known restricted cash does not reduce economic debt;
+- FCF diagnostics now distinguish reported FCF from a D&A-based maintenance/growth-capex proxy and owner-cash proxy; the proxy is explicitly non-GAAP and cannot replace reported FCF;
+- material SBC exposes FCF-after-SBC and prevents unadjusted cash conversion from receiving an automatic positive score;
+- explicit restructuring, impairment and acquisition charges can suppress automatic reported-margin deterioration scoring while remaining visible;
+- high-R&D businesses are flagged because GAAP expenses internally created intangible investment and therefore can distort margins/book-capital ROIC;
+- generic industrial leverage, working-capital and FCF rules are disabled for financial/REIT-like balance sheets;
+- Research Fundamentals now shows a Reported Accounting → Economic Reality panel, quality, basis, flags and unresolved classifications;
+- Decision Evidence uses economic leverage and accounting-aware cash/margin rules; material unresolved classification blocks BUY/SELL;
+- Discovery contract is BROAD_FORENSIC_DISCOVERY_V3; Stage 2 reuses the same Economic Reality engine, suppresses identified false short signals and caps material accounting uncertainty at WATCH instead of P1/P2;
+- PDF/Word Research reports carry the same economic basis and flags;
+- 0.3.0 regressions include a CMG-scale lease-heavy case plus finance leases/supplier finance/enterprise claims, restricted cash, deferred revenue, growth capex, SBC, sector-policy suppression and Discovery accounting-review gating.
+
+No accounting reinterpretation is allowed to erase contractual obligations. Economic Reality exists to prevent category errors in scoring and valuation, not to make liabilities disappear.
+
+Production remains independently verified at 0.2.13 until an explicit later deploy. 0.2.14 was not deployed before this release branch; main and production remain separate states.
 
 ## 0.2.14 release scope — Research Reports V2
 
