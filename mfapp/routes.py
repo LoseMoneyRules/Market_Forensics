@@ -14,7 +14,6 @@ from .decision_support import company_brief, journal_prefill, management_account
 from .management_promises import evaluate_promises
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
-from .fundamentals_forensics import build_fundamentals_forensics
 from .jobs import enqueue_job
 from .data_providers import latest_snapshot, provider_status
 from .models import AuditEvent, Invite, User
@@ -890,14 +889,14 @@ def company_section(ticker, section):
                     break
         economic_reality = dict(((current_financial or {}).get("quality") or {}).get("economic_reality") or {})
         completeness = numbers_completeness(company.id)
-        company_type = infer_company_type(company.sector, company.industry)
-        forensic_history = history_with_current(company.id, 15)
-        fundamentals_forensics = build_fundamentals_forensics(
-            forensic_history,
-            current=current_financial,
-            completeness=completeness,
-            company_type=company_type,
-        )
+        company_type = str((ctx["model"].assumptions or {}).get("company_type") or infer_company_type(company.sector, company.industry))
+        fundamentals_forensics = dict(cache.get("fundamentals_forensics") or {
+            "engine_version": "0.3.0",
+            "state": "CALCULATING" if ctx.get("cache_pending") else "INSUFFICIENT EVIDENCE",
+            "headline": "Fundamentals forensics is updating in the research job queue." if ctx.get("cache_pending") else "No materialized Fundamentals forensic read is stored yet.",
+            "strengths": [], "red_flags": [], "watches": [], "inconsistencies": [], "data_gaps": [],
+            "trend_cards": [], "counts": {"strengths": 0, "red_flags": 0, "watches": 0, "inconsistencies": 0, "data_gaps": 0},
+        })
         economic_refresh_queued = bool(ctx.get("economic_reclass_pending"))
 
         extra.update({
