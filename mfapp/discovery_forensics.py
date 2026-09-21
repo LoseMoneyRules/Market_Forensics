@@ -196,6 +196,7 @@ def _annual_history(companyfacts: dict[str, Any], fiscal_year_end: str = "", com
             "fcf": (cfo - capex) if cfo is not None and capex is not None else None,
             "cash": _value(instant["cash"].get(fy)),
             "debt": _value(instant["debt"].get(fy)),
+            "_debt_source_tag": str((instant["debt"].get(fy) or {}).get("tag") or ""),
             "inventory": _value(instant["inventory"].get(fy)),
             "receivables": _value(instant["receivables"].get(fy)),
             "payables": _value(instant["payables"].get(fy)),
@@ -260,6 +261,7 @@ def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "", co
             "fcf": (cfo - capex) if cfo is not None and capex is not None else None,
             "cash": _value(q_instant.get("cash", {}).get((fy, fp))),
             "debt": _value(q_instant.get("debt", {}).get((fy, fp))),
+            "_debt_source_tag": str((q_instant.get("debt", {}).get((fy, fp)) or {}).get("tag") or ""),
             "inventory": _value(q_instant.get("inventory", {}).get((fy, fp))),
             "receivables": _value(q_instant.get("receivables", {}).get((fy, fp))),
             "payables": _value(q_instant.get("payables", {}).get((fy, fp))),
@@ -311,6 +313,7 @@ def _ttm(rows: list[dict[str, Any]], offset: int = 0) -> dict[str, Any] | None:
     latest = block[-1]
     for field in ("cash", "debt", "inventory", "receivables", "payables", "shares_outstanding"):
         out[field] = _num(latest.get(field))
+    out["_debt_source_tag"] = str(latest.get("_debt_source_tag") or "")
     shares = [_num(row.get("diluted_shares")) for row in block if _num(row.get("diluted_shares")) is not None]
     out["diluted_shares"] = mean(shares) if shares else _num(latest.get("shares_outstanding"))
     out["period_end"] = latest.get("period_end")
