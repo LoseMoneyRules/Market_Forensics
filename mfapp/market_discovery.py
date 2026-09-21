@@ -214,6 +214,24 @@ def _discovery_health(
             severity = "WARN" if severity == "OK" else severity
             flags.append(f"Full-market SEC fundamental coverage is {fundamental_pct:.0f}%; missing names are not selected blindly.")
 
+    valuation_usable = int(fundamental_screen.get("valuation_usable_count") or 0)
+    valuation_pct = (
+        valuation_usable / fundamental_total * 100.0
+        if fundamental_total else 0.0
+    )
+    if fundamental_total:
+        if valuation_pct < 40.0:
+            severity = "CRITICAL"
+            flags.append(
+                f"Only {valuation_usable}/{fundamental_total} liquid names have usable market-valuation evidence; "
+                "Discovery will not pretend the full-market mispricing layer is complete."
+            )
+        elif valuation_pct < 65.0:
+            severity = "WARN" if severity == "OK" else severity
+            flags.append(
+                f"Market-valuation evidence covers {valuation_pct:.0f}% of liquid names; missing names remain unranked rather than guessed."
+            )
+
     exclusions = dict(stage1.get("excluded_breakdown") or {})
     total_stage1_rejected = sum(int(v or 0) for v in exclusions.values())
     if total_stage1_rejected >= 20 and exclusions:
@@ -234,6 +252,8 @@ def _discovery_health(
         "fundamental_total_count": fundamental_total,
         "fundamental_usable_count": fundamental_usable,
         "fundamental_usable_pct": round(fundamental_pct, 1),
+        "valuation_usable_count": valuation_usable,
+        "valuation_usable_pct": round(valuation_pct, 1),
     }
 
 
