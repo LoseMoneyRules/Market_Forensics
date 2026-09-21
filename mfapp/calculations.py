@@ -137,16 +137,18 @@ def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None =
         reported_net_debt = (debt or 0.0) - (cash or 0.0)
     economic = economic_from_row(current)
     economic_net_debt = economic_metric(economic, "economic_net_debt")
-    canonical_net_debt = economic_net_debt if economic_net_debt is not None else reported_net_debt
+    economic_ready = bool(economic) and not bool(economic.get("material_unresolved")) and economic_net_debt is not None
+    canonical_net_debt = economic_net_debt if economic_ready else None
     metrics["reported_net_debt"] = reported_net_debt
     metrics["economic_net_debt"] = economic_net_debt
     metrics["net_debt"] = canonical_net_debt
     metrics["net_debt_basis"] = (
         str(economic.get("debt_basis") or "ECONOMIC_REALITY")
-        if economic_net_debt is not None else "REPORTED_DEBT_MINUS_CASH"
+        if economic_ready
+        else ("ECONOMIC_CLASSIFICATION_UNRESOLVED" if economic else "ECONOMIC_REALITY_NOT_MATERIALIZED")
     )
     metrics["economic_reality_quality"] = str(economic.get("quality") or "UNAVAILABLE")
-    metrics["economic_reality_unresolved"] = bool(economic.get("material_unresolved"))
+    metrics["economic_reality_unresolved"] = (not bool(economic)) or bool(economic.get("material_unresolved"))
     metrics["operating_lease_liability"] = economic_metric(economic, "operating_lease_liability")
     metrics["operating_lease_share_of_liabilities_pct"] = economic_metric(economic, "operating_lease_share_of_liabilities_pct")
     metrics["lease_revenue_productivity_x"] = economic_metric(economic, "lease_revenue_productivity_x")
