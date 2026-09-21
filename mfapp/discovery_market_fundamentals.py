@@ -380,7 +380,10 @@ def _screen_one(row: dict[str, Any], facts: dict[str, Any] | None) -> dict[str, 
     prior_inventory = _num(prior.get("inventory"))
     receivables = _num(current.get("receivables"))
     prior_receivables = _num(prior.get("receivables"))
-    shares = _num(current.get("shares"))
+    current_shares = _num(current.get("shares"))
+    prior_shares = _num(prior.get("shares"))
+    shares = current_shares if current_shares not in (None, 0) else prior_shares
+    share_basis = "CURRENT_COMPARABLE_FRAME" if current_shares not in (None, 0) else ("PRIOR_COMPARABLE_FRAME" if prior_shares not in (None, 0) else "UNAVAILABLE")
 
     revenue_yoy = _pct_change(revenue, prior_revenue)
     operating_margin = _ratio(operating_income, revenue, 100.0)
@@ -507,6 +510,7 @@ def _screen_one(row: dict[str, Any], facts: dict[str, Any] | None) -> dict[str, 
             "ps_proxy": ps,
             "fcf_yield_pct": fcf_yield,
             "market_cap_proxy": market_cap,
+            "share_basis": share_basis,
         },
         "latest_filed": facts.get("latest_filed"),
         "cik": facts.get("cik"),
@@ -528,7 +532,7 @@ def screen_full_universe(
     baseline = _baseline(user_id, errors, provider_calls)
     by_ticker = dict(baseline.get("by_ticker") or {})
     augmented: list[dict[str, Any]] = []
-    ready = partial = missing = eligible = long_count = short_count = 0
+    ready = partial = missing = eligible = long_count = short_count = valuation_usable = 0
 
     for raw in rows:
         row = dict(raw)
@@ -542,6 +546,9 @@ def screen_full_universe(
             partial += 1
         else:
             missing += 1
+        valuation_metrics = dict(screen.get("metrics") or {})
+        if any(valuation_metrics.get(key) is not None for key in ("pe_proxy", "ps_proxy", "fcf_yield_pct")):
+            valuation_usable += 1
         if screen.get("eligible"):
             eligible += 1
             if screen.get("side") == "LONG":
@@ -563,6 +570,8 @@ def screen_full_universe(
         "missing_count": missing,
         "usable_count": usable,
         "usable_pct": round((usable / total) * 100.0, 1) if total else 0.0,
+        "valuation_usable_count": valuation_usable,
+        "valuation_usable_pct": round((valuation_usable / total) * 100.0, 1) if total else 0.0,
         "eligible_count": eligible,
         "long_screen_count": long_count,
         "short_screen_count": short_count,
