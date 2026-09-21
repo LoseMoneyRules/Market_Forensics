@@ -246,6 +246,45 @@ def _fail_closed_cached_research(
     return intelligence, lenses
 
 
+def _fail_closed_degraded_control(
+    readiness: dict,
+    intelligence: dict,
+    lenses: dict,
+) -> tuple[dict, dict]:
+    """Never let a cached decision survive a degraded Research-control read."""
+    if not readiness.get("degraded"):
+        return intelligence, lenses
+
+    intelligence = dict(intelligence or {})
+    intelligence["action"] = "WAIT"
+    intelligence["stance"] = "DATA REVIEW"
+    intelligence["confidence"] = "LOW"
+    warning = "Research control is unavailable; stored evidence remains visible but decisions are blocked."
+    warnings = list(intelligence.get("warnings") or [])
+    if warning not in warnings:
+        warnings.insert(0, warning)
+    intelligence["warnings"] = warnings
+    blockers = list(intelligence.get("blockers") or [])
+    if warning not in blockers:
+        blockers.insert(0, warning)
+    intelligence["blockers"] = blockers
+
+    lenses = dict(lenses or {})
+    lenses["research_conclusion"] = "DATA REVIEW"
+    lenses["model_confidence"] = "UNVALIDATED"
+    lenses["thesis_control"] = "CONTROL UNAVAILABLE"
+    rows = []
+    for row in list(lenses.get("rows") or []):
+        item = dict(row)
+        if item.get("key") == "model_confidence":
+            item["state"] = "UNVALIDATED"
+        elif item.get("key") == "thesis_control":
+            item["state"] = "CONTROL UNAVAILABLE"
+        rows.append(item)
+    lenses["rows"] = rows
+    return intelligence, lenses
+
+
 def _fast_brief(valuation: dict, model: ValuationModel | None, lenses: dict) -> dict:
     price = valuation.get("current_price"); base = valuation.get("base")
     try:
@@ -321,7 +360,10 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
     intelligence = dict((cache or {}).get("intelligence") or _fallback_intelligence(readiness, updating=cache_pending))
     decision_lenses = dict((cache or {}).get("decision_lenses") or _fallback_lenses(valuation, cache_pending))
     intelligence, decision_lenses = _fail_closed_cached_research(valuation, readiness, intelligence, decision_lenses)
+    intelligence, decision_lenses = _fail_closed_degraded_control(readiness, intelligence, decision_lenses)
     brief = dict((cache or {}).get("brief") or _fast_brief(valuation, model, decision_lenses))
+    if readiness.get("degraded"):
+        brief["confidence"] = "UNVALIDATED"
 
     return {
         "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
