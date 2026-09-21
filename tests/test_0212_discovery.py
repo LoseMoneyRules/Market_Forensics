@@ -122,8 +122,8 @@ def _run_scan(monkeypatch, evidence, *, row=None):
             {
                 "configured": True, "total_liquid_names": len(rows), "ready_count": len(rows),
                 "partial_count": 0, "missing_count": 0, "usable_count": len(rows),
-                "usable_pct": 100.0, "eligible_count": len(rows),
-                "long_screen_count": len(rows), "short_screen_count": 0,
+                "usable_pct": 100.0, "valuation_usable_count": len(rows), "valuation_usable_pct": 100.0,
+                "eligible_count": len(rows), "long_screen_count": len(rows), "short_screen_count": 0,
             },
         ),
     )
