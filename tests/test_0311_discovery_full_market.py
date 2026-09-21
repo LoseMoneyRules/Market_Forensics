@@ -191,3 +191,21 @@ def test_stage2_ranking_uses_liquidity_only_after_evidence():
     stronger["dollar_volume"] = 20_000_000
     selected = _select_stage2_finalists([weaker, stronger], {}, limit=1)
     assert [row["ticker"] for row in selected] == ["EVIDENCE"]
+
+
+def test_stage15_can_find_growth_business_without_absolute_value_multiple():
+    row = _row("GROWTH", {
+        "status": "READY", "eligible": True, "side": "LONG", "strength": 6,
+        "signals": [],
+        "metrics": {
+            "revenue_yoy_pct": 25.0, "operating_margin_pct": 15.0,
+            "operating_margin_change_pp": 1.5, "fcf_margin_pct": 6.0,
+            "inventory_growth_pct": 10.0, "receivables_growth_pct": 12.0,
+            "pe_proxy": 30.0, "ps_proxy": 4.0, "fcf_yield_pct": 3.5,
+        },
+    })
+    hypothesis = _market_mispricing_hypothesis(row)
+    assert hypothesis["eligible"] is True
+    assert hypothesis["side"] == "LONG"
+    assert any("Growth-adjusted P/E" in text for text in hypothesis["valuation_signals"])
+    assert any("Growth+margin adjusted P/S" in text for text in hypothesis["valuation_signals"])
