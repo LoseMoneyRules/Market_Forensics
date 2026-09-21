@@ -20,6 +20,14 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _utc_iso(value: datetime | None) -> str | None:
+    """Serialize stored timestamps as explicit UTC instants for browser-local display."""
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return aware.isoformat().replace("+00:00", "Z")
+
+
 def _gate_context(ticker: str) -> dict:
     security = Security.query.filter(
         db.func.upper(Security.ticker) == str(ticker).upper(),
@@ -204,7 +212,7 @@ def live_price(ticker: str):
         "ticker": ctx["security"].ticker,
         "price": float(snap.price) if snap else None,
         "provider": snap.provider if snap else None,
-        "as_of": snap.as_of.isoformat() if snap and snap.as_of else None,
+        "as_of": _utc_iso(snap.as_of) if snap else None,
         "quality": snap.quality if snap else None,
         "fresh": _quote_is_fresh(snap),
     })
@@ -259,7 +267,7 @@ def refresh_price(ticker: str):
         "ticker": ctx["security"].ticker,
         "price": float(snap.price) if snap else None,
         "provider": snap.provider if snap else None,
-        "as_of": snap.as_of.isoformat() if snap and snap.as_of else None,
+        "as_of": _utc_iso(snap.as_of) if snap else None,
     })
 
 
