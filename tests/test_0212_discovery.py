@@ -515,7 +515,7 @@ def test_0212_discovery_page_renders_sparse_stage2_rejection(tmp_path, monkeypat
             payload={},
             result={
                 "market_scan": {
-                    "contract_version": "BROAD_FORENSIC_DISCOVERY_V2",
+                    "contract_version": "BROAD_FORENSIC_DISCOVERY_V3",
                     "configured": True,
                     "candidates": [],
                     "errors": [],

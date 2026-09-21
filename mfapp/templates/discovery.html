@@ -26,7 +26,7 @@
     {% if scan_failure %}<div class="notice amber"><strong>LAST SCAN FAILED.</strong> {{ scan_failure }}. Any prior successful scan remains visible below.</div>{% endif %}
     {% if market_scan.stale_contract %}<div class="notice amber"><strong>OLD DISCOVERY RESULT IGNORED.</strong> The stored result predates the broad-universe contract. Run Discovery again; mover-only results are intentionally not displayed.</div>{% endif %}
 
-    {% if market_scan.contract_version == 'BROAD_FORENSIC_DISCOVERY_V2' %}
+    {% if market_scan.contract_version == 'BROAD_FORENSIC_DISCOVERY_V3' %}
       <div class="scan-summary">
         <span class="status-chip">Stage 0 · {{ market_scan.stage0_count }} names</span>
         <span class="status-chip">Stage 1 · {{ market_scan.stage1_scanned_count }} scanned / {{ market_scan.stage1_qualified_count }} passed</span>
@@ -80,7 +80,7 @@
                   <span>{{ item.fair_value_quality }} · {{ item.valuation_methods }} methods</span>
                 </div>
                 <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.priority_reason }}</span></div>
-                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>
+                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>{% if item.accounting_context %}<div class="discovery-forensic-signals">{% for flag in item.accounting_context[:2] %}<span>ECONOMIC REALITY · {{ flag.detail }}</span>{% endfor %}</div>{% endif %}
                 <p class="muted">{{ item.stage2_selection_reason }}</p>
                 <p><span class="muted">Invalidation:</span> {{ item.what_invalidates }}</p>
                 <p class="muted">Freshness · Market: {{ item.freshness.get('market') or item.market_freshness or 'unknown' }} · Fundamentals: {{ item.freshness.get('fundamentals') or item.data_freshness or 'unknown' }} · Valuation: {{ item.freshness.get('valuation') or item.materialized_at or 'unknown' }} · Universe: {{ item.freshness.get('universe') or market_scan.universe_generated_at or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
@@ -109,7 +109,7 @@
                   <span>{{ item.fair_value_quality }} · {{ item.valuation_methods }} methods</span>
                 </div>
                 <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.priority_reason }}</span></div>
-                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>
+                <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>{% if item.accounting_context %}<div class="discovery-forensic-signals">{% for flag in item.accounting_context[:2] %}<span>ECONOMIC REALITY · {{ flag.detail }}</span>{% endfor %}</div>{% endif %}
                 <p class="muted">{{ item.stage2_selection_reason }}</p>
                 <p><span class="muted">Invalidation:</span> {{ item.what_invalidates }}</p>
                 <p class="muted">Freshness · Market: {{ item.freshness.get('market') or item.market_freshness or 'unknown' }} · Fundamentals: {{ item.freshness.get('fundamentals') or item.data_freshness or 'unknown' }} · Valuation: {{ item.freshness.get('valuation') or item.materialized_at or 'unknown' }} · Universe: {{ item.freshness.get('universe') or market_scan.universe_generated_at or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>
@@ -140,7 +140,7 @@
                 <span>{{ item.operating_state or 'UNCONFIRMED' }}</span>
               </div>
               <div class="discovery-list-reason"><strong>{{ item.radar_label }}</strong><span>{{ item.priority_reason }}</span></div>
-              <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>
+              <div class="discovery-forensic-signals">{% for signal in item.forensic_signals[:3] %}<span>{{ signal.label }} · {{ signal.detail }}</span>{% endfor %}</div>{% if item.accounting_context %}<div class="discovery-forensic-signals">{% for flag in item.accounting_context[:2] %}<span>ECONOMIC REALITY · {{ flag.detail }}</span>{% endfor %}</div>{% endif %}
               <p class="muted">{{ item.stage2_selection_reason }}</p>
               <p><span class="muted">Invalidation:</span> {{ item.what_invalidates }}</p>
               <p class="muted">Freshness · Market: {{ item.freshness.get('market') or item.market_freshness or 'unknown' }} · Fundamentals: {{ item.freshness.get('fundamentals') or item.data_freshness or 'unknown' }} · Valuation: {{ item.freshness.get('valuation') or item.materialized_at or 'unknown' }} · Universe: {{ item.freshness.get('universe') or market_scan.universe_generated_at or 'unknown' }}{% if item.warning %} · Warning: {{ item.warning }}{% endif %}</p>

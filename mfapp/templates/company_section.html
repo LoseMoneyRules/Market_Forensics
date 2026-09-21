@@ -28,6 +28,28 @@
       </div>
     </div>
 
+    {% set cq = synthesis.get('company_quality') or {} %}
+    {% if cq %}
+    <div class="panel company-quality-read">
+      <div class="panel-head">
+        <div><p class="eyebrow">COMPANY QUALITY</p><h2>{{ cq.get('state','INSUFFICIENT EVIDENCE') }}</h2><p class="muted">{{ cq.get('headline','') }}</p></div>
+        <span class="status-chip">{{ cq.get('coverage',0) }}% evidence coverage</span>
+      </div>
+      <div class="lens-grid mature-lenses">
+        {% for d in cq.get('dimensions',[]) %}
+        <div class="lens-card lens-state"><span>{{ d.label }}</span><strong>{{ d.state|replace('_',' ') }}</strong><small>{{ d.detail }}</small></div>
+        {% endfor %}
+      </div>
+      {% if cq.get('alarm_bells') %}
+      <div class="two-col">
+        <div><h3>ALARM BELLS</h3>{% for flag in cq.get('alarm_bells',[])[:6] %}<div class="list-row"><div><strong>{{ flag.code|replace('_',' ') }}</strong><p>{{ flag.detail }}</p></div><span class="status-chip">{{ flag.severity }}</span></div>{% endfor %}</div>
+        <div><h3>ECONOMIC STRENGTHS</h3>{% for flag in cq.get('strengths',[])[:6] %}<div class="list-row"><div><strong>{{ flag.code|replace('_',' ') }}</strong><p>{{ flag.detail }}</p></div></div>{% else %}<p class="muted">No strength clears the automatic threshold yet.</p>{% endfor %}</div>
+      </div>
+      {% endif %}
+      <p class="muted">Company Quality judges the business economics, not whether the stock is cheap. Qualitative moat/customer/competition evidence remains a separate Business review.</p>
+    </div>
+    {% endif %}
+
     <div class="two-col">
       <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='overview') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -156,16 +178,260 @@
       <div class="current-kpi"><span>Operating margin</span><strong>{{ pct(current_financial.metrics.operating_margin_pct) if current_financial else '—' }}</strong></div>
       <div class="current-kpi"><span>FCF margin</span><strong>{{ pct(current_financial.metrics.fcf_margin_pct) if current_financial else '—' }}</strong></div>
       <div class="current-kpi"><span>CFO / Net income</span><strong>{% if current_financial and current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div>
-      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if current_financial and current_financial.metrics.roic_pct is none %}Needs operating income, tax, debt, equity & cash{% else %}NOPAT / invested capital{% endif %}</small></div>
-      <div class="current-kpi"><span>Net debt / FCF</span><strong>{% if leverage_display and leverage_display.value is not none %}{{ '%.1f'|format(leverage_display.value) }}x{% else %}—{% endif %}</strong><small>{% if leverage_display and leverage_display.value is not none %}{{ leverage_display.basis }}{% else %}{{ leverage_display.reason if leverage_display else 'Debt/cash or positive FCF unavailable' }}{% endif %}</small></div>
+      <div class="current-kpi"><span>ROIC</span><strong>{{ pct(current_financial.metrics.roic_pct) if current_financial else '—' }}</strong><small>{% if not current_financial %}No current filed basis{% elif current_financial.metrics.roic_pct is none %}Needs operating income, tax & capital classification{% elif current_financial.metrics.roic_basis == 'ECONOMIC_CAPITAL' %}Economic capital basis{% else %}Reported debt/equity/cash basis{% endif %}</small></div>
+      <div class="current-kpi"><span>Economic net debt / FCF</span><strong>{% if leverage_display and leverage_display.value is not none %}{{ '%.1f'|format(leverage_display.value) }}x{% else %}—{% endif %}</strong><small>{% if current_financial and current_financial.metrics.net_debt_basis %}{{ current_financial.metrics.net_debt_basis|replace('_', ' ') }}{% elif leverage_display %}{{ leverage_display.basis }}{% else %}Debt/cash classification unavailable{% endif %}</small></div>
     </div>
+
+    {% set ff = fundamentals_forensics or {} %}
+    <div class="panel fundamentals-forensic-read">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">FUNDAMENTALS FORENSICS · 0.3.0</p>
+          <h2>{{ ff.get('state','INSUFFICIENT EVIDENCE') }}</h2>
+          <p class="muted">{{ ff.get('headline','') }}</p>
+        </div>
+        <span class="status-chip">{{ fundamentals_company_type }}</span>
+      </div>
+
+      {% if economic_refresh_queued and not economic_reality %}
+      <div class="notice amber"><strong>ECONOMIC REALITY REFRESH QUEUED.</strong> This stored filing basis predates the 0.3.0 classification layer. Reported facts remain visible, but leverage/EV conclusions stay unresolved until the SEC refresh finishes.</div>
+      {% endif %}
+
+      {% if ff.get('trend_cards') %}
+      <div class="numbers-quality-grid">
+        {% for card in ff.get('trend_cards',[]) %}
+        <div><span>{{ card.label }}</span><strong>{% if card.label in ['CFO / net income','Economic net debt / FCF'] %}{{ '%.2f'|format(card.value) }}x{% elif card.label in ['CCC change'] %}{{ '%+.1f'|format(card.value) }}d{% else %}{{ '%+.1f'|format(card.value) }}%{% endif %}</strong><small>{{ card.read }} · {{ card.detail }}</small></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="two-col">
+        <div>
+          <div class="panel-head"><div><p class="eyebrow">STRENGTHS</p><h3>What is working</h3></div><span class="status-chip">{{ ff.get('counts',{}).get('strengths',0) }}</span></div>
+          {% for item in ff.get('strengths',[]) %}
+          <div class="list-row"><div><strong>{{ item.label }}</strong><p>{{ item.detail }}</p></div><span class="status-chip">STRENGTH</span></div>
+          {% else %}<p class="muted">No automatic strength clears the current threshold.</p>{% endfor %}
+        </div>
+        <div>
+          <div class="panel-head"><div><p class="eyebrow">RED FLAGS / WATCH</p><h3>What needs attention</h3></div><span class="status-chip">{{ ff.get('counts',{}).get('red_flags',0) }} red · {{ ff.get('counts',{}).get('watches',0) }} watch</span></div>
+          {% for item in ff.get('red_flags',[]) %}
+          <div class="list-row"><div><strong>{{ item.label }}</strong><p>{{ item.detail }}</p></div><span class="status-chip">RED FLAG</span></div>
+          {% endfor %}
+          {% for item in ff.get('watches',[]) %}
+          <div class="list-row"><div><strong>{{ item.label }}</strong><p>{{ item.detail }}</p></div><span class="status-chip">WATCH</span></div>
+          {% endfor %}
+          {% if not ff.get('red_flags') and not ff.get('watches') %}<p class="muted">No material automatic red flag/watch item on the current basis.</p>{% endif %}
+        </div>
+      </div>
+
+      {% if ff.get('inconsistencies') or ff.get('data_gaps') %}
+      <div class="two-col">
+        <div>
+          <div class="panel-head"><div><p class="eyebrow">INCONSISTENCIES</p><h3>Numbers that do not reconcile cleanly</h3></div><span class="status-chip">{{ ff.get('counts',{}).get('inconsistencies',0) }}</span></div>
+          {% for item in ff.get('inconsistencies',[]) %}
+          <div class="list-row"><div><strong>{{ item.label }}</strong><p>{{ item.detail }}</p></div><span class="status-chip">REVIEW</span></div>
+          {% else %}<p class="muted">Deterministic accounting bridges reconcile within tolerance.</p>{% endfor %}
+        </div>
+        <div>
+          <div class="panel-head"><div><p class="eyebrow">DATA GAPS</p><h3>What is still missing</h3></div><span class="status-chip">{{ ff.get('counts',{}).get('data_gaps',0) }}</span></div>
+          {% for item in ff.get('data_gaps',[]) %}
+          <div class="list-row"><div><strong>{{ item.label }}</strong><p>{{ item.detail }}</p></div><span class="status-chip">UNRESOLVED</span></div>
+          {% else %}<p class="muted">No material data/classification gap is unresolved.</p>{% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      <p class="muted">Red flags are evidence prompts, not accusations. Reconciliation warnings can reflect presentation, NCI/mezzanine items or ingestion mapping and remain REVIEW until sourced.</p>
+    </div>
+
+    <div class="panel current-financial-anatomy">
+      <div class="panel-head"><div><p class="eyebrow">CURRENT FINANCIAL ANATOMY</p><h2>All normalized filing fields on the current basis</h2><p class="muted">No selected headline-only view: income statement, cash flow, balance sheet and capital allocation are shown together. Missing facts stay missing.</p></div><span class="status-chip">{{ current_financial.period_label if current_financial else 'NO BASIS' }}</span></div>
+      {% if current_financial %}
+      <h3>Income statement</h3>
+      <div class="numbers-quality-grid">
+        <div><span>Revenue</span><strong>{{ num(current_financial.revenue) }}</strong></div>
+        <div><span>COGS</span><strong>{{ num(current_financial.cogs) }}</strong></div>
+        <div><span>Gross profit</span><strong>{{ num(current_financial.gross_profit) }}</strong></div>
+        <div><span>Operating expenses</span><strong>{{ num(current_financial.operating_expenses) }}</strong></div>
+        <div><span>Operating income</span><strong>{{ num(current_financial.operating_income) }}</strong></div>
+        <div><span>Pretax income</span><strong>{{ num(current_financial.pretax_income) }}</strong></div>
+        <div><span>Income tax</span><strong>{{ num(current_financial.income_tax) }}</strong></div>
+        <div><span>Net income</span><strong>{{ num(current_financial.net_income) }}</strong></div>
+      </div>
+      <h3>Cash flow & capital return</h3>
+      <div class="numbers-quality-grid">
+        <div><span>Operating cash flow</span><strong>{{ num(current_financial.cfo) }}</strong></div>
+        <div><span>CapEx</span><strong>{{ num(current_financial.capex) }}</strong></div>
+        <div><span>Free cash flow</span><strong>{{ num(current_financial.fcf) }}</strong></div>
+        <div><span>Buybacks</span><strong>{{ num(current_financial.buybacks) }}</strong></div>
+        <div><span>Dividends</span><strong>{{ num(current_financial.dividends) }}</strong></div>
+        <div><span>CFO / Net income</span><strong>{% if current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</strong></div>
+        <div><span>FCF / Net income</span><strong>{% if current_financial.metrics.fcf_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.fcf_to_net_income) }}x{% else %}—{% endif %}</strong></div>
+        <div><span>CFO margin</span><strong>{{ pct(current_financial.metrics.cfo_margin_pct) }}</strong></div>
+      </div>
+      <h3>Balance sheet & share basis</h3>
+      <div class="numbers-quality-grid">
+        <div><span>Cash</span><strong>{{ num(current_financial.cash) }}</strong></div>
+        <div><span>Reported debt</span><strong>{{ num(current_financial.debt) }}</strong></div>
+        <div><span>Receivables</span><strong>{{ num(current_financial.receivables) }}</strong></div>
+        <div><span>Inventory</span><strong>{{ num(current_financial.inventory) }}</strong></div>
+        <div><span>Payables</span><strong>{{ num(current_financial.payables) }}</strong></div>
+        <div><span>Assets</span><strong>{{ num(current_financial.assets) }}</strong></div>
+        <div><span>Liabilities</span><strong>{{ num(current_financial.liabilities) }}</strong></div>
+        <div><span>Equity</span><strong>{{ num(current_financial.equity) }}</strong></div>
+        <div><span>Shares outstanding</span><strong>{{ num(current_financial.shares_outstanding) }}</strong></div>
+        <div><span>Diluted shares</span><strong>{{ num(current_financial.diluted_shares) }}</strong></div>
+        <div><span>Working capital</span><strong>{{ num(current_financial.metrics.working_capital) }}</strong></div>
+        <div><span>Asset turnover</span><strong>{% if current_financial.metrics.asset_turnover is not none %}{{ '%.2f'|format(current_financial.metrics.asset_turnover) }}x{% else %}—{% endif %}</strong></div>
+      </div>
+      {% else %}<p class="muted">Refresh SEC fundamentals to create a current basis.</p>{% endif %}
+    </div>
+
+    {% if current_financial %}
+    <div class="panel fundamentals-source-audit">
+      <div class="panel-head"><div><p class="eyebrow">EVIDENCE / PROVENANCE</p><h2>Where the current numbers came from</h2><p class="muted">Period, filing date, normalized source map and Economic Reality fact provenance stay inspectable rather than disappearing behind the analysis.</p></div><span class="status-chip">{{ numbers_completeness.source_covered_field_count }}/{{ numbers_completeness.current_populated_field_count }} populated fields mapped</span></div>
+      <div class="numbers-quality-grid">
+        <div><span>Period end</span><strong>{{ current_financial.period_end or '—' }}</strong></div>
+        <div><span>Filed at</span><strong>{{ current_financial.filed_at or '—' }}</strong></div>
+        <div><span>Comparison basis</span><strong>{{ current_financial.comparison_basis|default('—')|replace('_',' ') }}</strong></div>
+        <div><span>Normalized fields populated</span><strong>{{ numbers_completeness.current_populated_field_count }}/{{ numbers_completeness.normalized_field_count }}</strong></div>
+      </div>
+      <details>
+        <summary><strong>Normalized filing field sources</strong> · {{ current_financial.source_map|length }} mapped entries</summary>
+        <div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Field</th><th>Source / tag / method</th></tr></thead><tbody>
+          {% for key,value in current_financial.source_map.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{% if value is mapping %}{{ value.get('provider') or value.get('namespace') or 'filing' }}{% if value.get('tag') %} · {{ value.get('tag') }}{% endif %}{% if value.get('method') %} · {{ value.get('method')|replace('_',' ') }}{% endif %}{% if value.get('filed') %} · filed {{ value.get('filed') }}{% endif %}{% if value.get('accession') %} · {{ value.get('accession') }}{% endif %}{% else %}{{ value }}{% endif %}</small></td></tr>{% else %}<tr><td colspan="2" class="empty-cell">No normalized source map is stored for this basis.</td></tr>{% endfor %}
+        </tbody></table></div>
+      </details>
+      {% if economic_reality and economic_reality.fact_sources %}
+      <details>
+        <summary><strong>Economic Reality fact sources</strong> · {{ economic_reality.fact_sources|length }} classified inputs</summary>
+        <div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Economic fact</th><th>Source</th></tr></thead><tbody>
+          {% for key,value in economic_reality.fact_sources.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{% if value is mapping %}{{ value.get('namespace') or value.get('provider') or 'filing' }}{% if value.get('tag') %} · {{ value.get('tag') }}{% endif %}{% if value.get('method') %} · {{ value.get('method')|replace('_',' ') }}{% endif %}{% if value.get('filed') %} · filed {{ value.get('filed') }}{% endif %}{% if value.get('accession') %} · {{ value.get('accession') }}{% endif %}{% else %}{{ value }}{% endif %}</small></td></tr>{% endfor %}
+        </tbody></table></div>
+      </details>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if economic_reality %}
+    <div class="panel economic-reality-panel">
+      <div class="panel-head">
+        <div><p class="eyebrow">ECONOMIC REALITY · 0.3.0</p><h2>Reported accounting → economic interpretation</h2><p class="muted">Filed numbers remain unchanged. This layer separates financing debt, operating capital and non-debt liabilities before valuation or evidence scoring.</p></div>
+        <span class="status-chip" data-status-value="{{ 'REVIEW' if economic_reality.material_unresolved else 'PASS' }}">{{ economic_reality.quality or 'UNAVAILABLE' }}{% if economic_reality.material_unresolved %} · REVIEW{% endif %}</span>
+      </div>
+      <div class="numbers-quality-grid">
+        <div><span>Reported debt</span><strong>{{ num(economic_reality.reported_debt) }}</strong><small>As normalized from filing</small></div>
+        <div><span>Financial debt</span><strong>{{ num(economic_reality.financial_debt) }}</strong><small>Borrowings only</small></div>
+        <div><span>Finance leases</span><strong>{{ num(economic_reality.finance_lease_liability) }}</strong><small>Debt-like lease financing</small></div>
+        <div><span>Operating leases</span><strong>{{ num(economic_reality.operating_lease_liability) }}</strong><small>Operating footprint · kept separate</small></div>
+        <div><span>Economic net debt</span><strong>{{ num(economic_reality.economic_net_debt) }}</strong><small>{{ economic_reality.debt_basis|default('UNRESOLVED')|replace('_',' ') }}</small></div>
+        <div><span>Lease / liabilities</span><strong>{{ pct(economic_reality.operating_lease_share_of_liabilities_pct) }}</strong><small>Operating leases as share of total liabilities</small></div>
+        <div><span>Revenue / lease liability</span><strong>{% if economic_reality.lease_revenue_productivity_x is not none %}{{ '%.2f'|format(economic_reality.lease_revenue_productivity_x) }}x{% else %}—{% endif %}</strong><small>Productivity context, not a solvency ratio</small></div>
+        <div><span>Growth capex proxy</span><strong>{{ num(economic_reality.growth_capex_proxy) }}</strong><small>Capex above D&amp;A · proxy only</small></div>
+        <div><span>Owner-cash proxy</span><strong>{{ num(economic_reality.owner_cash_proxy) }}</strong><small>CFO − D&amp;A-based maintenance proxy</small></div>
+        <div><span>FCF after SBC</span><strong>{{ num(economic_reality.fcf_after_sbc) }}</strong><small>Cash FCF less share-based compensation</small></div>
+        <div><span>Economic ROIC</span><strong>{{ pct(economic_reality.economic_roic_pct) }}</strong><small>Excludes operating leases from financial debt</small></div>
+        <div><span>ROIC incl. lease capital</span><strong>{{ pct(economic_reality.lease_adjusted_roic_pct) }}</strong><small>Conservative denominator view; not an accounting restatement</small></div>
+      </div>
+      <details>
+        <summary><strong>Full Economic Reality ledger</strong> · financing, leases, liquidity, hidden obligations and accounting distortions</summary>
+        <h3>Financing claims & liquidity</h3>
+        <div class="numbers-quality-grid">
+          <div><span>Gross economic debt</span><strong>{{ num(economic_reality.gross_economic_debt) }}</strong></div>
+          <div><span>Supplier finance</span><strong>{{ num(economic_reality.supplier_finance) }}</strong></div>
+          <div><span>Pension / postretirement</span><strong>{{ num(economic_reality.pension_postretirement) }}</strong></div>
+          <div><span>Redeemable NCI</span><strong>{{ num(economic_reality.redeemable_nci) }}</strong></div>
+          <div><span>Noncontrolling interest</span><strong>{{ num(economic_reality.noncontrolling_interest) }}</strong></div>
+          <div><span>Preferred equity</span><strong>{{ num(economic_reality.preferred_equity) }}</strong></div>
+          <div><span>Contingent consideration</span><strong>{{ num(economic_reality.contingent_consideration) }}</strong></div>
+          <div><span>Unrestricted cash offset</span><strong>{{ num(economic_reality.unrestricted_cash_for_debt_offset) }}</strong></div>
+          <div><span>Marketable securities</span><strong>{{ num(economic_reality.marketable_securities_current) }}</strong></div>
+          <div><span>Restricted cash</span><strong>{{ num(economic_reality.restricted_cash) }}</strong></div>
+          <div><span>Total liquid offset</span><strong>{{ num(economic_reality.liquid_offset) }}</strong></div>
+          <div><span>Economic net debt</span><strong>{{ num(economic_reality.economic_net_debt) }}</strong></div>
+        </div>
+        <h3>Lease & fixed-charge economics</h3>
+        <div class="numbers-quality-grid">
+          <div><span>Operating lease ROU asset</span><strong>{{ num(economic_reality.operating_lease_rou_asset) }}</strong></div>
+          <div><span>Finance lease ROU asset</span><strong>{{ num(economic_reality.finance_lease_rou_asset) }}</strong></div>
+          <div><span>Operating lease cost</span><strong>{{ num(economic_reality.operating_lease_cost) }}</strong></div>
+          <div><span>Total lease cost</span><strong>{{ num(economic_reality.total_lease_cost) }}</strong></div>
+          <div><span>Lease cost / revenue</span><strong>{{ pct(economic_reality.lease_cost_to_revenue_pct) }}</strong></div>
+          <div><span>Current lease share</span><strong>{{ pct(economic_reality.operating_lease_current_share_pct) }}</strong></div>
+          <div><span>Current lease / CFO</span><strong>{% if economic_reality.operating_lease_current_to_cfo_x is not none %}{{ '%.2f'|format(economic_reality.operating_lease_current_to_cfo_x) }}x{% else %}—{% endif %}</strong></div>
+          <div><span>Interest expense</span><strong>{{ num(economic_reality.interest_expense) }}</strong></div>
+          <div><span>Interest coverage</span><strong>{% if economic_reality.interest_coverage_x is not none %}{{ '%.2f'|format(economic_reality.interest_coverage_x) }}x{% else %}—{% endif %}</strong></div>
+          <div><span>Fixed-charge coverage</span><strong>{% if economic_reality.fixed_charge_coverage_proxy_x is not none %}{{ '%.2f'|format(economic_reality.fixed_charge_coverage_proxy_x) }}x{% else %}—{% endif %}</strong></div>
+        </div>
+        <h3>Operating/accounting distortions</h3>
+        <div class="numbers-quality-grid">
+          <div><span>Deferred / contract revenue</span><strong>{{ num(economic_reality.deferred_revenue) }}</strong></div>
+          <div><span>Deferred tax liability</span><strong>{{ num(economic_reality.deferred_tax_liability) }}</strong></div>
+          <div><span>Asset retirement obligation</span><strong>{{ num(economic_reality.asset_retirement_obligation) }}</strong></div>
+          <div><span>Goodwill</span><strong>{{ num(economic_reality.goodwill) }}</strong></div>
+          <div><span>Intangibles</span><strong>{{ num(economic_reality.intangibles) }}</strong></div>
+          <div><span>Treasury stock</span><strong>{{ num(economic_reality.treasury_stock) }}</strong></div>
+          <div><span>D&amp;A</span><strong>{{ num(economic_reality.depreciation_amortization) }}</strong></div>
+          <div><span>Maintenance CapEx proxy</span><strong>{{ num(economic_reality.maintenance_capex_proxy) }}</strong></div>
+          <div><span>Growth CapEx proxy</span><strong>{{ num(economic_reality.growth_capex_proxy) }}</strong></div>
+          <div><span>Owner-cash proxy</span><strong>{{ num(economic_reality.owner_cash_proxy) }}</strong></div>
+          <div><span>Share-based compensation</span><strong>{{ num(economic_reality.share_based_compensation) }}</strong></div>
+          <div><span>SBC / revenue</span><strong>{{ pct(economic_reality.sbc_to_revenue_pct) }}</strong></div>
+          <div><span>R&amp;D</span><strong>{{ num(economic_reality.research_and_development) }}</strong></div>
+          <div><span>R&amp;D / revenue</span><strong>{{ pct(economic_reality.rd_to_revenue_pct) }}</strong></div>
+          <div><span>Advertising expense</span><strong>{{ num(economic_reality.advertising_expense) }}</strong></div>
+          <div><span>Acquisition cash spend</span><strong>{{ num(economic_reality.acquisition_cash_spend) }}</strong></div>
+          <div><span>Business-sale proceeds</span><strong>{{ num(economic_reality.business_sale_proceeds) }}</strong></div>
+          <div><span>Receivables financing proceeds</span><strong>{{ num(economic_reality.receivables_financing_proceeds) }}</strong></div>
+          <div><span>Special charges</span><strong>{{ num(economic_reality.special_charges) }}</strong></div>
+          <div><span>Special charges / revenue</span><strong>{{ pct(economic_reality.special_charges_to_revenue_pct) }}</strong></div>
+          <div><span>Normalized op income proxy</span><strong>{{ num(economic_reality.normalized_operating_income_proxy) }}</strong></div>
+          <div><span>Raw effective tax rate</span><strong>{{ pct(economic_reality.raw_effective_tax_rate_pct) }}</strong></div>
+        </div>
+        <h3>Capital-return denominators</h3>
+        <div class="numbers-quality-grid">
+          <div><span>Economic invested capital</span><strong>{{ num(economic_reality.economic_invested_capital) }}</strong></div>
+          <div><span>Economic ROIC</span><strong>{{ pct(economic_reality.economic_roic_pct) }}</strong></div>
+          <div><span>Lease-adjusted invested capital</span><strong>{{ num(economic_reality.lease_adjusted_invested_capital) }}</strong></div>
+          <div><span>Lease-adjusted ROIC</span><strong>{{ pct(economic_reality.lease_adjusted_roic_pct) }}</strong></div>
+        </div>
+      </details>
+      {% if economic_reality.flags %}
+      <div class="stack compact">
+        {% for flag in economic_reality.flags %}
+        <div class="list-row"><div><strong>{{ flag.code|replace('_',' ') }}</strong><p>{{ flag.detail }}</p></div><span class="status-chip">{{ flag.tone }}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if economic_reality.unresolved %}<div class="notice amber"><strong>CLASSIFICATION REVIEW.</strong> {{ economic_reality.unresolved|join(' ') }}</div>{% endif %}
+      <p class="muted">Important: lease productivity, maintenance capex and normalized operating income are diagnostics, not accounting restatements. They prevent automatic false signals; they do not erase contractual obligations or investment risk.</p>
+    </div>
+    {% endif %}
     <div class="chart-grid">
       <div class="panel chart-card"><div class="panel-head"><div><h2>Revenue & free cash flow</h2><p class="muted">Revenue is shown as columns; free cash flow is the line. Current TTM is included only when four consecutive stored quarters reconcile.</p></div></div><canvas data-mf-chart="numbers-scale" data-series='{{ numbers_scale_series|tojson|forceescape }}'></canvas></div>
       <div class="panel chart-card"><div class="panel-head"><div><h2>Operating & FCF margin</h2><p class="muted">Profitability quality and forward Base assumptions.</p></div></div><canvas data-mf-chart="numbers-margin" data-series='[{% for r in financials|reverse %}{"label":"FY{{ r.fiscal_year }}","op_margin":{{ r.metrics.operating_margin_pct if r.metrics.operating_margin_pct is not none else "null" }},"fcf_margin":{{ r.metrics.fcf_margin_pct if r.metrics.fcf_margin_pct is not none else "null" }}}{% if not loop.last or forecast_rows %},{% endif %}{% endfor %}{% for f in forecast_rows %}{"label":"{{ f.period_label }}","forecast_op_margin":{{ (f.operating_margin*100) if f.operating_margin is not none else "null" }}}{% if not loop.last %},{% endif %}{% endfor %}]'></canvas></div>
       <div class="panel chart-card"><div class="panel-head"><div><h2>Working capital</h2><p class="muted">Inventory and receivables can reveal pressure before earnings do.</p></div></div><canvas data-mf-chart="working-capital" data-series='[{% for r in financials|reverse %}{"label":"FY{{ r.fiscal_year }}","inventory":{{ r.inventory|float if r.inventory is not none else "null" }},"receivables":{{ r.receivables|float if r.receivables is not none else "null" }}}{% if not loop.last %},{% endif %}{% endfor %}]'></canvas></div>
       <div class="panel"><div class="panel-head"><h2>What stands out</h2></div>{% for s in intelligence.get('signals', []) if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No material automatic signal yet.</p>{% endfor %}</div>
     </div>
-    <div class="table-card scroll"><table class="data-table numeric"><thead><tr><th>Period</th><th>Revenue</th><th>Growth</th><th>Gross Margin</th><th>Op Margin</th><th>Net Income</th><th>FCF</th><th>FCF Margin</th><th>Inventory</th><th>Receivables</th><th>DSO</th><th>DIO</th><th>CCC</th></tr></thead><tbody>{% if current_financial and current_financial.period_type == 'TTM' %}<tr class="ttm-row"><td><span class="period-chip">TTM</span> {{ current_financial.period_end }}</td><td>{{ num(current_financial.revenue) }}</td><td>{{ pct(current_financial.metrics.revenue_growth_pct) }}</td><td>{{ pct(current_financial.metrics.gross_margin_pct) }}</td><td>{{ pct(current_financial.metrics.operating_margin_pct) }}</td><td>{{ num(current_financial.net_income) }}</td><td>{{ num(current_financial.fcf) }}</td><td>{{ pct(current_financial.metrics.fcf_margin_pct) }}</td><td>{{ num(current_financial.inventory) }}</td><td>{{ num(current_financial.receivables) }}</td><td>{{ '%.1f'|format(current_financial.metrics.dso) if current_financial.metrics.dso is not none else '—' }}</td><td>{{ '%.1f'|format(current_financial.metrics.dio) if current_financial.metrics.dio is not none else '—' }}</td><td>{{ '%.1f'|format(current_financial.metrics.cash_conversion_days) if current_financial.metrics.cash_conversion_days is not none else '—' }}</td></tr>{% endif %}{% for r in financials %}<tr><td><strong>FY{{ r.fiscal_year }}</strong></td><td>{{ num(r.revenue) }}</td><td>{{ pct(r.metrics.revenue_growth_pct) }}</td><td>{{ pct(r.metrics.gross_margin_pct) }}</td><td>{{ pct(r.metrics.operating_margin_pct) }}</td><td>{{ num(r.net_income) }}</td><td>{{ num(r.fcf) }}</td><td>{{ pct(r.metrics.fcf_margin_pct) }}</td><td>{{ num(r.inventory) }}</td><td>{{ num(r.receivables) }}</td><td>{{ '%.1f'|format(r.metrics.dso) if r.metrics.dso is not none else '—' }}</td><td>{{ '%.1f'|format(r.metrics.dio) if r.metrics.dio is not none else '—' }}</td><td>{{ '%.1f'|format(r.metrics.cash_conversion_days) if r.metrics.cash_conversion_days is not none else '—' }}</td></tr>{% else %}<tr><td colspan="13" class="empty-cell">No normalized financials stored yet.</td></tr>{% endfor %}{% for f in forecast_rows %}<tr class="forecast-row"><td><strong>{{ f.period_label }}</strong></td><td>{{ num(f.revenue) }}</td><td>{{ pct(f.growth*100 if f.growth is not none else none) }}</td><td>—</td><td>{{ pct(f.operating_margin*100 if f.operating_margin is not none else none) }}</td><td>{{ num(f.net_income) }}</td><td>{{ num(f.fcf) }}</td><td>{{ pct(f.fcf_margin*100 if f.fcf_margin is not none else none) }}</td><td colspan="5">Base-case model forecast</td></tr>{% endfor %}</tbody></table></div>
+    <div class="panel">
+      <div class="panel-head"><div><p class="eyebrow">COMPLETE FILED HISTORY</p><h2>Income statement & cash flow</h2><p class="muted">All normalized annual statement/cash-flow fields, plus current TTM where a valid four-quarter sequence exists.</p></div></div>
+      <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Period</th><th>Revenue</th><th>COGS</th><th>Gross Profit</th><th>OpEx</th><th>Operating Income</th><th>Pretax</th><th>Tax</th><th>Net Income</th><th>CFO</th><th>CapEx</th><th>FCF</th><th>Buybacks</th><th>Dividends</th></tr></thead><tbody>{% if current_financial and current_financial.period_type == 'TTM' %}<tr class="ttm-row"><td><span class="period-chip">TTM</span> {{ current_financial.period_end }}</td><td>{{ num(current_financial.revenue) }}</td><td>{{ num(current_financial.cogs) }}</td><td>{{ num(current_financial.gross_profit) }}</td><td>{{ num(current_financial.operating_expenses) }}</td><td>{{ num(current_financial.operating_income) }}</td><td>{{ num(current_financial.pretax_income) }}</td><td>{{ num(current_financial.income_tax) }}</td><td>{{ num(current_financial.net_income) }}</td><td>{{ num(current_financial.cfo) }}</td><td>{{ num(current_financial.capex) }}</td><td>{{ num(current_financial.fcf) }}</td><td>{{ num(current_financial.buybacks) }}</td><td>{{ num(current_financial.dividends) }}</td></tr>{% endif %}{% for r in financials %}<tr><td><strong>FY{{ r.fiscal_year }}</strong></td><td>{{ num(r.revenue) }}</td><td>{{ num(r.cogs) }}</td><td>{{ num(r.gross_profit) }}</td><td>{{ num(r.operating_expenses) }}</td><td>{{ num(r.operating_income) }}</td><td>{{ num(r.pretax_income) }}</td><td>{{ num(r.income_tax) }}</td><td>{{ num(r.net_income) }}</td><td>{{ num(r.cfo) }}</td><td>{{ num(r.capex) }}</td><td>{{ num(r.fcf) }}</td><td>{{ num(r.buybacks) }}</td><td>{{ num(r.dividends) }}</td></tr>{% else %}<tr><td colspan="14" class="empty-cell">No normalized financials stored yet.</td></tr>{% endfor %}</tbody></table></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div><p class="eyebrow">COMPLETE FILED HISTORY</p><h2>Balance sheet & capital</h2><p class="muted">All normalized annual balance-sheet/share fields. Economic classifications remain in the separate Economic Reality ledger above.</p></div></div>
+      <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Period</th><th>Cash</th><th>Reported Debt</th><th>Receivables</th><th>Inventory</th><th>Payables</th><th>Assets</th><th>Liabilities</th><th>Equity</th><th>Shares Out.</th><th>Diluted Shares</th></tr></thead><tbody>
+      {% if current_financial and current_financial.period_type == 'TTM' %}<tr class="ttm-row"><td><span class="period-chip">TTM</span></td><td>{{ num(current_financial.cash) }}</td><td>{{ num(current_financial.debt) }}</td><td>{{ num(current_financial.receivables) }}</td><td>{{ num(current_financial.inventory) }}</td><td>{{ num(current_financial.payables) }}</td><td>{{ num(current_financial.assets) }}</td><td>{{ num(current_financial.liabilities) }}</td><td>{{ num(current_financial.equity) }}</td><td>{{ num(current_financial.shares_outstanding) }}</td><td>{{ num(current_financial.diluted_shares) }}</td></tr>{% endif %}
+      {% for r in financials %}<tr><td><strong>FY{{ r.fiscal_year }}</strong></td><td>{{ num(r.cash) }}</td><td>{{ num(r.debt) }}</td><td>{{ num(r.receivables) }}</td><td>{{ num(r.inventory) }}</td><td>{{ num(r.payables) }}</td><td>{{ num(r.assets) }}</td><td>{{ num(r.liabilities) }}</td><td>{{ num(r.equity) }}</td><td>{{ num(r.shares_outstanding) }}</td><td>{{ num(r.diluted_shares) }}</td></tr>{% else %}<tr><td colspan="11" class="empty-cell">No normalized balance-sheet history stored yet.</td></tr>{% endfor %}
+      </tbody></table></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div><p class="eyebrow">OPERATING METRICS HISTORY</p><h2>Growth, margins & conversion</h2><p class="muted">Derived metrics stay separate from reported statement facts.</p></div></div>
+      <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Period</th><th>Revenue Growth</th><th>Gross Margin</th><th>Op Margin</th><th>Net Margin</th><th>CFO Margin</th><th>FCF Margin</th><th>CFO / NI</th><th>FCF / NI</th><th>ROIC</th><th>Asset Turnover</th></tr></thead><tbody>
+      {% if current_financial and current_financial.period_type == 'TTM' %}<tr class="ttm-row"><td><span class="period-chip">TTM</span></td><td>{{ pct(current_financial.metrics.revenue_growth_pct) }}</td><td>{{ pct(current_financial.metrics.gross_margin_pct) }}</td><td>{{ pct(current_financial.metrics.operating_margin_pct) }}</td><td>{{ pct(current_financial.metrics.net_margin_pct) }}</td><td>{{ pct(current_financial.metrics.cfo_margin_pct) }}</td><td>{{ pct(current_financial.metrics.fcf_margin_pct) }}</td><td>{% if current_financial.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</td><td>{% if current_financial.metrics.fcf_to_net_income is not none %}{{ '%.2f'|format(current_financial.metrics.fcf_to_net_income) }}x{% else %}—{% endif %}</td><td>{{ pct(current_financial.metrics.roic_pct) }}</td><td>{% if current_financial.metrics.asset_turnover is not none %}{{ '%.2f'|format(current_financial.metrics.asset_turnover) }}x{% else %}—{% endif %}</td></tr>{% endif %}
+      {% for r in financials %}<tr><td><strong>FY{{ r.fiscal_year }}</strong></td><td>{{ pct(r.metrics.revenue_growth_pct) }}</td><td>{{ pct(r.metrics.gross_margin_pct) }}</td><td>{{ pct(r.metrics.operating_margin_pct) }}</td><td>{{ pct(r.metrics.net_margin_pct) }}</td><td>{{ pct(r.metrics.cfo_margin_pct) }}</td><td>{{ pct(r.metrics.fcf_margin_pct) }}</td><td>{% if r.metrics.cfo_to_net_income is not none %}{{ '%.2f'|format(r.metrics.cfo_to_net_income) }}x{% else %}—{% endif %}</td><td>{% if r.metrics.fcf_to_net_income is not none %}{{ '%.2f'|format(r.metrics.fcf_to_net_income) }}x{% else %}—{% endif %}</td><td>{{ pct(r.metrics.roic_pct) }}</td><td>{% if r.metrics.asset_turnover is not none %}{{ '%.2f'|format(r.metrics.asset_turnover) }}x{% else %}—{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>
+    </div>
     <div class="panel working-capital-forensics">
       <div class="panel-head"><div><p class="eyebrow">WORKING CAPITAL FORENSICS</p><h2>Operating pressure before the headline</h2><p class="muted">DSO, DIO and DPO are paired with balance-sheet intensity, cash conversion and dilution. Missing filing facts stay missing.</p></div></div>
       <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Period</th><th>DSO</th><th>DIO</th><th>DPO</th><th>CCC</th><th>Inventory / Revenue</th><th>Receivables / Revenue</th><th>CFO / Net Income</th><th>Shares YoY</th><th>ROIC</th></tr></thead><tbody>
@@ -189,10 +455,15 @@
         <div><span>Annual periods</span><strong>{{ numbers_completeness.annual_count }}</strong></div>
         <div><span>Stored quarters</span><strong>{{ numbers_completeness.quarter_count }}</strong></div>
         <div><span>Current basis</span><strong>{{ numbers_completeness.current_label or '—' }}</strong></div>
-        <div><span>Unresolved inputs / metrics</span><strong>{{ numbers_completeness.unresolved_count }}</strong></div>
+        <div><span>Normalized fields</span><strong>{{ numbers_completeness.current_populated_field_count }}/{{ numbers_completeness.normalized_field_count }}</strong><small>populated on current basis</small></div>
+        <div><span>Mapped populated fields</span><strong>{{ numbers_completeness.source_covered_field_count }}/{{ numbers_completeness.current_populated_field_count }}</strong><small>source/provenance mapping</small></div>
+        <div><span>Decision-critical gaps</span><strong>{{ numbers_completeness.critical_unresolved_count }}</strong><small>core statement / continuity / derived</small></div>
+        <div><span>All visible gaps</span><strong>{{ numbers_completeness.unresolved_count }}</strong><small>includes non-critical historically expected fields</small></div>
+        <div><span>Economic Reality</span><strong>{{ 'READY' if numbers_completeness.economic_reality_ready else 'REVIEW' }}</strong><small>required for canonical leverage / EV bridge</small></div>
       </div>
       {% if numbers_completeness.quarter_gaps %}<div class="notice amber">{% for message in numbers_completeness.quarter_gaps %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
       {% if numbers_completeness.missing_current_fields %}<p class="muted"><strong>Statement gaps:</strong> {{ numbers_completeness.missing_current_fields|join(', ') }}.</p>{% endif %}
+      {% if numbers_completeness.missing_expected_fields %}<p class="muted"><strong>Historically populated fields missing on the current basis:</strong> {{ numbers_completeness.missing_expected_fields|join(', ') }}.</p>{% endif %}
       {% if numbers_completeness.missing_continuity_fields %}<p class="muted"><strong>Current balance-sheet gaps despite recent historical availability:</strong> {{ numbers_completeness.missing_continuity_fields|join(', ') }}.</p>{% endif %}
       {% if numbers_completeness.missing_derived_metrics %}<p class="muted"><strong>Derived analysis still unavailable:</strong> {{ numbers_completeness.missing_derived_metrics|join(', ') }}.</p>{% endif %}
       {% if numbers_completeness.unresolved_count %}<p class="muted">Refresh SEC + TTM first. Market Forensics now checks canonical US-GAAP concepts, exact consolidated filing-label fallbacks, debt components, then configured secondary fundamentals. Anything still unresolved remains visible rather than guessed.</p>{% else %}<p class="muted">No historically expected analytical input is unresolved on the current basis.</p>{% endif %}

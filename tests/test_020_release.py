@@ -651,7 +651,7 @@ def test_020_market_wide_discovery_screen_is_only_a_funnel_for_forensic_value():
     forensic = Path("mfapp/discovery_forensics.py").read_text()
     assert "stage0_universe" in market
     assert "stage1_screen" in market
-    assert "BROAD_FORENSIC_DISCOVERY_V2" in market
+    assert "BROAD_FORENSIC_DISCOVERY_V3" in market
     assert "FORENSIC_ENRICH_LIMIT = 10" in forensic
     assert "FORENSIC_WATCH_EDGE_PCT = 12.0" in forensic
     assert "discovery_opportunity" in forensic

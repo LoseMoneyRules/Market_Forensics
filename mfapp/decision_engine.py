@@ -4,6 +4,7 @@ from math import isfinite
 from typing import Any
 
 from .valuation_engine import canonical_valuation_quality, valuation_is_decision_grade
+from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 
 
 BUY_THRESHOLD = 2.5
@@ -56,6 +57,7 @@ def build_research_intelligence(
     prior = financials[1] if len(financials) > 1 else {}
     metrics = latest.get("metrics") or {}
     prior_metrics = prior.get("metrics") or {}
+    economic = economic_from_row(latest)
 
     price = _n(market_price if market_price is not None else valuation.get("current_price"))
     base = _n(valuation.get("base"))
@@ -103,47 +105,98 @@ def build_research_intelligence(
         if delta >= 2:
             add("Margin inflection", f"Operating margin improved {delta:+.1f} pts to {op_margin:.1f}%.", "positive", 1.0, "numbers")
         elif delta <= -2:
-            add("Margin inflection", f"Operating margin deteriorated {delta:+.1f} pts to {op_margin:.1f}%.", "negative", -1.0, "numbers")
+            if has_suppression(economic, "REPORTED_MARGIN_DETERIORATION_AUTOMATIC"):
+                add(
+                    "Margin normalization review",
+                    f"Reported operating margin deteriorated {delta:+.1f} pts, but explicit special charges are material; keep reported and normalized views separate.",
+                    "watch", 0.0, "numbers",
+                )
+            else:
+                add("Margin inflection", f"Operating margin deteriorated {delta:+.1f} pts to {op_margin:.1f}%.", "negative", -1.0, "numbers")
         else:
             add("Operating margin", f"Operating margin is {op_margin:.1f}% ({delta:+.1f} pts YoY).", "neutral", 0.0, "numbers")
 
     fcf = _n(latest.get("fcf"))
     net_income = _n(latest.get("net_income"))
     if fcf is not None:
+        growth_capex = economic_metric(economic, "growth_capex_proxy")
+        owner_cash = economic_metric(economic, "owner_cash_proxy")
         if fcf < 0:
-            add("Cash conversion", "Free cash flow is negative in the latest fiscal year.", "negative", -1.5, "financial-flows")
+            if has_suppression(economic, "NEGATIVE_FCF_AUTOMATIC") and owner_cash is not None:
+                add(
+                    "Growth reinvestment",
+                    f"Reported FCF is negative, while a D&A-based maintenance-capex proxy implies owner cash of {owner_cash:,.0f}; growth capex proxy is {growth_capex or 0:,.0f}. No automatic cash-flow penalty.",
+                    "watch", 0.0, "financial-flows",
+                )
+            else:
+                add("Cash conversion", "Free cash flow is negative in the latest fiscal year.", "negative", -1.5, "financial-flows")
         elif net_income not in (None, 0):
             conversion = fcf / net_income
             if conversion >= 1:
-                add("Cash conversion", f"FCF / net income is {conversion:.2f}x.", "positive", 1.0, "financial-flows")
+                if has_suppression(economic, "FCF_POSITIVE_UNADJUSTED"):
+                    fcf_after_sbc = economic_metric(economic, "fcf_after_sbc")
+                    add(
+                        "Cash conversion after SBC",
+                        f"Reported FCF / net income is {conversion:.2f}x, but SBC is material; FCF after SBC is {fcf_after_sbc:,.0f}." if fcf_after_sbc is not None else f"Reported FCF / net income is {conversion:.2f}x, but SBC is material.",
+                        "watch", 0.0, "financial-flows",
+                    )
+                else:
+                    add("Cash conversion", f"FCF / net income is {conversion:.2f}x.", "positive", 1.0, "financial-flows")
             elif conversion < .55:
-                add("Cash conversion", f"FCF / net income is only {conversion:.2f}x.", "negative", -1.0, "financial-flows")
+                if has_suppression(economic, "NEGATIVE_FCF_AUTOMATIC") and owner_cash is not None:
+                    add(
+                        "Cash conversion / reinvestment",
+                        f"FCF / net income is {conversion:.2f}x, but growth-capex classification is material; owner-cash proxy is {owner_cash:,.0f}.",
+                        "watch", 0.0, "financial-flows",
+                    )
+                else:
+                    add("Cash conversion", f"FCF / net income is only {conversion:.2f}x.", "negative", -1.0, "financial-flows")
             else:
                 add("Cash conversion", f"FCF / net income is {conversion:.2f}x.", "neutral", 0.0, "financial-flows")
 
     inv_growth = _n(metrics.get("inventory_growth_pct"))
     rec_growth = _n(metrics.get("receivables_growth_pct"))
+    generic_wc_disabled = has_suppression(economic, "GENERIC_WORKING_CAPITAL_SCORE")
     if revenue_growth is not None and inv_growth is not None:
         spread = inv_growth - revenue_growth
         if spread >= 12:
-            add("Inventory divergence", f"Inventory grew {spread:.1f} pts faster than revenue.", "negative", -1.0, "numbers")
+            add("Inventory divergence", f"Inventory grew {spread:.1f} pts faster than revenue.", "watch" if generic_wc_disabled else "negative", 0.0 if generic_wc_disabled else -1.0, "numbers")
         elif spread <= -10:
-            add("Inventory discipline", f"Inventory grew {abs(spread):.1f} pts slower than revenue.", "positive", .5, "numbers")
+            add("Inventory discipline", f"Inventory grew {abs(spread):.1f} pts slower than revenue.", "neutral" if generic_wc_disabled else "positive", 0.0 if generic_wc_disabled else .5, "numbers")
     if revenue_growth is not None and rec_growth is not None:
         spread = rec_growth - revenue_growth
         if spread >= 12:
-            add("Receivables divergence", f"Receivables grew {spread:.1f} pts faster than revenue.", "negative", -1.0, "numbers")
+            add("Receivables divergence", f"Receivables grew {spread:.1f} pts faster than revenue.", "watch" if generic_wc_disabled else "negative", 0.0 if generic_wc_disabled else -1.0, "numbers")
 
-    net_debt = _n(metrics.get("net_debt"))
-    if net_debt is not None and fcf not in (None, 0):
+    net_debt = _n(metrics.get("economic_net_debt"))
+    if net_debt is None and not economic:
+        net_debt = _n(metrics.get("net_debt"))
+    generic_leverage_disabled = has_suppression(economic, "GENERIC_LEVERAGE_SCORE")
+    economic_unresolved = bool(economic.get("material_unresolved"))
+    if economic_unresolved:
+        add("Economic leverage", "Debt-like classification is materially unresolved; generic leverage scoring is disabled.", "watch", 0.0, "numbers")
+    elif net_debt is not None and fcf not in (None, 0):
         if net_debt <= 0:
-            add("Balance sheet", "Net cash / no net debt on latest filing basis.", "positive", .5, "numbers")
+            add("Economic balance sheet", "Net cash / no economic net debt on the classified filing basis.", "neutral" if generic_leverage_disabled else "positive", 0.0 if generic_leverage_disabled else .5, "numbers")
         elif fcf > 0:
             leverage = net_debt / fcf
             if leverage >= 4:
-                add("Leverage", f"Net debt is about {leverage:.1f}x latest FCF.", "negative", -1.0, "numbers")
+                add("Economic leverage", f"Classified economic net debt is about {leverage:.1f}x latest FCF.", "watch" if generic_leverage_disabled else "negative", 0.0 if generic_leverage_disabled else -1.0, "numbers")
             elif leverage <= 2:
-                add("Leverage", f"Net debt is about {leverage:.1f}x latest FCF.", "neutral", .25, "numbers")
+                add("Economic leverage", f"Classified economic net debt is about {leverage:.1f}x latest FCF.", "neutral", 0.0 if generic_leverage_disabled else .25, "numbers")
+
+    lease_liability = economic_metric(economic, "operating_lease_liability")
+    lease_productivity = economic_metric(economic, "lease_revenue_productivity_x")
+    if lease_liability is not None:
+        detail = f"Operating lease liabilities are {lease_liability:,.0f}"
+        if lease_productivity is not None:
+            detail += f"; revenue / lease liability is {lease_productivity:.2f}x"
+        add("Operating lease capital", detail + ". Kept separate from financial debt.", "neutral", 0.0, "numbers")
+
+    for flag in economic.get("flags") or []:
+        code = str(flag.get("code") or "")
+        if code in {"LEASE_HEAVY_LIABILITIES", "LEASE_PRODUCTIVE_OPERATING_CAPITAL", "GROWTH_CAPEX_MATERIAL", "SBC_MATERIAL", "SPECIAL_CHARGES_MATERIAL", "CUSTOMER_FINANCING_MATERIAL", "BUYBACK_EQUITY_DISTORTION", "NONPOSITIVE_BOOK_EQUITY", "SECTOR_BALANCE_SHEET_POLICY"}:
+            add("Economic reality", str(flag.get("detail") or code), "watch", 0.0, "numbers")
 
     finra = finra_summary or {}
     si = finra.get("latest_short_interest") or {}
@@ -159,6 +212,8 @@ def build_research_intelligence(
 
     if not decision_grade_valuation:
         warnings.append(f"Valuation quality is {base_quality.replace('_', ' ')}; target remains visible but cannot create an edge.")
+    if economic.get("material_unresolved"):
+        warnings.append("Economic Reality classification is materially unresolved; BUY/SELL is blocked until the financing/accounting bridge is reviewed.")
     if data_quality_issues:
         warnings.append(f"{data_quality_issues} open data-quality issue(s) require review.")
 
@@ -235,6 +290,9 @@ def build_research_intelligence(
         "validation_state": validation_state,
         "valuation_base_quality": base_quality,
         "valuation_decision_grade": decision_grade_valuation,
+        "economic_reality": economic,
+        "economic_reality_quality": str(economic.get("quality") or "UNAVAILABLE"),
+        "economic_reality_unresolved": bool(economic.get("material_unresolved")),
         "ready_to_validate": bool(readiness.get("ready_to_validate")),
         "summary": f"{action} · {stance} · {bias} bias · {confidence} confidence",
     }

@@ -14,6 +14,7 @@ from .secdata import (
     _quarter_duration_values, _quarter_instants,
 )
 from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
+from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality, economic_from_row, has_suppression, metric as economic_metric
 
 FORENSIC_WATCH_EDGE_PCT = 12.0
 FORENSIC_EDGE_PCT = 20.0
@@ -96,9 +97,81 @@ def _value(record: dict[str, Any] | None) -> float | None:
     return float(d) if d is not None else None
 
 
-def _annual_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") -> list[dict[str, Any]]:
+def _economic_maps_annual(companyfacts: dict[str, Any], fiscal_year_end: str) -> tuple[dict, dict]:
+    duration = {
+        key: _annual_duration(companyfacts, list(tags), fiscal_year_end)
+        for key, tags in ECONOMIC_DURATION_TAGS.items()
+    }
+    instant = {
+        key: _annual_instant(companyfacts, list(tags), fiscal_year_end=fiscal_year_end)
+        for key, tags in ECONOMIC_INSTANT_TAGS.items()
+    }
+    return duration, instant
+
+
+def _economic_maps_quarter(companyfacts: dict[str, Any], fiscal_year_end: str) -> tuple[dict, dict]:
+    duration: dict[str, dict] = {}
+    for key, tags in ECONOMIC_DURATION_TAGS.items():
+        annual = _annual_duration(companyfacts, list(tags), fiscal_year_end)
+        duration[key] = _quarter_duration_values(
+            companyfacts, list(tags), annual, fiscal_year_end=fiscal_year_end
+        )
+    instant = {
+        key: _quarter_instants(companyfacts, list(tags), fiscal_year_end=fiscal_year_end)
+        for key, tags in ECONOMIC_INSTANT_TAGS.items()
+    }
+    return duration, instant
+
+
+def _economic_fact_bundle(duration: dict, instant: dict, key: Any) -> tuple[dict, dict]:
+    facts: dict[str, Any] = {}
+    sources: dict[str, Any] = {}
+    for field, rows in duration.items():
+        info = rows.get(key) or {}
+        record = info.get("record") if isinstance(info, dict) and "record" in info else info
+        value = info.get("value") if isinstance(info, dict) and "value" in info else _value(record)
+        if value is not None:
+            facts[field] = value
+            sources[field] = {"tag": (record or {}).get("tag"), "filed": (record or {}).get("filed")}
+    for field, rows in instant.items():
+        record = rows.get(key) or {}
+        value = _value(record)
+        if value is not None:
+            facts[field] = value
+            sources[field] = {"tag": record.get("tag"), "filed": record.get("filed")}
+    return facts, sources
+
+
+def _ttm_economic(block: list[dict[str, Any]], statement: dict[str, Any]) -> dict[str, Any] | None:
+    snapshots = [economic_from_row(row) for row in block]
+    if not any(snapshots):
+        return None
+    facts: dict[str, Any] = {}
+    sources: dict[str, Any] = {}
+    for key in ECONOMIC_DURATION_TAGS:
+        values = [_num((snap.get("facts") or {}).get(key)) for snap in snapshots]
+        if all(value is not None for value in values):
+            facts[key] = sum(values)
+            sources[key] = {"method": "FOUR_QUARTERS"}
+    latest = snapshots[-1]
+    for key in ECONOMIC_INSTANT_TAGS:
+        value = _num((latest.get("facts") or {}).get(key))
+        if value is not None:
+            facts[key] = value
+            sources[key] = dict((latest.get("fact_sources") or {}).get(key) or {"method": "LATEST_QUARTER"})
+    result = build_economic_reality(statement, facts=facts, fact_sources=sources)
+    for flag in latest.get("flags") or []:
+        if str(flag.get("code") or "") == "SECTOR_BALANCE_SHEET_POLICY":
+            if not any(str(row.get("code") or "") == "SECTOR_BALANCE_SHEET_POLICY" for row in result["flags"]):
+                result["flags"].append(dict(flag))
+            result["suppressions"] = sorted(set(result["suppressions"]) | set(latest.get("suppressions") or []))
+    return result
+
+
+def _annual_history(companyfacts: dict[str, Any], fiscal_year_end: str = "", company_type: str = "") -> list[dict[str, Any]]:
     duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
     instant = {key: _annual_instant(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
+    economic_duration, economic_instant = _economic_maps_annual(companyfacts, fiscal_year_end)
     dei_shares = _annual_instant(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_shares:
         instant["shares_outstanding"] = dei_shares
@@ -123,17 +196,29 @@ def _annual_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") -> 
             "fcf": (cfo - capex) if cfo is not None and capex is not None else None,
             "cash": _value(instant["cash"].get(fy)),
             "debt": _value(instant["debt"].get(fy)),
+            "_debt_source_tag": str((instant["debt"].get(fy) or {}).get("tag") or ""),
             "inventory": _value(instant["inventory"].get(fy)),
             "receivables": _value(instant["receivables"].get(fy)),
             "payables": _value(instant["payables"].get(fy)),
             "shares_outstanding": _value(instant["shares_outstanding"].get(fy)),
             "diluted_shares": _value(duration["diluted_shares"].get(fy)),
+            "pretax_income": _value(duration["pretax_income"].get(fy)),
+            "income_tax": _value(duration["income_tax"].get(fy)),
+            "assets": _value(instant["assets"].get(fy)),
+            "liabilities": _value(instant["liabilities"].get(fy)),
+            "equity": _value(instant["equity"].get(fy)),
+        }
+        economic_facts, economic_sources = _economic_fact_bundle(economic_duration, economic_instant, fy)
+        row["quality"] = {
+            "economic_reality": build_economic_reality(
+                row, facts=economic_facts, fact_sources=economic_sources, company_type=company_type
+            )
         }
         out.append(row)
     return out
 
 
-def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") -> list[dict[str, Any]]:
+def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "", company_type: str = "") -> list[dict[str, Any]]:
     annual_duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
     q_duration = {
         key: _quarter_duration_values(
@@ -144,6 +229,7 @@ def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") ->
         for key, tags in DURATION_TAGS.items()
     }
     q_instant = {key: _quarter_instants(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
+    economic_q_duration, economic_q_instant = _economic_maps_quarter(companyfacts, fiscal_year_end)
     dei_shares = _quarter_instants(companyfacts, ["EntityCommonStockSharesOutstanding"], namespace="dei", fiscal_year_end=fiscal_year_end)
     if dei_shares:
         q_instant["shares_outstanding"] = dei_shares
@@ -175,11 +261,25 @@ def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "") ->
             "fcf": (cfo - capex) if cfo is not None and capex is not None else None,
             "cash": _value(q_instant.get("cash", {}).get((fy, fp))),
             "debt": _value(q_instant.get("debt", {}).get((fy, fp))),
+            "_debt_source_tag": str((q_instant.get("debt", {}).get((fy, fp)) or {}).get("tag") or ""),
             "inventory": _value(q_instant.get("inventory", {}).get((fy, fp))),
             "receivables": _value(q_instant.get("receivables", {}).get((fy, fp))),
             "payables": _value(q_instant.get("payables", {}).get((fy, fp))),
             "shares_outstanding": _value(q_instant.get("shares_outstanding", {}).get((fy, fp))),
             "diluted_shares": _num((q_duration.get("diluted_shares", {}).get((fy, fp)) or {}).get("value")),
+            "pretax_income": _num((q_duration.get("pretax_income", {}).get((fy, fp)) or {}).get("value")),
+            "income_tax": _num((q_duration.get("income_tax", {}).get((fy, fp)) or {}).get("value")),
+            "assets": _value(q_instant.get("assets", {}).get((fy, fp))),
+            "liabilities": _value(q_instant.get("liabilities", {}).get((fy, fp))),
+            "equity": _value(q_instant.get("equity", {}).get((fy, fp))),
+        }
+        economic_facts, economic_sources = _economic_fact_bundle(
+            economic_q_duration, economic_q_instant, (fy, fp)
+        )
+        row["quality"] = {
+            "economic_reality": build_economic_reality(
+                row, facts=economic_facts, fact_sources=economic_sources, company_type=company_type
+            )
         }
         out.append(row)
     return out
@@ -213,10 +313,14 @@ def _ttm(rows: list[dict[str, Any]], offset: int = 0) -> dict[str, Any] | None:
     latest = block[-1]
     for field in ("cash", "debt", "inventory", "receivables", "payables", "shares_outstanding"):
         out[field] = _num(latest.get(field))
+    out["_debt_source_tag"] = str(latest.get("_debt_source_tag") or "")
     shares = [_num(row.get("diluted_shares")) for row in block if _num(row.get("diluted_shares")) is not None]
     out["diluted_shares"] = mean(shares) if shares else _num(latest.get("shares_outstanding"))
     out["period_end"] = latest.get("period_end")
     out["quarter_ends"] = [item.isoformat() for item in ends]
+    economic = _ttm_economic(block, out)
+    if economic is not None:
+        out["quality"] = {"economic_reality": economic}
     return out
 
 def _operating_snapshot(current: dict[str, Any] | None, prior: dict[str, Any] | None) -> dict[str, Any]:
@@ -242,6 +346,7 @@ def _operating_snapshot(current: dict[str, Any] | None, prior: dict[str, Any] | 
         "inventory_vs_revenue_pp": (inventory_growth - revenue_growth) if inventory_growth is not None and revenue_growth is not None else None,
         "receivables_vs_revenue_pp": (receivables_growth - revenue_growth) if receivables_growth is not None and revenue_growth is not None else None,
         "fcf_conversion": _ratio(current.get("fcf"), current.get("net_income"), 1.0),
+        "economic_reality": economic_from_row(current),
     }
 
 
@@ -308,31 +413,32 @@ def _signals(snapshot: dict[str, Any], day_move: float | None) -> tuple[list[dic
     if op is not None:
         if op >= 100:
             add("LONG", "OPERATING LEVERAGE", f"Operating margin {op:+.0f} bps YoY", 16)
-        elif op <= -100:
+        elif op <= -100 and not has_suppression(snapshot.get("economic_reality"), "REPORTED_MARGIN_DETERIORATION_AUTOMATIC"):
             add("SHORT", "OPERATING DELEVERAGE", f"Operating margin {op:+.0f} bps YoY", 18)
 
     if fm is not None:
         if fm >= 150:
             add("LONG", "CASH MARGIN INFLECTION", f"FCF margin {fm:+.0f} bps YoY", 14)
-        elif fm <= -150:
+        elif fm <= -150 and not has_suppression(snapshot.get("economic_reality"), "FCF_MARGIN_EROSION_AUTOMATIC"):
             add("SHORT", "CASH MARGIN EROSION", f"FCF margin {fm:+.0f} bps YoY", 16)
 
+    generic_wc_disabled = has_suppression(snapshot.get("economic_reality"), "GENERIC_WORKING_CAPITAL_SCORE")
     if inv is not None:
         if inv <= -8:
             add("LONG", "INVENTORY DISCIPLINE", f"Inventory growth trails revenue by {abs(inv):.1f} pp", 9)
-        elif inv >= 12:
+        elif inv >= 12 and not generic_wc_disabled:
             add("SHORT", "INVENTORY BUILD", f"Inventory growth exceeds revenue by {inv:.1f} pp", 14)
 
     if rec is not None:
         if rec <= -8:
             add("LONG", "COLLECTION QUALITY", f"Receivables growth trails revenue by {abs(rec):.1f} pp", 8)
-        elif rec >= 12:
+        elif rec >= 12 and not generic_wc_disabled:
             add("SHORT", "RECEIVABLES BUILD", f"Receivables growth exceeds revenue by {rec:.1f} pp", 13)
 
     if conv is not None:
         if conv >= 1.0:
             add("LONG", "EARNINGS → CASH", f"FCF / net income {conv:.2f}x", 8)
-        elif conv < 0.55:
+        elif conv < 0.55 and not has_suppression(snapshot.get("economic_reality"), "NEGATIVE_FCF_AUTOMATIC"):
             add("SHORT", "WEAK CASH CONVERSION", f"FCF / net income {conv:.2f}x", 10)
 
     move = _num(day_move)
@@ -353,19 +459,34 @@ def _valuation_from_history(
     company_type: str = "Generic",
 ) -> dict[str, Any]:
     """Reuse the canonical valuation engine; Discovery owns no duplicate valuation model."""
-    metrics = metrics_from_history(annual)
+    quality_history = list(annual) + ([current_ttm] if current_ttm else [])
+    metrics = metrics_from_history(quality_history) if company_type == "Generic" else metrics_from_history(quality_history, company_type=company_type)
     if current_ttm and _num(current_ttm.get("revenue")) is not None:
         revenue = _num(current_ttm.get("revenue"))
         net_income = _num(current_ttm.get("net_income"))
         fcf = _num(current_ttm.get("fcf"))
-        cash = _num(current_ttm.get("cash")) or 0.0
-        debt = _num(current_ttm.get("debt")) or 0.0
+        economic = economic_from_row(current_ttm)
+        economic_net_debt = economic_metric(economic, "economic_net_debt")
+        valuation_fcf = fcf
+        if has_suppression(economic, "FCF_POSITIVE_UNADJUSTED"):
+            after_sbc = economic_metric(economic, "fcf_after_sbc")
+            if after_sbc is not None and fcf is not None:
+                valuation_fcf = min(fcf, after_sbc)
+        economic_ready = bool(economic) and not bool(economic.get("material_unresolved")) and economic_net_debt is not None
+        current_net_debt = economic_net_debt if economic_ready else None
         shares = _num(current_ttm.get("shares_outstanding")) or _num(current_ttm.get("diluted_shares")) or _num(metrics.get("shares"))
         metrics.update({
             "revenue": revenue,
             "net_income": net_income,
             "fcf": fcf,
-            "net_debt": debt - cash,
+            "net_debt": current_net_debt,
+            "net_debt_basis": (
+                str(economic.get("debt_basis") or "ECONOMIC_REALITY")
+                if economic_ready
+                else ("ECONOMIC_CLASSIFICATION_UNRESOLVED" if economic else "ECONOMIC_REALITY_NOT_MATERIALIZED")
+            ),
+            "economic_reality": economic,
+            "economic_reality_unresolved": (not bool(economic)) or bool(economic.get("material_unresolved")),
             "shares": shares,
             "basis_usable": shares not in (None, 0),
             "basis_issue": "" if shares not in (None, 0) else "No usable current share denominator.",
@@ -374,8 +495,13 @@ def _valuation_from_history(
                 if prior_ttm and _pct_change(revenue, (prior_ttm or {}).get("revenue")) is not None
                 else metrics.get("revenue_growth")
             ),
-            "net_margin": _ratio(net_income, revenue, 1.0),
-            "fcf_margin": _ratio(fcf, revenue, 1.0),
+            "net_margin": (
+                metrics.get("net_margin")
+                if has_suppression(economic, "PE_EARNINGS_NORMALIZATION_REVIEW")
+                else _ratio(net_income, revenue, 1.0)
+            ),
+            "fcf_margin": _ratio(valuation_fcf, revenue, 1.0),
+            "fcf_margin_basis": "FCF_AFTER_SBC_WHEN_MATERIAL" if valuation_fcf != fcf else "REPORTED_FCF",
             "operating_margin": _ratio(current_ttm.get("operating_income"), revenue, 1.0),
         })
     defaults = default_cases(metrics, company_type)
@@ -397,7 +523,13 @@ def _valuation_from_history(
         "quality": result.get("quality"),
         "valuation_methods": methods,
         "metrics": metrics,
-        "warnings": list(result.get("warnings") or []),
+        "warnings": list(result.get("warnings") or []) + (
+            ["TTM net-margin evidence has a tax/non-operating distortion flag; P/E assumptions retain the multi-year filed basis."]
+            if current_ttm and has_suppression(economic_from_row(current_ttm), "PE_EARNINGS_NORMALIZATION_REVIEW") else []
+        ),
+        "company_quality": result.get("company_quality") or metrics.get("company_quality") or {},
+        "valuation_policy": result.get("valuation_policy") or metrics.get("valuation_policy") or {},
+        "valuation_impact_ledger": result.get("valuation_impact_ledger") or [],
     }
 
 def _local_forensics(
@@ -438,6 +570,11 @@ def _local_forensics(
         "quality": quality,
         "valuation_methods": methods,
         "snapshot": snapshot,
+        "economic_reality": dict(snapshot.get("economic_reality") or {}),
+        "company_quality": dict(stored_valuation.get("company_quality") or {}),
+        "valuation_policy": dict(stored_valuation.get("valuation_policy") or {}),
+        "valuation_impact_ledger": list(stored_valuation.get("valuation_impact_ledger") or []),
+        "accounting_context": list((snapshot.get("economic_reality") or {}).get("flags") or []),
         "signals": signals,
         "long_score": long_score,
         "short_score": short_score,
@@ -464,8 +601,8 @@ def _external_forensics(
     company_type = infer_company_type("", sic_description)
     provider_calls["sec_companyfacts"] = int(provider_calls.get("sec_companyfacts") or 0) + 1
     facts = _sec_companyfacts(meta["cik"], headers)
-    annual = _annual_history(facts, fiscal_year_end)
-    quarters = _quarter_history(facts, fiscal_year_end)
+    annual = _annual_history(facts, fiscal_year_end, sic_description)
+    quarters = _quarter_history(facts, fiscal_year_end, sic_description)
     if len(annual) < 2:
         return None, "FILED HISTORY INSUFFICIENT"
     current = _ttm(quarters, 0)
@@ -489,6 +626,11 @@ def _external_forensics(
         "company_type": company_type,
         "sic_description": sic_description,
         "snapshot": snapshot,
+        "economic_reality": dict(snapshot.get("economic_reality") or {}),
+        "company_quality": dict(valuation.get("company_quality") or {}),
+        "valuation_policy": dict(valuation.get("valuation_policy") or {}),
+        "valuation_impact_ledger": list(valuation.get("valuation_impact_ledger") or []),
+        "accounting_context": list((snapshot.get("economic_reality") or {}).get("flags") or []),
         "signals": signals,
         "long_score": long_score,
         "short_score": short_score,
@@ -606,6 +748,13 @@ def discovery_opportunity(result: dict[str, Any]) -> dict[str, Any] | None:
     methods = int(result.get("valuation_methods") or 0)
     decision_grade = quality == "INTRINSIC" and methods >= 2
     edge = abs(gap)
+    economic = dict(result.get("economic_reality") or {})
+    if economic.get("material_unresolved"):
+        return {
+            "side": side, "priority": "WATCH", "priority_rank": 3, "score": aligned_score,
+            "reason": "Valuation dislocation exists, but material accounting/debt classification remains unresolved; Research must verify Economic Reality before P1/P2.",
+            "operating_state": "ACCOUNTING REVIEW",
+        }
 
     if decision_grade and edge >= FORENSIC_STRONG_EDGE_PCT and aligned_confirmation:
         return {

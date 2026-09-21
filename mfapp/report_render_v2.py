@@ -425,6 +425,18 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     ]))
     story.extend([ev, Spacer(1,4)])
 
+    company_quality = data.get("company_quality") or valuation.get("company_quality") or {}
+    if company_quality:
+        alarms = list(company_quality.get("alarm_bells") or [])
+        strengths = list(company_quality.get("strengths") or [])
+        quality_rows = [
+            ["Company quality", _txt(company_quality.get("state") or "INSUFFICIENT EVIDENCE") + "  |  " + _txt(company_quality.get("headline"), 250)],
+            ["Alarm bells", " | ".join(_txt(x.get("detail"), 150) for x in alarms[:2]) or "No material automatic alarm bell."],
+            ["Strengths", " | ".join(_txt(x.get("detail"), 150) for x in strengths[:2]) or "No automatic strength clears the threshold yet."],
+        ]
+        story.append(rule_table(quality_rows, widths=[1.0*inch,5.55*inch], header=False))
+        story.append(Spacer(1,4))
+
     tape = data.get("tape") or {}
     tm = tape.get("metrics") or {}
     catalysts = data.get("catalysts") or []
@@ -508,6 +520,23 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     for warning in (valuation.get("warnings") or [])[:4]:
         story.append(Paragraph("WATCH - " + escape(_txt(warning, 420)), styles["MFSmall"]))
 
+    policy = valuation.get("valuation_policy") or {}
+    ledger = valuation.get("valuation_impact_ledger") or []
+    section("Quality → valuation", "Explicit automatic price adjustments")
+    kpi_strip([
+        ("Company quality", _txt((valuation.get("company_quality") or {}).get("state") or "INSUFFICIENT EVIDENCE"), NAVY),
+        ("Risk premium", "+" + str(int(_n(policy.get("risk_premium_bps")) or 0)) + " bps", NAVY),
+        ("Growth haircut", "-" + str(int(_n(policy.get("growth_haircut_bps")) or 0)) + " bps", NAVY),
+        ("Terminal haircut", "-" + str(int(_n(policy.get("terminal_growth_haircut_bps")) or 0)) + " bps", NAVY),
+        ("Bear probability", "+" + str(int(_n(policy.get("bear_probability_shift_pts")) or 0)) + " pts", NAVY),
+    ], 5)
+    if ledger:
+        rows = [["Item","Effect","Impact","Reason"]]
+        for item in ledger[:10]:
+            rows.append([item.get("item"), _txt(item.get("effect")).replace("_"," "), item.get("impact"), _txt(item.get("reason"),280)])
+        story.append(rule_table(rows, widths=[1.35*inch,1.05*inch,1.75*inch,2.4*inch], font_style="MFCellSmall"))
+    story.append(Paragraph("Positive company quality receives no automatic premium. Reported operating strength already enters through growth, margins, returns and cash flows.", styles["MFSmall"]))
+
     section("Thesis / variant", "Why the market may be wrong")
     story.append(quad)
     if thesis.get("variant_evidence"):
@@ -543,10 +572,41 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         for item in (evidence.get("warnings") or [])[:4]:
             story.append(Paragraph("<b>WATCH</b> - "+escape(_txt(item,360)), styles["MFSmall"]))
 
+    section("Company quality", "Is the economic engine actually good?")
+    cq = data.get("company_quality") or {}
+    if cq:
+        story.append(Paragraph("<b>"+escape(_txt(cq.get("state")))+"</b> - "+escape(_txt(cq.get("headline"),520)), styles["MFBody"]))
+        qrows = [["Dimension","State","Read"]]
+        for d in cq.get("dimensions") or []:
+            qrows.append([d.get("label"), _txt(d.get("state")).replace("_"," "), _txt(d.get("detail"),300)])
+        story.append(rule_table(qrows, widths=[1.45*inch,1.0*inch,4.1*inch], font_style="MFCellSmall"))
+        for flag in (cq.get("alarm_bells") or [])[:6]:
+            story.append(Paragraph("<b>ALARM · "+escape(_txt(flag.get("severity")))+"</b> - "+escape(_txt(flag.get("detail"),380)), styles["MFSmall"]))
+    else:
+        story.append(P("Company-quality evidence is not materialized yet."))
+
     section("Business", "Operating reality")
     story.append(P((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
 
     section("Fundamentals", "Trend before table")
+    ff=(data.get("fundamentals") or {}).get("forensics") or {}
+    if ff:
+        story.append(Paragraph("<b>"+escape(_txt(ff.get("state") or "DATA REVIEW"))+"</b> - "+escape(_txt(ff.get("headline"),520)), styles["MFBody"]))
+        strengths=list(ff.get("strengths") or [])[:4]
+        risks=(list(ff.get("red_flags") or []) + list(ff.get("watches") or []))[:5]
+        if strengths or risks:
+            left="<b>STRENGTHS</b><br/>"+("<br/>".join("- "+escape(_txt(x.get("label"),80))+": "+escape(_txt(x.get("detail"),180)) for x in strengths) if strengths else "-")
+            right="<b>RED FLAGS / WATCH</b><br/>"+("<br/>".join("- "+escape(_txt(x.get("label"),80))+": "+escape(_txt(x.get("detail"),180)) for x in risks) if risks else "-")
+            ft=Table([[rich(left,"MFBody"),rich(right,"MFBody")]],colWidths=[3.25*inch,3.25*inch])
+            ft.setStyle(TableStyle([
+                ("BACKGROUND",(0,0),(0,0),colors.HexColor("#edf7f1")),("BACKGROUND",(1,0),(1,0),colors.HexColor("#fbefef")),
+                ("BOX",(0,0),(-1,-1),.35,colors.HexColor(LINE)),("VALIGN",(0,0),(-1,-1),"TOP"),
+                ("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),
+                ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),
+            ]))
+            story.extend([ft,Spacer(1,4)])
+        for item in (list(ff.get("inconsistencies") or []) + list(ff.get("data_gaps") or []))[:5]:
+            story.append(Paragraph("<b>REVIEW</b> - "+escape(_txt(item.get("label"),90))+": "+escape(_txt(item.get("detail"),340)), styles["MFSmall"]))
     image("revenue_profitability", 6.55, 2.75)
     image("cash_conversion", 6.55, 2.3)
     image("working_capital", 6.55, 2.1)
@@ -563,6 +623,24 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         ("CCC", _num(current.get("ccc"),0,"d"), NAVY),
         ("Share count growth", _pct(current.get("share_count_growth_pct")), NAVY),
     ], 5)
+    if current.get("economic_reality_quality"):
+        story.append(Paragraph("<b>ECONOMIC REALITY</b> · reported accounting kept intact; financing and operating obligations are classified before scoring.", styles["MFSmall"]))
+        kpi_strip([
+            ("Econ quality", _txt(current.get("economic_reality_quality")), NAVY),
+            ("Reported net debt", _money(current.get("reported_net_debt")), NAVY),
+            ("Economic net debt", _money(current.get("economic_net_debt")), NAVY),
+            ("Operating leases", _money(current.get("operating_lease_liability")), NAVY),
+            ("Lease / liabilities", _pct(current.get("operating_lease_share_of_liabilities_pct"), signed=False), NAVY),
+            ("Revenue / leases", _num(current.get("lease_revenue_productivity_x"),2,"x"), NAVY),
+            ("Growth capex proxy", _money(current.get("growth_capex_proxy")), NAVY),
+            ("Owner-cash proxy", _money(current.get("owner_cash_proxy")), NAVY),
+            ("FCF after SBC", _money(current.get("fcf_after_sbc")), NAVY),
+            ("Lease-adj ROIC", _pct(current.get("lease_adjusted_roic_pct"), signed=False), NAVY),
+        ], 5)
+        for flag in (current.get("economic_reality_flags") or [])[:6]:
+            story.append(Paragraph("<b>"+escape(_txt(flag.get("code")).replace("_"," "))+"</b> · "+escape(_txt(flag.get("detail"),360)), styles["MFSmall"]))
+        if current.get("economic_reality_unresolved"):
+            story.append(Paragraph("<b>ACCOUNTING REVIEW</b> · material classification is unresolved; directional scoring is conservative until verified.", styles["MFSmall"]))
     hist=(data.get("fundamentals") or {}).get("history") or []
     if hist:
         rows=[["Period","Revenue growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"]]
@@ -913,6 +991,16 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     against="\n".join("- "+_txt(r.get("label"))+": "+_txt(r.get("detail"),180) for r in (evidence.get("against") or [])[:4]) or "-"
     two_panel("FOR",fort,"AGAINST",against,"EDF7F1","FBEFEF")
 
+    company_quality=data.get("company_quality") or valuation.get("company_quality") or {}
+    if company_quality:
+        alarms=list(company_quality.get("alarm_bells") or [])
+        strengths=list(company_quality.get("strengths") or [])
+        add_table([],[
+            ["Company quality",_txt(company_quality.get("state"))+" | "+_txt(company_quality.get("headline"),300)],
+            ["Alarm bells"," | ".join(_txt(x.get("detail"),160) for x in alarms[:2]) or "No material automatic alarm bell."],
+            ["Strengths"," | ".join(_txt(x.get("detail"),160) for x in strengths[:2]) or "No automatic strength clears the threshold yet."],
+        ])
+
     tape=data.get("tape") or {};tm=tape.get("metrics") or {};cats=data.get("catalysts") or [];next_cat=cats[0] if cats else {};mon=data.get("monitoring") or {}
     add_table([],[
         ["Tape",f"Regime {_txt(tm.get('regime'))} | Rank {_txt(tm.get('rank'))} | Confidence {_txt(tm.get('confidence'))} | Net Tape {_num(tm.get('net_tape'),0)}"],
@@ -955,6 +1043,20 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     for warning in (valuation.get("warnings") or [])[:4]:
         p=doc.add_paragraph("WATCH - "+_txt(warning,420));p.style=styles["Normal"]
 
+    heading("Quality → valuation",1,"Explicit automatic price adjustments")
+    policy=valuation.get("valuation_policy") or {};ledger=valuation.get("valuation_impact_ledger") or []
+    kpis([
+        ("Company quality",_txt((valuation.get("company_quality") or {}).get("state") or "INSUFFICIENT EVIDENCE"),NAVY),
+        ("Risk premium","+"+str(int(_n(policy.get("risk_premium_bps")) or 0))+" bps",NAVY),
+        ("Growth haircut","-"+str(int(_n(policy.get("growth_haircut_bps")) or 0))+" bps",NAVY),
+        ("Terminal haircut","-"+str(int(_n(policy.get("terminal_growth_haircut_bps")) or 0))+" bps",NAVY),
+        ("Bear probability","+"+str(int(_n(policy.get("bear_probability_shift_pts")) or 0))+" pts",NAVY),
+    ],5)
+    if ledger:
+        add_table(["Item","Effect","Impact","Reason"],[[r.get("item"),_txt(r.get("effect")).replace("_"," "),r.get("impact"),_txt(r.get("reason"),300)] for r in ledger[:10]],small=True)
+    p=doc.add_paragraph("Positive company quality receives no automatic premium. Observed operating strength already enters through growth, margins, returns and cash flows.")
+    for r in p.runs:r.font.size=Pt(8.5);r.font.color.rgb=rgb(MUTED)
+
     heading("Thesis / variant",1,"Why the market may be wrong")
     two_panel("MARKET VIEW",_txt(thesis.get("market_view"),800),"OUR VIEW / VARIANT",_txt(thesis.get("our_view"),800))
     two_panel("WHAT MUST BE TRUE",must,"WHAT WOULD PROVE US WRONG",wrong)
@@ -976,10 +1078,34 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
     heading("Evidence for / against",1,"Research evidence")
     two_panel("FOR",fort,"AGAINST",against,"EDF7F1","FBEFEF")
 
+    heading("Company quality",1,"Is the economic engine actually good?")
+    cq=data.get("company_quality") or {}
+    if cq:
+        p=doc.add_paragraph();r=p.add_run(_txt(cq.get("state"))+" · ");r.bold=True;p.add_run(_txt(cq.get("headline"),600))
+        add_table(["Dimension","State","Read"],[[d.get("label"),_txt(d.get("state")).replace("_"," "),_txt(d.get("detail"),320)] for d in (cq.get("dimensions") or [])],small=True)
+        for flag in (cq.get("alarm_bells") or [])[:6]:
+            p=doc.add_paragraph();r=p.add_run("ALARM · "+_txt(flag.get("severity"))+" · ");r.bold=True;p.add_run(_txt(flag.get("detail"),420))
+    else:
+        doc.add_paragraph("Company-quality evidence is not materialized yet.")
+
     heading("Business",1,"Operating reality")
     doc.add_paragraph(_txt((data.get("business") or {}).get("summary") or "Business research is not yet documented."))
 
     heading("Fundamentals",1,"Trend before table")
+    ff=(data.get("fundamentals") or {}).get("forensics") or {}
+    if ff:
+        p=doc.add_paragraph();r=p.add_run(_txt(ff.get("state") or "DATA REVIEW")+" · ");r.bold=True;p.add_run(_txt(ff.get("headline"),600))
+        strengths=list(ff.get("strengths") or [])[:4]
+        risks=(list(ff.get("red_flags") or [])+list(ff.get("watches") or []))[:5]
+        two_panel(
+            "STRENGTHS",
+            "\n".join("- "+_txt(x.get("label"),80)+": "+_txt(x.get("detail"),190) for x in strengths) or "-",
+            "RED FLAGS / WATCH",
+            "\n".join("- "+_txt(x.get("label"),80)+": "+_txt(x.get("detail"),190) for x in risks) or "-",
+            "EDF7F1","FBEFEF",
+        )
+        for item in (list(ff.get("inconsistencies") or [])+list(ff.get("data_gaps") or []))[:5]:
+            p=doc.add_paragraph();r=p.add_run("REVIEW · "+_txt(item.get("label"),90)+" · ");r.bold=True;p.add_run(_txt(item.get("detail"),380))
     add_chart(charts,"revenue_profitability",6.9);add_chart(charts,"cash_conversion",6.9);add_chart(charts,"working_capital",6.9)
     current=(data.get("fundamentals") or {}).get("current") or {}
     kpis([
@@ -988,6 +1114,27 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         ("Net debt / FCF",_num(current.get("net_debt_to_fcf"),1,"x"),NAVY),("Inventory / Rev",_pct(current.get("inventory_to_revenue_pct"),signed=False),NAVY),
         ("Receivables / Rev",_pct(current.get("receivables_to_revenue_pct"),signed=False),NAVY),("CCC",_num(current.get("ccc"),0,"d"),NAVY),("Share count growth",_pct(current.get("share_count_growth_pct")),NAVY),
     ],5)
+    if current.get("economic_reality_quality"):
+        heading("Economic Reality",2,"Reported accounting → economic interpretation")
+        kpis([
+            ("Econ quality",_txt(current.get("economic_reality_quality")),NAVY),
+            ("Reported net debt",_money(current.get("reported_net_debt")),NAVY),
+            ("Economic net debt",_money(current.get("economic_net_debt")),NAVY),
+            ("Operating leases",_money(current.get("operating_lease_liability")),NAVY),
+            ("Lease / liabilities",_pct(current.get("operating_lease_share_of_liabilities_pct"),signed=False),NAVY),
+            ("Revenue / leases",_num(current.get("lease_revenue_productivity_x"),2,"x"),NAVY),
+            ("Growth capex proxy",_money(current.get("growth_capex_proxy")),NAVY),
+            ("Owner-cash proxy",_money(current.get("owner_cash_proxy")),NAVY),
+            ("FCF after SBC",_money(current.get("fcf_after_sbc")),NAVY),
+            ("Lease-adj ROIC",_pct(current.get("lease_adjusted_roic_pct"),signed=False),NAVY),
+        ],5)
+        for flag in (current.get("economic_reality_flags") or [])[:6]:
+            p=doc.add_paragraph()
+            p.add_run(_txt(flag.get("code")).replace("_"," ")+" · ").bold=True
+            p.add_run(_txt(flag.get("detail"),360))
+        if current.get("economic_reality_unresolved"):
+            p=doc.add_paragraph("ACCOUNTING REVIEW · material classification is unresolved; directional scoring is conservative until verified.")
+            for r in p.runs:r.bold=True
     hist=(data.get("fundamentals") or {}).get("history") or []
     if hist:
         add_table(["Period","Rev growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"],[[r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),_pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),_num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),_pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),_num(r.get("ccc"),0,"d")] for r in hist[-8:]],small=True)

@@ -16,6 +16,7 @@ from .formatting import format_number
 from .historical_data import preferred_provider, price_on_or_after
 from .decision_engine import build_research_intelligence
 from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, n
+from .economic_reality import economic_from_row, metric as economic_metric
 
 # Kept as a public import for compatibility. 0.2.0 never renders/stores a visible autofill marker.
 AUTO_MARKER = ""
@@ -92,10 +93,16 @@ def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], 
             shares = n(row.get("shares_outstanding")) or n(row.get("diluted_shares"))
             if not market or shares in (None, 0):
                 continue
+            economic = economic_from_row(row)
+            economic_net_debt = economic_metric(economic, "economic_net_debt")
             observations.append({
                 "price": n(market.close_raw), "shares": shares, "revenue": row.get("revenue"),
                 "net_income": row.get("net_income"), "fcf": row.get("fcf"),
-                "net_debt": (n(row.get("debt")) or 0.0) - (n(row.get("cash")) or 0.0),
+                "net_debt": (
+                    economic_net_debt
+                    if economic and not economic.get("material_unresolved")
+                    else None
+                ),
             })
     return calibrate_multiples(observations, company_type)
 
@@ -234,7 +241,7 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
     company_type = str(saved.get("company_type") or infer_company_type(company.sector, company.industry))
     current_shares = saved.get("current_shares")
     share_source = str(saved.get("share_source") or "")
-    metrics = metrics_from_history(history, current_shares, share_source)
+    metrics = metrics_from_history(history, current_shares, share_source, company_type)
     if current_shares in (None, "") and metrics.get("shares") is not None:
         current_shares = metrics["shares"]; share_source = metrics.get("share_source") or share_source
     calibration = _point_in_time_calibration(security.id, history, company_type)
@@ -277,6 +284,9 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
             "current_price_role": "COMPARISON_ONLY_UNLESS_REQUIRED_AS_EXPLICIT_PROVISIONAL_FALLBACK",
             "generated_at": utcnow().isoformat(), "basis_usable": metrics.get("basis_usable"),
             "valuation_quality": result.get("quality"), "warnings": result.get("warnings") or [],
+            "company_quality_state": ((result.get("company_quality") or {}).get("state")),
+            "valuation_policy": result.get("valuation_policy") or {},
+            "valuation_impact_ledger": result.get("valuation_impact_ledger") or [],
             "financial_basis": str(latest_period.get("period_type") or "FY"),
         }, "latest_engine_result": result,
     }
@@ -303,11 +313,31 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
 
     if _replaceable("valuation_notes", research.valuation_notes, auto_hashes):
         basis = str(latest_period.get("period_type") or "FY")
-        text = (f"Multi-method intrinsic valuation on {basis} fundamentals using P/E, EV/Sales and FCF-yield robust blend; DCF is an independent cross-check. Multiples source={calibration.get('source')}, historical sample={calibration.get('sample_size', 0)}. Current market price is excluded from intrinsic-value construction and used for upside/downside comparison." if result.get("quality") == "INTRINSIC" else "DATA WARNING: one or more valuation inputs are incomplete. Bear/Base/Bull remain visible using the last stored case or an explicit provisional fallback; fallback values are not intrinsic evidence.")
+        quality_state = str(((result.get("company_quality") or {}).get("state") or "INSUFFICIENT EVIDENCE"))
+        policy = dict(result.get("valuation_policy") or {})
+        text = (
+            f"Multi-method intrinsic valuation on {basis} fundamentals using the Economic Reality equity bridge, P/E, EV/Sales and FCF-yield robust blend; DCF is an independent cross-check. Company quality={quality_state}. Automatic downside policy: +{int(policy.get('risk_premium_bps') or 0)} bps discount-rate premium, -{int(policy.get('growth_haircut_bps') or 0)} bps growth haircut, -{int(policy.get('terminal_growth_haircut_bps') or 0)} bps terminal-growth haircut. Multiples source={calibration.get('source')}, historical sample={calibration.get('sample_size', 0)}. Current market price is comparison-only and never constructs intrinsic value."
+            if result.get("quality") == "INTRINSIC"
+            else "DATA WARNING: one or more valuation inputs are incomplete. Bear/Base/Bull remain visible using the last stored case or an explicit provisional fallback; fallback values are not intrinsic evidence."
+        )
         _set_auto(research, "valuation_notes", "valuation_notes", text, auto_hashes); text_updates.append("valuation")
 
     if _replaceable("business", research.business, auto_hashes) and (company.sector or company.industry):
-        _set_auto(research, "business", "business", f"Company classification: sector {company.sector or '—'}; industry {company.industry or '—'}; valuation family {company_type}. The quantitative engine evaluates growth, margins, cash conversion, working capital, leverage and capital allocation; add qualitative moat/customer/competition evidence before approval.", auto_hashes); text_updates.append("business")
+        quality_profile = dict(result.get("company_quality") or {})
+        quality_state = str(quality_profile.get("state") or "INSUFFICIENT EVIDENCE")
+        headline = str(quality_profile.get("headline") or "")
+        alarms = list(quality_profile.get("alarm_bells") or [])
+        strengths = list(quality_profile.get("strengths") or [])
+        lines = [
+            f"Company classification: sector {company.sector or '—'}; industry {company.industry or '—'}; valuation family {company_type}.",
+            f"Filed economic-quality read: {quality_state}. {headline}",
+        ]
+        if strengths:
+            lines.append("Strengths: " + "; ".join(str(x.get("detail") or "") for x in strengths[:3] if x.get("detail")) + ".")
+        if alarms:
+            lines.append("Alarm bells: " + "; ".join(str(x.get("detail") or "") for x in alarms[:4] if x.get("detail")) + ".")
+        lines.append("This is a filing-derived economic-quality assessment. Moat, customer concentration, competitive position and product durability still require sourced Business evidence before approval.")
+        _set_auto(research, "business", "business", "\n".join(lines), auto_hashes); text_updates.append("business")
 
     text_updates.extend(_auto_research_sections(coverage=coverage, research=research, company=company, security=security, history=history, result=result, cases=case_inputs, current_price=current_price, company_type=company_type, auto_hashes=auto_hashes))
     model.assumptions = dict(model.assumptions or {}) | {"auto_text_hashes": auto_hashes}

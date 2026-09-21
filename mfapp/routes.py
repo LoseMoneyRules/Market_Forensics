@@ -35,7 +35,7 @@ from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
 from .symbols import validate_ticker
-from .valuation_engine import stored_model_base_quality, valuation_base_quality, valuation_is_decision_grade
+from .valuation_engine import infer_company_type, stored_model_base_quality, valuation_base_quality, valuation_is_decision_grade
 
 bp = Blueprint("web", __name__)
 
@@ -271,7 +271,15 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
             priority=95,
         )
 
-    cache_pending = active_recalc is not None
+    active_sec = Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.company_id == company.id,
+        Job.job_type == "SEC_INGEST",
+        Job.status.in_(["QUEUED", "RUNNING"]),
+    ).first()
+    economic_reclass_pending = active_sec is not None
+
+    cache_pending = active_recalc is not None or economic_reclass_pending
     # Readiness is intentionally live DB state. It is lightweight and user-edited;
     # serving a materialized copy made Monitoring / Journal and gate approvals look
     # stale until a heavy recalculation happened.
@@ -287,6 +295,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
         "intelligence": intelligence, "decision_lenses": decision_lenses, "brief": brief,
         "research_cache": cache or {}, "cache_pending": cache_pending,
+        "economic_reclass_pending": economic_reclass_pending,
     }
 
 def _fallback_synthesis(ctx: dict) -> dict:
@@ -529,7 +538,7 @@ def _normalized_market_scan(job: Job | None) -> dict:
     raw_result = dict(job.result or {}) if job and isinstance(job.result, dict) else {}
     raw_scan = raw_result.get("market_scan")
     scan = dict(raw_scan) if isinstance(raw_scan, dict) else {}
-    if scan and scan.get("contract_version") != "BROAD_FORENSIC_DISCOVERY_V2":
+    if scan and scan.get("contract_version") != "BROAD_FORENSIC_DISCOVERY_V3":
         return {
             "candidates": [], "long_candidates": [], "short_candidates": [], "watch_candidates": [],
             "candidate_count": 0, "long_count": 0, "short_count": 0, "watch_count": 0,
@@ -865,12 +874,28 @@ def company_section(ticker, section):
                         "reason": "",
                     }
                     break
+        economic_reality = dict(((current_financial or {}).get("quality") or {}).get("economic_reality") or {})
+        completeness = numbers_completeness(company.id)
+        company_type = str((ctx["model"].assumptions or {}).get("company_type") or infer_company_type(company.sector, company.industry))
+        fundamentals_forensics = dict(cache.get("fundamentals_forensics") or {
+            "engine_version": "0.3.0",
+            "state": "CALCULATING" if ctx.get("cache_pending") else "INSUFFICIENT EVIDENCE",
+            "headline": "Fundamentals forensics is updating in the research job queue." if ctx.get("cache_pending") else "No materialized Fundamentals forensic read is stored yet.",
+            "strengths": [], "red_flags": [], "watches": [], "inconsistencies": [], "data_gaps": [],
+            "trend_cards": [], "counts": {"strengths": 0, "red_flags": 0, "watches": 0, "inconsistencies": 0, "data_gaps": 0},
+        })
+        economic_refresh_queued = bool(ctx.get("economic_reclass_pending"))
+
         extra.update({
             "financials": financials,
             "quarterly_financials": quarterly_financials,
             "current_financial": current_financial,
+            "economic_reality": economic_reality,
             "leverage_display": leverage_display,
-            "numbers_completeness": numbers_completeness(company.id),
+            "numbers_completeness": completeness,
+            "fundamentals_forensics": fundamentals_forensics,
+            "fundamentals_company_type": company_type,
+            "economic_refresh_queued": economic_refresh_queued,
             "forecast_rows": forecasts,
             "numbers_scale_series": scale_series,
         })

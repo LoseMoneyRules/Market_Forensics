@@ -8,6 +8,7 @@ from .core_models import Company, Coverage, HistoricalTestRun, HistoricalTestSam
 from .extensions import db
 from .historical_data import preferred_provider, price_on_or_after, refresh_historical_prices
 from .secdata import DURATION_TAGS, INSTANT_TAGS, SEC_DATA, _facts, _json, _ticker_meta, _ua
+from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality, economic_from_row, metric as economic_metric
 from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, n
 from .validation_policy import validation_state
 
@@ -71,9 +72,11 @@ def _instant_asof(companyfacts: dict[str, Any], tags: list[str], cutoff: date, n
     return out
 
 
-def annual_history_asof(companyfacts: dict[str, Any], cutoff: date) -> list[dict[str, Any]]:
+def annual_history_asof(companyfacts: dict[str, Any], cutoff: date, company_type: str = "") -> list[dict[str, Any]]:
     duration = {key: _duration_asof(companyfacts, tags, cutoff) for key, tags in DURATION_TAGS.items()}
     instant = {key: _instant_asof(companyfacts, tags, cutoff) for key, tags in INSTANT_TAGS.items()}
+    economic_duration = {key: _duration_asof(companyfacts, list(tags), cutoff) for key, tags in ECONOMIC_DURATION_TAGS.items()}
+    economic_instant = {key: _instant_asof(companyfacts, list(tags), cutoff) for key, tags in ECONOMIC_INSTANT_TAGS.items()}
     dei_shares = _instant_asof(companyfacts, ["EntityCommonStockSharesOutstanding"], cutoff, namespace="dei")
     if dei_shares:
         instant["shares_outstanding"] = dei_shares
@@ -98,6 +101,26 @@ def annual_history_asof(companyfacts: dict[str, Any], cutoff: date) -> list[dict
             row["operating_expenses"] = row["gross_profit"] - row["operating_income"]
         if row.get("cfo") is not None and row.get("capex") is not None:
             row["fcf"] = row["cfo"] - row["capex"]
+        row["_debt_source_tag"] = str(((instant.get("debt") or {}).get(fy) or {}).get("tag") or "")
+        economic_facts = {}
+        economic_sources = {}
+        for field, records in economic_duration.items():
+            record = records.get(fy) or {}
+            value = n(record.get("val"))
+            if value is not None:
+                economic_facts[field] = value
+                economic_sources[field] = {"tag": record.get("tag"), "filed": record.get("filed")}
+        for field, records in economic_instant.items():
+            record = records.get(fy) or {}
+            value = n(record.get("val"))
+            if value is not None:
+                economic_facts[field] = value
+                economic_sources[field] = {"tag": record.get("tag"), "filed": record.get("filed")}
+        row["quality"] = {
+            "economic_reality": build_economic_reality(
+                row, facts=economic_facts, fact_sources=economic_sources, company_type=company_type
+            )
+        }
         out.append(row)
     return out
 
@@ -131,9 +154,12 @@ def _calibration_observations(security_id: int, history: list[dict[str, Any]], a
         raw_price = n(price.close_raw) if price else None
         if raw_price is None or shares in (None, 0):
             continue
+        economic = economic_from_row(row)
+        economic_net_debt = economic_metric(economic, "economic_net_debt")
         out.append({
             "price": raw_price, "shares": shares, "revenue": row.get("revenue"), "net_income": row.get("net_income"),
-            "fcf": row.get("fcf"), "net_debt": (n(row.get("debt")) or 0.0) - (n(row.get("cash")) or 0.0),
+            "fcf": row.get("fcf"),
+            "net_debt": economic_net_debt if economic and not economic.get("material_unresolved") else None,
         })
     return out
 
@@ -209,8 +235,8 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
     companyfacts = _json(f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json", user_agent)
     start = date.today() - timedelta(days=366 * years)
     anchors = _first_filing_anchors(companyfacts, start)
-    full_history = annual_history_asof(companyfacts, date.today())
     company_type = infer_company_type(company.sector, company.industry)
+    full_history = annual_history_asof(companyfacts, date.today(), company_type)
 
     run = HistoricalTestRun(
         coverage_id=coverage.id, user_id=user_id, status="RUNNING", engine_version=ENGINE_VERSION,
@@ -220,13 +246,13 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
     reliability_rows: list[dict[str, Any]] = []
 
     for fiscal_year, filing_date in anchors:
-        history = annual_history_asof(companyfacts, filing_date)
+        history = annual_history_asof(companyfacts, filing_date, company_type)
         if len(history) < 2:
             continue
         anchor_row = price_on_or_after(security.id, filing_date, 14, provider=provider)
         if anchor_row is None:
             continue
-        metrics = metrics_from_history(history)
+        metrics = metrics_from_history(history, company_type=company_type)
         if not metrics.get("basis_usable"):
             continue
         observations = _calibration_observations(security.id, history, filing_date, provider)

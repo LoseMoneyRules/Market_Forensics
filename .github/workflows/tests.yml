@@ -18,6 +18,22 @@ jobs:
           cache: 'pip'
       - name: Install lightweight runtime and tests
         run: pip install -r requirements-dev.txt
+      - name: Release metadata coherence
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          current = Path("docs/CURRENT_STATE.md").read_text(encoding="utf-8")
+          how = Path("docs/HOW_MARKET_FORENSICS_WORKS.md").read_text(encoding="utf-8")
+          state = re.search(r"^\*\*State-Version:\s*([^*\n]+?)\*\*\s*$", current, re.M)
+          product = re.search(r"^\*\*Current product line:\*\*\s*([^\n]+?)\s*$", how, re.M)
+          assert state, "CURRENT_STATE.md State-Version missing"
+          assert product, "HOW_MARKET_FORENSICS_WORKS.md Current product line missing"
+          assert state.group(1).strip() == version, (version, state.group(1).strip())
+          assert product.group(1).strip() == version, (version, product.group(1).strip())
+          print("release metadata coherent:", version)
+          PY
       - name: Python syntax check
         run: python -m compileall -q app.py manage.py mfapp tests
       - name: Workflow YAML validation

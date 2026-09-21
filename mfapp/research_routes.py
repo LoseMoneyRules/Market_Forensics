@@ -106,7 +106,7 @@ def _current_model_context(ctx: dict) -> dict:
     saved = dict(model.assumptions or {})
     history = _financial_history(ctx["company"].id)
     company_type = str(saved.get("company_type") or infer_company_type(ctx["company"].sector, ctx["company"].industry))
-    metrics = metrics_from_history(history, saved.get("current_shares"), str(saved.get("share_source") or ""))
+    metrics = metrics_from_history(history, saved.get("current_shares"), str(saved.get("share_source") or ""), company_type)
     calibration = dict(saved.get("calibration") or _point_in_time_calibration(ctx["security"].id, history, company_type))
     defaults = default_cases(metrics, company_type, calibration)
     weights = dict(saved.get("weights") or defaults["weights"])
@@ -175,7 +175,7 @@ def save_valuation_company(ticker):
     }
     years = max(1, min(int(n(request.form.get("horizon_years")) or 5), 20))
     history = _financial_history(ctx["company"].id)
-    metrics = metrics_from_history(history, current_shares, share_source)
+    metrics = metrics_from_history(history, current_shares, share_source, company_type)
     if current_shares in (None, 0) and metrics.get("shares") is not None:
         current_shares = metrics["shares"]
         share_source = metrics.get("share_source") or share_source
@@ -212,9 +212,9 @@ def save_valuation_company(ticker):
         row.inputs = {"auto_prefill": False, **cases[name]}
         row.outputs = result["scenarios"][name]
     model.method = "MULTI_METHOD_INTRINSIC"
-    model.calculation_version = "0.2.0"
+    model.calculation_version = "0.3.0"
     model.assumptions = saved | {
-        "engine_version": "0.2.0", "company_type": company_type, "current_shares": current_shares,
+        "engine_version": "0.3.0", "company_type": company_type, "current_shares": current_shares,
         "share_source": share_source, "share_basis_verified": share_verified, "share_basis_note": share_note,
         "weights": weights, "horizon_years": years, "calibration": calibration, "latest_engine_result": result,
         "notes": str(request.form.get("assumptions_notes") or saved.get("notes") or "").strip(),

@@ -13,7 +13,7 @@ from .core_models import (
 from .current_financials import annual_rows, current_row
 
 
-REPORT_CONTRACT_VERSION = "0.2.14"
+REPORT_CONTRACT_VERSION = "0.3.0"
 
 
 def _n(value: Any) -> float | None:
@@ -67,7 +67,19 @@ def _fundamentals(company_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]
             "cfo_to_net_income": _n(metrics.get("cfo_to_net_income")),
             "fcf_to_net_income": _n(metrics.get("fcf_to_net_income")),
             "roic_pct": _n(metrics.get("roic_pct")),
+            "reported_roic_pct": _n(metrics.get("reported_roic_pct")),
+            "economic_roic_pct": _n(metrics.get("economic_roic_pct")),
+            "lease_adjusted_roic_pct": _n(metrics.get("lease_adjusted_roic_pct")),
             "net_debt_to_fcf": _n(metrics.get("net_debt_to_fcf")),
+            "reported_net_debt": _n(metrics.get("reported_net_debt")),
+            "economic_net_debt": _n(metrics.get("economic_net_debt")),
+            "net_debt_basis": _text(metrics.get("net_debt_basis")),
+            "operating_lease_liability": _n(metrics.get("operating_lease_liability")),
+            "lease_revenue_productivity_x": _n(metrics.get("lease_revenue_productivity_x")),
+            "growth_capex_proxy": _n(metrics.get("growth_capex_proxy")),
+            "owner_cash_proxy": _n(metrics.get("owner_cash_proxy")),
+            "fcf_after_sbc": _n(metrics.get("fcf_after_sbc")),
+            "economic_reality_quality": _text(metrics.get("economic_reality_quality")),
             "inventory_to_revenue_pct": _n(metrics.get("inventory_to_revenue_pct")),
             "receivables_to_revenue_pct": _n(metrics.get("receivables_to_revenue_pct")),
             "dso": _n(metrics.get("dso")),
@@ -89,7 +101,23 @@ def _fundamentals(company_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]
         "fcf_margin_pct": _n(metrics.get("fcf_margin_pct")),
         "cfo_to_net_income": _n(metrics.get("cfo_to_net_income")),
         "roic_pct": _n(metrics.get("roic_pct")),
+        "reported_roic_pct": _n(metrics.get("reported_roic_pct")),
+        "economic_roic_pct": _n(metrics.get("economic_roic_pct")),
+        "lease_adjusted_roic_pct": _n(metrics.get("lease_adjusted_roic_pct")),
         "net_debt_to_fcf": _n(metrics.get("net_debt_to_fcf")),
+        "reported_net_debt": _n(metrics.get("reported_net_debt")),
+        "economic_net_debt": _n(metrics.get("economic_net_debt")),
+        "net_debt_basis": _text(metrics.get("net_debt_basis")),
+        "operating_lease_liability": _n(metrics.get("operating_lease_liability")),
+        "operating_lease_share_of_liabilities_pct": _n(metrics.get("operating_lease_share_of_liabilities_pct")),
+        "lease_revenue_productivity_x": _n(metrics.get("lease_revenue_productivity_x")),
+        "growth_capex_proxy": _n(metrics.get("growth_capex_proxy")),
+        "maintenance_capex_proxy": _n(metrics.get("maintenance_capex_proxy")),
+        "owner_cash_proxy": _n(metrics.get("owner_cash_proxy")),
+        "fcf_after_sbc": _n(metrics.get("fcf_after_sbc")),
+        "economic_reality_quality": _text(metrics.get("economic_reality_quality")),
+        "economic_reality_unresolved": bool(metrics.get("economic_reality_unresolved")),
+        "economic_reality_flags": list(metrics.get("economic_reality_flags") or []),
         "inventory_to_revenue_pct": _n(metrics.get("inventory_to_revenue_pct")),
         "receivables_to_revenue_pct": _n(metrics.get("receivables_to_revenue_pct")),
         "dso": _n(metrics.get("dso")), "dio": _n(metrics.get("dio")),
@@ -167,6 +195,11 @@ def _valuation(ctx: dict[str, Any]) -> dict[str, Any]:
         "horizon_years": int(saved.get("horizon_years") or 5),
         "calibration": dict(saved.get("calibration") or {}),
         "scenarios": scenarios,
+        "company_quality": dict(latest.get("company_quality") or valuation.get("company_quality") or {}),
+        "valuation_policy": dict(latest.get("valuation_policy") or valuation.get("valuation_policy") or {}),
+        "valuation_impact_ledger": list(latest.get("valuation_impact_ledger") or valuation.get("valuation_impact_ledger") or []),
+        "method_exclusions": list(latest.get("method_exclusions") or valuation.get("method_exclusions") or []),
+        "effective_input_weights": dict(latest.get("effective_input_weights") or valuation.get("effective_input_weights") or {}),
         "engine_version": _text(latest.get("engine_version") or getattr(model, "calculation_version", "")),
     }
 
@@ -322,6 +355,8 @@ def build_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict
             "rows": list(lenses.get("rows") or []),
         },
         "valuation": valuation,
+        "company_quality": dict(synthesis.get("company_quality") or valuation.get("company_quality") or {}),
+        "valuation_impact_ledger": list(synthesis.get("valuation_impact_ledger") or valuation.get("valuation_impact_ledger") or []),
         "thesis": {
             "thesis": _text(research.thesis), "counter_evidence": _text(research.counter_evidence),
             "market_view": _text(research.variant_market), "our_view": _text(research.variant_us),
@@ -336,7 +371,7 @@ def build_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict
             "blockers": [str(x) for x in (intelligence.get("blockers") or [])],
         },
         "business": {"summary": _text(research.business)},
-        "fundamentals": {"current": current, "history": fundamentals, "summary": _text(research.numbers)},
+        "fundamentals": {"current": current, "history": fundamentals, "summary": _text(research.numbers), "forensics": dict(cache.get("fundamentals_forensics") or {})},
         "expectations": {
             "summary": _text(research.expectations),
             "implied": dict(lenses.get("implied_expectations") or {}),

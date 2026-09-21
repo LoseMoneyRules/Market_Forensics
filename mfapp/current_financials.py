@@ -8,6 +8,7 @@ from typing import Any
 from .calculations import financial_metrics
 from .core_models import FinancialPeriod, NormalizedFinancial, ValuationModel
 from .extensions import db
+from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality
 
 FLOW_FIELDS = (
     "revenue", "cogs", "gross_profit", "operating_expenses", "operating_income",
@@ -97,6 +98,38 @@ def _quarter_sequence_value(row: dict[str, Any]) -> int | None:
     return fiscal_year * 4 + quarter if quarter else None
 
 
+
+def _ttm_economic_reality(rows: list[dict[str, Any]], statement: dict[str, Any]) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    snapshots = [dict(((row.get("quality") or {}).get("economic_reality") or {})) for row in rows]
+    if not any(snapshots):
+        return None
+
+    facts: dict[str, Any] = {}
+    sources: dict[str, Any] = {}
+    for key in ECONOMIC_DURATION_TAGS:
+        values = [n((snapshot.get("facts") or {}).get(key)) for snapshot in snapshots]
+        if all(value is not None for value in values):
+            facts[key] = sum(values)
+            sources[key] = {"method": "FOUR_STORED_QUARTERS"}
+    latest = snapshots[-1]
+    for key in ECONOMIC_INSTANT_TAGS:
+        value = n((latest.get("facts") or {}).get(key))
+        if value is not None:
+            facts[key] = value
+            sources[key] = dict((latest.get("fact_sources") or {}).get(key) or {"method": "LATEST_QUARTER"})
+
+    result = build_economic_reality(statement, facts=facts, fact_sources=sources)
+    # Sector-policy flags are classification facts rather than arithmetic facts.
+    for flag in latest.get("flags") or []:
+        if str(flag.get("code") or "") == "SECTOR_BALANCE_SHEET_POLICY":
+            if not any(str(row.get("code") or "") == "SECTOR_BALANCE_SHEET_POLICY" for row in result["flags"]):
+                result["flags"].append(dict(flag))
+            result["suppressions"] = sorted(set(result["suppressions"]) | set(latest.get("suppressions") or []))
+    return result
+
+
 def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
     if len(rows) < 4:
         return None
@@ -128,6 +161,9 @@ def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any
         out[field] = n(latest.get(field))
     shares = [n(row.get("diluted_shares")) for row in rows if n(row.get("diluted_shares")) is not None]
     out["diluted_shares"] = mean(shares) if shares else n(latest.get("shares_outstanding"))
+    economic = _ttm_economic_reality(rows, out)
+    if economic is not None:
+        out["quality"]["economic_reality"] = economic
     return out
 
 
@@ -170,7 +206,7 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
     # Balance-sheet items are applicability-aware: if a recent filed annual period
     # reported the field, its disappearance from the current basis is an ingestion
     # gap worth surfacing. A business that never reports inventory is not penalized.
-    continuity_fields = ("cash", "debt", "receivables", "inventory", "payables", "equity")
+    continuity_fields = ("cash", "debt", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "shares_outstanding", "diluted_shares")
     historically_present = {
         field for field in continuity_fields
         if any(n(row.get(field)) is not None for row in annual[:3])
@@ -212,7 +248,24 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
             quarter_gaps.append("Latest four stored quarters are not a consecutive fiscal sequence; TTM is withheld.")
 
     ttm_ready = bool(current and current.get("period_type") == "TTM")
-    unresolved_count = len(missing_current) + len(missing_continuity) + len(missing_derived)
+    normalized_fields = FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",)
+    historically_expected = {
+        field for field in normalized_fields
+        if any(n(row.get(field)) is not None for row in annual[:3])
+    }
+    missing_expected_fields = [
+        field for field in normalized_fields
+        if field in historically_expected and (not current or n(current.get(field)) is None)
+    ]
+    source_map = dict((current or {}).get("source_map") or {})
+    source_covered_fields = sorted(
+        field for field in normalized_fields
+        if current and n(current.get(field)) is not None and source_map.get(field)
+    )
+    critical_unresolved_count = len(set(missing_current) | set(missing_continuity)) + len(missing_derived)
+    unresolved_count = len(set(missing_current) | set(missing_continuity) | set(missing_expected_fields)) + len(missing_derived)
+    economic = dict(((current or {}).get("quality") or {}).get("economic_reality") or {})
+    economic_ready = bool(economic) and not bool(economic.get("material_unresolved"))
     return {
         "annual_count": len(annual),
         "quarter_count": len(quarters),
@@ -221,10 +274,17 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
         "missing_current_fields": missing_current,
         "missing_continuity_fields": missing_continuity,
         "missing_derived_metrics": missing_derived,
+        "missing_expected_fields": missing_expected_fields,
+        "normalized_field_count": len(normalized_fields),
+        "current_populated_field_count": sum(1 for field in normalized_fields if current and n(current.get(field)) is not None),
+        "source_covered_field_count": len(source_covered_fields),
+        "source_covered_fields": source_covered_fields,
         "unresolved_count": unresolved_count,
+        "critical_unresolved_count": critical_unresolved_count,
+        "economic_reality_ready": economic_ready,
         "quarter_gaps": quarter_gaps,
         "ttm_ready": ttm_ready,
-        "analysis_ready": bool(ttm_ready and unresolved_count == 0),
+        "analysis_ready": bool(ttm_ready and critical_unresolved_count == 0 and economic_ready),
     }
 
 

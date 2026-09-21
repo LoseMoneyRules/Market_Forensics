@@ -9,6 +9,7 @@ from .core_models import Event, FinancialPeriod, HistoricalPrice, Security, Valu
 from .current_financials import annual_rows, current_row, forecast_rows
 from .finra import stored_summary as finra_stored_summary
 from .tape_engine import score_tape_day, what_changed, what_would_change_regime
+from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 
 
 def n(value: Any) -> float | None:
@@ -30,6 +31,7 @@ def management_engine(company_id: int) -> dict[str, Any]:
     current = current_row(company_id)
     latest = current or (rows[0] if rows else {})
     metrics = latest.get("metrics") or {}
+    economic = economic_from_row(latest)
     details: list[dict[str, Any]] = []
 
     def component(label: str, score: float | None, detail: str, weight: float) -> None:
@@ -47,22 +49,38 @@ def management_engine(company_id: int) -> dict[str, Any]:
         execution = max(0, min(100, execution))
     component("Operating execution", execution, f"Revenue trend {_pct(growth)}; operating margin {op:.1f}%" if op is not None else f"Revenue trend {_pct(growth)}", .25)
 
-    # Cash quality: FCF conversion and sign.
-    fcf, ni = n(latest.get("fcf")), n(latest.get("net_income"))
-    conversion = (fcf / ni) if fcf is not None and ni not in (None, 0) else None
+    # Cash quality: use the same Economic Reality basis as Research/Valuation.
+    reported_fcf, ni = n(latest.get("fcf")), n(latest.get("net_income"))
+    effective_fcf = reported_fcf
+    after_sbc = economic_metric(economic, "fcf_after_sbc")
+    if has_suppression(economic, "FCF_POSITIVE_UNADJUSTED") and after_sbc is not None and reported_fcf is not None:
+        effective_fcf = min(reported_fcf, after_sbc)
+    owner_cash = economic_metric(economic, "owner_cash_proxy")
+    growth_reinvestment = has_suppression(economic, "NEGATIVE_FCF_AUTOMATIC")
+    conversion = (effective_fcf / ni) if effective_fcf is not None and ni not in (None, 0) else None
     cash_score = None
-    if fcf is not None:
-        cash_score = 25.0 if fcf < 0 else 65.0
-        if conversion is not None:
-            cash_score = max(0, min(100, 45 + conversion * 40))
-    component("Cash conversion", cash_score, f"FCF / net income {conversion:.2f}x" if conversion is not None else "Insufficient FCF / earnings evidence", .25)
+    cash_detail = "Insufficient cash-conversion evidence"
+    if reported_fcf is not None:
+        if reported_fcf < 0 and growth_reinvestment and owner_cash is not None and owner_cash > 0:
+            cash_score = 60.0
+            cash_detail = f"Reported FCF negative during material growth reinvestment; owner-cash proxy {owner_cash:,.0f}"
+        else:
+            cash_score = 25.0 if effective_fcf is not None and effective_fcf < 0 else 65.0
+            if conversion is not None:
+                cash_score = max(0, min(100, 45 + conversion * 40))
+            cash_detail = f"Economic FCF / net income {conversion:.2f}x" if conversion is not None else "FCF sign available; earnings conversion incomplete"
+            if after_sbc is not None and after_sbc != reported_fcf:
+                cash_detail += f"; FCF after SBC {after_sbc:,.0f}"
+    component("Cash conversion", cash_score, cash_detail, .25)
 
-    # Capital allocation: leverage and distributions relative to FCF.
-    debt, cash = n(latest.get("debt")), n(latest.get("cash"))
-    net_debt = (debt or 0) - (cash or 0) if debt is not None or cash is not None else None
-    leverage = net_debt / fcf if net_debt is not None and fcf not in (None, 0) and fcf > 0 else None
+    # Capital allocation: canonical economic leverage, never raw total liabilities.
+    net_debt = n(metrics.get("economic_net_debt"))
+    if net_debt is None and not economic:
+        net_debt = n(metrics.get("net_debt"))
+    leverage_fcf = effective_fcf if effective_fcf not in (None, 0) and effective_fcf > 0 else reported_fcf
+    leverage = net_debt / leverage_fcf if net_debt is not None and leverage_fcf not in (None, 0) and leverage_fcf > 0 else None
     buybacks, dividends = n(latest.get("buybacks")), n(latest.get("dividends"))
-    payout = (abs(buybacks or 0) + abs(dividends or 0)) / abs(fcf) if fcf not in (None, 0) else None
+    payout = (abs(buybacks or 0) + abs(dividends or 0)) / abs(leverage_fcf) if leverage_fcf not in (None, 0) else None
     capital = None
     if net_debt is not None:
         capital = 75.0 if net_debt <= 0 else 65.0
@@ -82,13 +100,17 @@ def management_engine(company_id: int) -> dict[str, Any]:
     alignment = max(0, min(100, 70 - share_change * 4)) if share_change is not None else None
     component("Shareholder alignment", alignment, f"Diluted/share count change {_pct(share_change)} over available history", .15)
 
-    # Accounting / working-capital discipline.
+    # Accounting / working-capital discipline; sector/accounting suppressions are canonical.
     inv = n(metrics.get("inventory_growth_pct")); rec = n(metrics.get("receivables_growth_pct")); rev = growth
-    divergences = [x - rev for x in (inv, rec) if x is not None and rev is not None]
+    generic_wc_disabled = has_suppression(economic, "GENERIC_WORKING_CAPITAL_SCORE")
+    divergences = [x - rev for x in (inv, rec) if x is not None and rev is not None] if not generic_wc_disabled else []
     discipline = max(0, min(100, 80 - max([0.0] + divergences) * 2.0)) if divergences else None
-    detail = "Working-capital divergence unavailable"
+    detail = "Working-capital discipline is not generically scored for this economic/sector basis." if generic_wc_disabled else "Working-capital divergence unavailable"
     if divergences:
         detail = f"Largest inventory/receivables growth spread vs revenue {max(divergences):+.1f} pts"
+    if economic.get("material_unresolved"):
+        discipline = 25.0
+        detail = "Material Economic Reality classification remains unresolved."
     component("Accounting discipline", discipline, detail, .15)
 
     available = [item for item in details if item["score"] is not None]
