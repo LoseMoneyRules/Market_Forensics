@@ -67,6 +67,8 @@ DURATION_TAGS: dict[str, tuple[str, ...]] = {
     "variable_lease_cost": ("VariableLeaseCost",),
     "short_term_lease_cost": ("ShortTermLeaseCost",),
     "finance_lease_interest": ("FinanceLeaseInterestExpense",),
+    "interest_expense": ("InterestExpenseNonOperating", "InterestExpenseDebt"),
+    "operating_lease_payments": ("OperatingLeasePayments",),
     "share_based_compensation": ("ShareBasedCompensation",),
     "depreciation_amortization": (
         "DepreciationDepletionAndAmortization",
@@ -79,6 +81,12 @@ DURATION_TAGS: dict[str, tuple[str, ...]] = {
     ),
     "research_and_development": ("ResearchAndDevelopmentExpense",),
     "advertising_expense": ("AdvertisingExpense",),
+    "acquisition_cash_spend": ("PaymentsToAcquireBusinessesNetOfCashAcquired", "PaymentsToAcquireBusinessesGross"),
+    "business_sale_proceeds": ("ProceedsFromSaleOfBusinessesNetOfCashSold", "ProceedsFromDividendsReceivedOnEquityMethodInvestmentAndSaleOfEquityMethodInvestments"),
+    "receivables_financing_proceeds": ("ProceedsFromAccountsReceivableFinancing",),
+    "gain_loss_asset_sale": ("GainLossOnSaleOfPropertyPlantEquipment",),
+    "gain_loss_business_sale": ("GainLossOnSaleOfBusiness",),
+    "nonoperating_income_expense": ("NonoperatingIncomeExpense",),
 }
 
 DEBT_LIKE_KEYS = (
@@ -245,6 +253,18 @@ def build_economic_reality(
     ):
         total_lease_cost = None
     lease_cost_to_revenue = _pct(total_lease_cost, revenue)
+    current_operating_lease = n(facts.get("operating_lease_current"))
+    lease_current_share_pct = _pct(current_operating_lease, operating_leases)
+    lease_current_to_cfo = _ratio(current_operating_lease, cfo)
+    interest_expense = n(facts.get("interest_expense"))
+    interest_coverage_x = _ratio(operating_income, interest_expense)
+    fixed_charge_coverage_proxy = None
+    if (
+        operating_income is not None and total_lease_cost not in (None, 0)
+        and interest_expense is not None
+        and (interest_expense + total_lease_cost) > 0
+    ):
+        fixed_charge_coverage_proxy = (operating_income + total_lease_cost) / (interest_expense + total_lease_cost)
 
     da = n(facts.get("depreciation_amortization"))
     maintenance_capex_proxy = growth_capex_proxy = owner_cash_proxy = None
@@ -257,6 +277,11 @@ def build_economic_reality(
     research_and_development = n(facts.get("research_and_development"))
     rd_to_revenue = _pct(research_and_development, revenue)
     advertising_expense = n(facts.get("advertising_expense"))
+    acquisition_cash_spend = n(facts.get("acquisition_cash_spend"))
+    business_sale_proceeds = n(facts.get("business_sale_proceeds"))
+    receivables_financing_proceeds = n(facts.get("receivables_financing_proceeds"))
+    acquisition_spend_to_revenue = _pct(acquisition_cash_spend, revenue)
+    receivables_financing_to_revenue = _pct(receivables_financing_proceeds, revenue)
     fcf_after_sbc = fcf - sbc if fcf is not None and sbc is not None else None
     sbc_to_revenue = _pct(sbc, revenue)
 
@@ -275,8 +300,9 @@ def build_economic_reality(
     special_charges_to_revenue = _pct(special_charges, revenue)
 
     tax_rate = None
-    if pretax not in (None, 0) and tax is not None:
-        tax_rate = max(0.0, min(0.35, tax / pretax))
+    raw_tax_rate = (tax / pretax) if pretax not in (None, 0) and tax is not None else None
+    if raw_tax_rate is not None:
+        tax_rate = max(0.0, min(0.35, raw_tax_rate))
     economic_invested_capital = economic_roic_pct = None
     if equity is not None and gross_economic_debt is not None and liquid_offset is not None:
         economic_invested_capital = equity + gross_economic_debt - liquid_offset
@@ -325,6 +351,35 @@ def build_economic_reality(
             "detail": f"R&D is {rd_to_revenue:.1f}% of revenue and is expensed under GAAP; current margins understate pre-R&D operating economics while book invested capital omits much internally created capital.",
         })
         suppressions.append("LOW_MARGIN_AUTOMATIC")
+    if acquisition_spend_to_revenue is not None and acquisition_spend_to_revenue >= 5.0:
+        flags.append({
+            "code": "M_AND_A_BALANCE_SHEET_DISTORTION", "tone": "CONTEXT",
+            "detail": f"Business-acquisition cash spend is {acquisition_spend_to_revenue:.1f}% of revenue; working-capital and growth comparisons may include acquired balances.",
+        })
+        suppressions.append("GENERIC_WORKING_CAPITAL_SCORE")
+    if receivables_financing_to_revenue is not None and receivables_financing_to_revenue >= 5.0:
+        flags.append({
+            "code": "RECEIVABLES_FINANCING_REVIEW", "tone": "REVIEW",
+            "detail": f"Receivables-financing proceeds are {receivables_financing_to_revenue:.1f}% of revenue; financing exposure may not be fully represented by balance-sheet debt tags.",
+        })
+    if raw_tax_rate is not None and (raw_tax_rate < -0.05 or raw_tax_rate > 0.45):
+        flags.append({
+            "code": "TAX_RATE_ANOMALY", "tone": "REVIEW",
+            "detail": f"Effective tax expense / pretax income is {raw_tax_rate * 100.0:.1f}%; net-income valuation evidence requires normalization review.",
+        })
+    unusual_nonoperating = sum(
+        abs(value or 0.0) for value in (
+            n(facts.get("gain_loss_asset_sale")),
+            n(facts.get("gain_loss_business_sale")),
+            n(facts.get("nonoperating_income_expense")),
+        )
+    )
+    unusual_nonoperating_pct = (unusual_nonoperating / abs(revenue) * 100.0) if revenue not in (None, 0) else None
+    if unusual_nonoperating_pct is not None and unusual_nonoperating_pct >= 5.0:
+        flags.append({
+            "code": "NONOPERATING_EARNINGS_DISTORTION", "tone": "REVIEW",
+            "detail": f"Identified non-operating gains/losses are {unusual_nonoperating_pct:.1f}% of revenue; P/E and net-margin evidence require normalization review.",
+        })
     if special_charges_to_revenue is not None and special_charges_to_revenue >= 1.0:
         flags.append({
             "code": "SPECIAL_CHARGES_MATERIAL", "tone": "CONTEXT",
@@ -362,6 +417,9 @@ def build_economic_reality(
 
     material_unknown = False
     unresolved: list[str] = []
+    if receivables_financing_to_revenue is not None and receivables_financing_to_revenue >= 5.0:
+        unresolved.append("Material receivables financing requires debt/off-balance-sheet review.")
+        material_unknown = True
     if reported_debt is not None and abs(reported_debt) > 0 and not classified_financing and not standard_financing_source:
         unresolved.append("Debt composition is unresolved; using reported debt fallback.")
         material_unknown = True
@@ -406,6 +464,11 @@ def build_economic_reality(
         "operating_lease_cost": lease_cost,
         "total_lease_cost": total_lease_cost,
         "lease_cost_to_revenue_pct": lease_cost_to_revenue,
+        "operating_lease_current_share_pct": lease_current_share_pct,
+        "operating_lease_current_to_cfo_x": lease_current_to_cfo,
+        "interest_expense": interest_expense,
+        "interest_coverage_x": interest_coverage_x,
+        "fixed_charge_coverage_proxy_x": fixed_charge_coverage_proxy,
         "deferred_revenue": deferred_revenue,
         "deferred_tax_liability": deferred_tax,
         "asset_retirement_obligation": aro,
@@ -421,6 +484,12 @@ def build_economic_reality(
         "research_and_development": research_and_development,
         "rd_to_revenue_pct": rd_to_revenue,
         "advertising_expense": advertising_expense,
+        "acquisition_cash_spend": acquisition_cash_spend,
+        "business_sale_proceeds": business_sale_proceeds,
+        "receivables_financing_proceeds": receivables_financing_proceeds,
+        "acquisition_spend_to_revenue_pct": acquisition_spend_to_revenue,
+        "receivables_financing_to_revenue_pct": receivables_financing_to_revenue,
+        "raw_effective_tax_rate_pct": raw_tax_rate * 100.0 if raw_tax_rate is not None else None,
         "fcf_after_sbc": fcf_after_sbc,
         "special_charges": special_charges,
         "special_charges_to_revenue_pct": special_charges_to_revenue,
