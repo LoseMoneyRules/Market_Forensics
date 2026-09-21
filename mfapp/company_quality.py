@@ -114,6 +114,7 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
     latest = rows[-1]
     prior = rows[-2] if len(rows) > 1 else {}
     economic = economic_from_row(latest)
+    economic_available = bool(economic)
     sector = str(company_type or "").lower()
     financial_sector = any(token in sector for token in ("financial", "bank", "insurance", "reit"))
 
@@ -257,7 +258,9 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
         dimensions.append(_dim("cash_quality", "Cash quality", "SOUND", "Cash conversion is not showing a material filed red flag."))
 
     # 4. Balance-sheet / fixed-charge resilience.
-    if financial_sector:
+    if not economic_available:
+        dimensions.append(_dim("balance_sheet", "Balance-sheet resilience", "UNKNOWN", "Economic Reality has not been materialized on this filing basis."))
+    elif financial_sector:
         detail = "Generic industrial leverage/fixed-charge rules are disabled; sector-specific capital/liquidity evidence is required."
         dimensions.append(_dim("balance_sheet", "Balance-sheet resilience", "UNKNOWN", detail))
     elif bool(economic.get("material_unresolved")):
@@ -294,7 +297,9 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
         dimensions.append(_dim("balance_sheet", "Balance-sheet resilience", "UNKNOWN", "Economic debt/fixed-charge evidence is insufficient."))
 
     # 5. Reinvestment efficiency.
-    if financial_sector:
+    if not economic_available:
+        dimensions.append(_dim("reinvestment", "Reinvestment efficiency", "UNKNOWN", "Economic capex/return classification is not materialized yet."))
+    elif financial_sector:
         dimensions.append(_dim("reinvestment", "Reinvestment efficiency", "UNKNOWN", "Industrial capex/ROIC reinvestment rules are not applied to Financial / REIT companies."))
     elif growth_capex_share is not None and growth_capex_share >= 25.0:
         if economic_roic is not None and economic_roic >= 12.0 and (revenue_growth is None or revenue_growth >= 3.0):
@@ -351,7 +356,9 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
         (inventory_divergence is not None and inventory_divergence >= 12.0)
         or (receivables_divergence is not None and receivables_divergence >= 12.0)
     )
-    if bool(economic.get("material_unresolved")):
+    if not economic_available:
+        dimensions.append(_dim("accounting_quality", "Accounting quality", "UNKNOWN", "Economic Reality has not been materialized, so accounting-quality classification is not decision-ready."))
+    elif bool(economic.get("material_unresolved")):
         detail = "Economic Reality contains a material unresolved classification."
         dimensions.append(_dim("accounting_quality", "Accounting quality", "RED_FLAG", detail))
         alarms.append(_alarm("MATERIAL_ACCOUNTING_UNRESOLVED", "RED", detail, "accounting_quality"))
@@ -384,7 +391,9 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
     strong = [row for row in dimensions if row["state"] == "STRONG"]
     coverage = round(len(resolved) / len(dimensions) * 100.0) if dimensions else 0
 
-    if len(resolved) < 4:
+    if not economic_available:
+        state = "INSUFFICIENT EVIDENCE"
+    elif len(resolved) < 4:
         state = "INSUFFICIENT EVIDENCE"
     elif bool(economic.get("material_unresolved")):
         state = "UNRESOLVED"
