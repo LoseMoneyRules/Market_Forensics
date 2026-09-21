@@ -18,6 +18,12 @@
 <header class="topbar">
   <button id="mf-mobile-menu" class="mobile-menu-button" type="button" aria-label="Open navigation" aria-controls="mf-primary-nav" aria-expanded="false">☰</button>
   <a class="brand" href="{{ url_for('web.dashboard') }}"><img src="{{ logo_url or url_for('static', filename='img/mark.svg', v=mf_version) }}" alt="" class="brand-mark"><span><strong>Market Forensics</strong></span></a>
+  {% if security is defined %}
+  <div class="topbar-security" id="mf-topbar-security" aria-label="Current security">
+    <strong>{{ security.ticker }}</strong>
+    <span data-topbar-live-price>{% if market is defined and market %}${{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</span>
+  </div>
+  {% endif %}
   <button id="mf-mobile-tools" class="mobile-tools-button" type="button" aria-label="Open controls" aria-controls="mf-top-actions" aria-expanded="false">•••</button>
   <div class="top-actions" id="mf-top-actions">
     {% if real_role == 'CONTROL' and effective_role == 'CONTROL' %}<span class="status-chip" id="mf-worker-chip" title="Background jobs">Jobs · checking</span>{% endif %}

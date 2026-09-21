@@ -124,9 +124,27 @@
     });
   });
 
+  // Keep company identity visible after the main company header scrolls away.
+  const topbarSecurity = document.getElementById('mf-topbar-security');
+  const companyHeader = document.querySelector('.company-head-standard');
+  function syncTopbarSecurity() {
+    if (!topbarSecurity || !companyHeader) return;
+    const topbar = document.querySelector('.topbar');
+    const threshold = topbar?.getBoundingClientRect().height || 64;
+    const visible = companyHeader.getBoundingClientRect().bottom <= threshold + 4;
+    topbarSecurity.classList.toggle('visible', visible);
+    body.classList.toggle('security-context-visible', visible);
+  }
+  if (topbarSecurity && companyHeader) {
+    syncTopbarSecurity();
+    window.addEventListener('scroll', syncTopbarSecurity, {passive:true});
+    window.addEventListener('resize', syncTopbarSecurity);
+  }
+
   // Live market reference.
   const ticker = document.querySelector('.ticker-badge')?.textContent?.trim();
   const priceNode = document.querySelector('[data-live-price]');
+  const topbarPriceNodes = document.querySelectorAll('[data-topbar-live-price]');
   const priceMeta = document.querySelector('[data-live-price-meta]');
   const marketBox = priceNode?.closest('.company-market');
   function fmtTime(iso) {
@@ -148,7 +166,11 @@
         return null;
       }
       const q = await response.json();
-      if (priceNode && Number.isFinite(Number(q.price))) priceNode.textContent = '$' + Number(q.price).toFixed(2);
+      if (Number.isFinite(Number(q.price))) {
+        const formattedPrice = '$' + Number(q.price).toFixed(2);
+        if (priceNode) priceNode.textContent = formattedPrice;
+        topbarPriceNodes.forEach((node)=>{ node.textContent = formattedPrice; });
+      }
       if (priceMeta) {
         priceMeta.textContent = '';
         delete priceMeta.dataset.semantic;
@@ -239,7 +261,7 @@
     const x=i=>pad.l+slot*i+slot/2;
     const y=v=>pad.t+plotH*(1-(v-min)/(max-min));
     const zero=y(0);
-    ctx.font='12px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');
+    ctx.font='13px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');
     for(let i=0;i<4;i++){
       const yy=pad.t+plotH*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
       const val=max-(max-min)*i/3;ctx.fillText(opts.percent?val.toFixed(1)+'%':compact(val),4,yy+4);
@@ -280,7 +302,7 @@
     const x=d=>pad.l+(w-pad.l-pad.r)*((new Date(String(d)+'T00:00:00').getTime()-d0)/(d1-d0));
     const yp=v=>pad.t+(h-pad.t-pad.b)*(1-(v-pmin)/(pmax-pmin));
     const yf=v=>pad.t+(h-pad.t-pad.b)*(1-(v-fmin)/(fmax-fmin));
-    ctx.font='12px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');
+    ctx.font='13px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');
     for(let i=0;i<4;i++){
       const yy=pad.t+(h-pad.t-pad.b)*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
       ctx.fillText('$'+(pmax-(pmax-pmin)*i/3).toFixed(1),4,yy+4);
@@ -335,7 +357,7 @@
     };
     const inventoryColor=css('--mf-chart-price','#3a6f99'),receivablesColor=css('--mf-chart-secondary','#6b7f91');
     draw('inventory',yl,inventoryColor);draw('receivables',yr,receivablesColor);
-    ctx.font='12px system-ui';ctx.textAlign='left';ctx.fillStyle=inventoryColor;ctx.fillText('Inventory · left scale',pad.l,pad.t-10);
+    ctx.font='13px system-ui';ctx.textAlign='left';ctx.fillStyle=inventoryColor;ctx.fillText('Inventory · left scale',pad.l,pad.t-10);
     ctx.textAlign='right';ctx.fillStyle=receivablesColor;ctx.fillText('Receivables · right scale',w-pad.r,pad.t-10);ctx.textAlign='left';
   }
 
@@ -358,7 +380,7 @@
     const x=i=>pad.l+slot*i+slot/2;
     const yRev=v=>pad.t+plotH*(1-Math.max(0,v)/revMax);
     const yFcf=v=>pad.t+plotH*(1-(v-fMin)/(fMax-fMin));
-    ctx.font='12px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.lineWidth=1;
+    ctx.font='13px system-ui';ctx.strokeStyle=css('--mf-chart-grid','#d9e0e6');ctx.fillStyle=css('--mf-chart-text','#4f6272');ctx.lineWidth=1;
     for(let i=0;i<4;i++){
       const yy=pad.t+plotH*i/3;ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(w-pad.r,yy);ctx.stroke();
       ctx.fillText(compact(revMax*(1-i/3)),4,yy+4);
@@ -509,10 +531,11 @@
 
   // Central semantic status contract. Components expose meaning; CSS owns color.
   const semanticGroups = {
-    positive: ['POSITIVE','GOOD','ATTRACTIVE','FAVORABLE','SUPPORTIVE','MET','PASS','STRENGTH','BULLISH','LONG','READY','APPROVED','DONE','VALIDATED','PUBLIC','OK'],
-    negative: ['NEGATIVE','BAD','EXPENSIVE','DEMANDING','HOSTILE','MISS','FAIL','WEAKNESS','BEARISH','SHORT','FAILED','ERROR','DETERIORATING'],
-    caution: ['MIXED','NEUTRAL','FAIR','BALANCED','UNCLEAR','PENDING','WATCH','IN LINE','UNRATED','UNDER REVIEW','LIMITED','REVIEW','MISSING EVIDENCE','PENDING APPROVAL','QUEUED'],
-    info: ['RUNNING','INFO','SYSTEM','VALIDATION','CHECKING','LOCKED'],
+    positive: ['POSITIVE','GOOD','ATTRACTIVE','FAVORABLE','SUPPORTIVE','MET','PASS','STRENGTH','STRONG','SOUND','CLEAN','FRESH','AVAILABLE','VERIFIED','HEALTHY','CURRENT','BULLISH','LONG','READY','APPROVED','DONE','COMPLETE','COMPLETED','SUCCESS','VALIDATED','PUBLIC','OK'],
+    negative: ['NEGATIVE','BAD','EXPENSIVE','DEMANDING','HOSTILE','MISS','FAIL','WEAKNESS','RED FLAG','RED FLAGS','FRAGILE','BLOCKER','CRITICAL','UNHEALTHY','BROKEN','BEARISH','SHORT','FAILED','ERROR','DETERIORATING'],
+    caution: ['MIXED','UNCLEAR','PENDING','WATCH','WAIT','WARNING','DATA WARNING','PROVISIONAL','STALE','PARTIAL','INCOMPLETE','NEEDS REFRESH','UNDER REVIEW','LIMITED','REVIEW','MISSING EVIDENCE','PENDING APPROVAL','UNRESOLVED','INSUFFICIENT EVIDENCE','UNKNOWN','LOW DATA','NEEDS EVIDENCE'],
+    info: ['RUNNING','QUEUED','INFO','SYSTEM','VALIDATION','CHECKING','LOCKED'],
+    neutral: ['NEUTRAL','FAIR','BALANCED','IN LINE','UNRATED','OBSERVED','LATERAL','SIDEWAYS','NO DATA','NOT RUN','NOT STARTED','HOLD'],
     cancelled: ['CANCELLED','SUPERSEDED']
   };
   function semanticStatus(value) {

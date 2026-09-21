@@ -587,9 +587,9 @@
         <div><span>Path</span><strong>{{ tm.regime or 'MIXED' }}</strong><small>Used by Decision Lenses</small></div>
       </div>
       <div class="tape-context-row">
-        <div class="tape-context-card {{ tm.posture_tone or 'watch' }}"><span>Tape posture</span><strong>{{ tm.posture or 'WAIT' }}</strong><small>Tape context, not valuation.</small></div>
-        <div class="tape-context-card {{ tm.pressure_tone or 'watch' }}"><span>Directional pressure</span><strong>{{ tm.pressure_direction or 'LATERAL' }}</strong><small>{{ tm.pressure_detail or 'No clean directional spread.' }}</small></div>
-        <div class="tape-context-card info"><span>Next confirmation</span><strong>{{ tm.confirmation_state or 'NEEDS EVIDENCE' }}</strong><small>{{ tm.next_confirmation or 'Refresh tape evidence.' }}</small></div>
+        <div class="tape-context-card {{ tm.posture_tone or 'watch' }}" data-status-value="{{ tm.posture or 'WAIT' }}"><span>Tape posture</span><strong>{{ tm.posture or 'WAIT' }}</strong><small>Tape context, not valuation.</small></div>
+        <div class="tape-context-card {{ tm.pressure_tone or 'watch' }}" data-status-value="{{ tm.pressure_direction or 'LATERAL' }}"><span>Directional pressure</span><strong>{{ tm.pressure_direction or 'LATERAL' }}</strong><small>{{ tm.pressure_detail or 'No clean directional spread.' }}</small></div>
+        <div class="tape-context-card info" data-status-value="{{ tm.confirmation_state or 'NEEDS EVIDENCE' }}"><span>Next confirmation</span><strong>{{ tm.confirmation_state or 'NEEDS EVIDENCE' }}</strong><small>{{ tm.next_confirmation or 'Refresh tape evidence.' }}</small></div>
       </div>
     </div>
 

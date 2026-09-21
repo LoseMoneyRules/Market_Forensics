@@ -139,3 +139,38 @@ def test_025_discovery_legibility_and_valuation_visual_legend_contract():
     assert ".valuation-scenario-kpis .valuation-kpi-bull{border-top-color:var(--mf-chart-bull)}" in css
     assert ".valuation-impact-ledger .valuation-quality-grid{grid-template-columns:repeat(4,minmax(0,1fr))}" in css
     assert ".chart-key.base i{background:var(--mf-chart-price)}" in css
+
+
+def test_025_global_ui_semantics_readability_and_sticky_security_contract():
+    base = Path("mfapp/templates/base.html").read_text()
+    company = Path("mfapp/templates/company_section.html").read_text()
+    css = Path("mfapp/static/css/app.css").read_text()
+    js = Path("mfapp/static/js/app.js").read_text()
+
+    assert 'id="mf-topbar-security"' in base
+    assert "data-topbar-live-price" in base
+    assert "syncTopbarSecurity" in js
+    assert "security-context-visible" in css
+    assert "topbarPriceNodes" in js
+
+    assert "data-status-value=\"{{ tm.posture or 'WAIT' }}\"" in company
+    assert ".tape-context-card{display:grid;gap:6px" in css
+    assert ".tape-context-card.watch{border-left-color:var(--semantic-caution)" in css
+    assert ".tape-context-card.negative{border-left-color:var(--semantic-negative)" in css
+    assert ".tape-context-card.positive{border-left-color:var(--semantic-positive)" in css
+    assert '.tape-context-card[data-semantic="caution"]' in css
+    assert '.tape-context-card[data-semantic="neutral"]' in css
+
+    assert "neutral: ['NEUTRAL','FAIR','BALANCED'" in js
+    caution_block = js.split("caution:", 1)[1].split("info:", 1)[0]
+    assert "'NEUTRAL'" not in caution_block
+    assert "'WATCH'" in caution_block and "'UNRESOLVED'" in caution_block
+    assert 'html[data-theme="dark"] .status-chip[data-semantic="positive"]' in css
+    assert 'html[data-theme="dark"] .status-chip[data-semantic="negative"]' in css
+    assert 'html[data-theme="dark"] .status-chip[data-semantic="caution"]' in css
+    assert 'html[data-theme="dark"] .status-chip[data-semantic="neutral"]' in css
+
+    assert "font-size:12px" not in css
+    assert "font-size:12.5px" not in css
+    assert "font='12px system-ui'" not in js
+    assert not any(word in css.lower() for word in ("purple", "violet", "magenta"))
