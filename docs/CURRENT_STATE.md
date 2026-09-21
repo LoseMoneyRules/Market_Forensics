@@ -15,7 +15,7 @@
 **Product:** Market Forensics  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
-**Production:** 0.2.13 on Namecheap from manual deploy run `35473486802` / deploy #53 at main `22a12451bd7d3c1b5ba4bd663ac4d20784e362b4`; release tests and production-minimal rich-report smoke passed before transfer; candidate health and final health both returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.13"}`; reporting-vendor rebuild/stage remained skipped because reporting dependencies were unchanged  
+**Production:** 0.3.0 on Namecheap; verified production health after manual deploy run `35611536246` / deploy #56 from main source `293b05ae4572ac5bea0f6ac93f6e42a782d6af66` at 2026-09-21T14:25:19Z; /health matched VERSION and returned `architecture=web-native`, `database=primary`, `reports=rich`, `status=ok`.  
 **Verified production baseline:** manual deploy run `35448890411` / deploy #49 = completed / success on main event SHA `ff4eb1e96a92610bc3ddd2c21c6e32840a016452`; candidate and final production health returned `{"architecture":"web-native","database":"primary","reports":"rich","status":"ok","version":"0.2.11"}`; persistent reporting-vendor rebuild/stage steps were skipped because dependencies were unchanged  
 **Accepted pre-0.2.12 main baseline:** `ff4eb1e96a92610bc3ddd2c21c6e32840a016452` (accepted 0.2.11 runtime `ba5a16783763f8032e3341b2e08eae8566457fbd` plus final 0.2.11 documentation sync)  
 **Latest verified 0.2.11 runtime main CI:** run `35448557400` / #1040 = completed / success on `ba5a16783763f8032e3341b2e08eae8566457fbd`  
