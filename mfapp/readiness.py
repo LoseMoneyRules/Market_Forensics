@@ -7,7 +7,7 @@ from typing import Any
 
 from .core_models import (
     BearCaseItem, Catalyst, Company, Coverage, DecisionJournal, Expectation, FinancialFlow,
-    FinancialPeriod, HistoricalTestRun, ManagementAssessment, MonitoringRule,
+    FinancialPeriod, HistoricalTestRun, ManagementAssessment, MonitoringRule, NormalizedFinancial,
     ResearchGateApproval, ResearchState, ResearchVersion, RiskPlan, Security, Source, ValuationModel,
 )
 from .extensions import db
@@ -53,7 +53,25 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
     scenario_rows = {row.name.upper(): row for row in model.scenarios} if model else {}
 
-    annual_count = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY").count() if company else 0
+    annual_years: list[int] = []
+    if company:
+        annual_years = sorted({
+            int(row[0]) for row in (
+                db.session.query(FinancialPeriod.fiscal_year)
+                .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+                .filter(FinancialPeriod.company_id == company.id, FinancialPeriod.period_type == "FY")
+                .distinct()
+                .all()
+            )
+            if row[0] is not None
+        }, reverse=True)
+    annual_count = len(annual_years)
+    annual_target_window = (
+        list(range(annual_years[0], annual_years[0] - 10, -1))
+        if annual_years else []
+    )
+    annual_missing_years = [year for year in annual_target_window if year not in set(annual_years)]
+    annual_history_complete = bool(annual_target_window) and not annual_missing_years
     quarter_count = FinancialPeriod.query.filter(FinancialPeriod.company_id == company.id, FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"])).count() if company else 0
     expectation_count = Expectation.query.filter_by(coverage_id=coverage.id).count()
     bear_count = BearCaseItem.query.filter_by(coverage_id=coverage.id).count()
@@ -92,7 +110,18 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
             bool(research and _text(research.thesis) and _text(research.counter_evidence) and _text(research.variant_us)),
         ),
         _gate("Business", "business", {"text": _text(research.business if research else ""), "company": company.display_name if company else ""}, bool(research and _text(research.business))),
-        _gate("Fundamentals", "fundamentals", {"annual_periods": annual_count, "quarter_periods": quarter_count, "text": _text(research.numbers if research else "")}, annual_count >= 2 and bool(research and _text(research.numbers))),
+        _gate(
+            "Fundamentals",
+            "fundamentals",
+            {
+                "annual_periods": annual_count,
+                "annual_history_target_years": 10,
+                "annual_missing_years": annual_missing_years,
+                "quarter_periods": quarter_count,
+                "text": _text(research.numbers if research else ""),
+            },
+            annual_history_complete and bool(research and _text(research.numbers)),
+        ),
         _gate("Expectations", "expectations", {"structured": expectation_count, "text": _text(research.expectations if research else ""), "base_inputs": (scenario_rows.get("BASE").inputs if scenario_rows.get("BASE") else {})}, expectation_count > 0 or bool(research and _text(research.expectations))),
         _gate("Valuation", "valuation", {"bear": valuation.get("bear"), "base": valuation.get("base"), "bull": valuation.get("bull"), "quality": ((model.assumptions or {}).get("latest_engine_result") or {}).get("quality") if model else None}, all(valuation.get(k) is not None for k in ("bear", "base", "bull"))),
         _gate("Bear Case", "bear-case", {"structured": bear_count, "text": _text(research.bear_case_summary if research else "")}, bear_count > 0 or bool(research and _text(research.bear_case_summary))),
