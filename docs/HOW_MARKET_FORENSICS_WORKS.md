@@ -565,7 +565,7 @@ This layer does **not** estimate fair value. Its only purpose is to decide where
 
 - LONG hypothesis: depressed valuation evidence plus improving/non-deteriorating filed operations;
 - SHORT hypothesis: stretched valuation evidence plus deteriorating filed operations;
-- valuation evidence may include current-price FCF-yield, P/E and P/S proxies when the required filed/share basis exists;
+- valuation evidence may include current-price FCF-yield, P/E and P/S proxies when the required filed/share basis exists; current comparable filed shares are preferred and the prior comparable filed share frame is an explicit fallback rather than a guessed denominator;
 - operating evidence includes comparable revenue direction, operating-margin change, FCF margin and working-capital behavior;
 - contradictory evidence is explicitly penalized;
 - daily price movement is not ranked;
@@ -577,6 +577,8 @@ The Stage-1.5 output is an auditable hypothesis with separate valuation points, 
 Missing SEC-frame evidence is explicitly marked MISSING/PARTIAL. A ticker with no usable evidence on both the price/valuation and operating sides is not selected for deep Stage 2 merely because it is liquid or has a strong generic fundamental score.
 
 SEC frame data is cached for 24 hours; current market prices are refreshed every Discovery run, so valuation-tension screening can change without redownloading the whole filed baseline.
+
+Discovery separately measures how many liquid names have usable market-valuation evidence. Below 65% coverage the run is WARN; below 40% it is CRITICAL. Missing valuation evidence remains unranked rather than being filled from price action or generic fundamentals.
 
 ### Stage 2 — bounded deep forensic enrichment
 
