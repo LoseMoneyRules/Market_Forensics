@@ -511,7 +511,13 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
         signal = str((signals[0] or {}).get("detail") or "") if signals and isinstance(signals[0],dict) else ""
         accounting=list(row.get("accounting_context") or [])
         accounting_note = str((accounting[0] or {}).get("detail") or "") if accounting and isinstance(accounting[0],dict) else ""
-        reason = " · ".join(x for x in [str(row.get("radar_label") or ""), str(row.get("priority_reason") or ""), signal, accounting_note] if x)
+        reason = " · ".join(x for x in [
+            str(row.get("radar_label") or ""),
+            str(row.get("priority_reason") or ""),
+            str(row.get("stage2_selection_reason") or ""),
+            signal,
+            accounting_note,
+        ] if x)
         invalidates=str(row.get("what_invalidates") or "")
         if invalidates:
             reason += (" | Invalidates: " if reason else "Invalidates: ") + invalidates
@@ -534,7 +540,7 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     source_bits=[
         f"Universe: {scan.get('universe_source') or 'Discovery universe'}", f"Contract: {scan.get('contract_version') or '—'}",
         f"Stage 0: {scan.get('stage0_count') or 0}", f"Stage 1 scanned: {scan.get('stage1_scanned_count') or 0}",
-        f"Stage 2 enriched: {scan.get('stage2_enriched_count') or 0}", f"Provider calls: {scan.get('provider_call_total') or 0}",
+        f"Stage 1.5 hypotheses: {scan.get('stage15_mispricing_count') or 0}", f"Stage 2 enriched: {scan.get('stage2_enriched_count') or 0}", f"Provider calls: {scan.get('provider_call_total') or 0}",
         f"Materialized: {scan.get('materialized_at') or '—'}",
     ]
     story.append(Paragraph(escape(" · ".join(source_bits)), styles["MFDiscSmall"]))
