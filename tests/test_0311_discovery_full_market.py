@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from mfapp.discovery_market_fundamentals import _screen_one
-from mfapp.market_discovery import _market_mispricing_hypothesis, _select_stage2_finalists
+from mfapp.market_discovery import _discovery_health, _market_mispricing_hypothesis, _select_stage2_finalists
 
 
 def _row(ticker: str, screen: dict):
@@ -209,3 +209,45 @@ def test_stage15_can_find_growth_business_without_absolute_value_multiple():
     assert hypothesis["side"] == "LONG"
     assert any("Growth-adjusted P/E" in text for text in hypothesis["valuation_signals"])
     assert any("Growth+margin adjusted P/S" in text for text in hypothesis["valuation_signals"])
+
+
+def test_full_market_screen_uses_prior_filed_share_basis_when_current_missing():
+    row = {"ticker": "SHR", "price": 20.0}
+    facts = {
+        "cik": "0000000456",
+        "latest_filed": "2026-08-01",
+        "current": {
+            "revenue": 120.0, "operating_income": 18.0, "cfo": 20.0, "capex": 5.0,
+            "inventory": 10.0, "receivables": 12.0, "shares": None,
+        },
+        "prior": {
+            "revenue": 100.0, "operating_income": 10.0, "cfo": 12.0, "capex": 5.0,
+            "inventory": 12.0, "receivables": 14.0, "shares": 10.0,
+        },
+        "annual": {"revenue": 400.0, "net_income": 25.0, "cfo": 50.0, "capex": 10.0},
+    }
+    screen = _screen_one(row, facts)
+    assert screen["metrics"]["share_basis"] == "PRIOR_COMPARABLE_FRAME"
+    assert screen["metrics"]["pe_proxy"] is not None
+    assert screen["metrics"]["ps_proxy"] is not None
+    assert screen["metrics"]["fcf_yield_pct"] is not None
+
+
+def test_discovery_health_fails_closed_when_valuation_evidence_is_thin():
+    health = _discovery_health(
+        {"member_count": 100, "previous_member_count": 100, "stale_cache": False},
+        {
+            "snapshot_requested_count": 100,
+            "snapshot_received_count": 100,
+            "excluded_breakdown": {},
+        },
+        {
+            "configured": True,
+            "total_liquid_names": 100,
+            "usable_count": 95,
+            "valuation_usable_count": 20,
+        },
+    )
+    assert health["status"] == "CRITICAL"
+    assert health["valuation_usable_pct"] == 20.0
+    assert any("valuation evidence" in flag.lower() for flag in health["flags"])
