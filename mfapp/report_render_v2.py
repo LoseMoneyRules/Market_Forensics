@@ -563,6 +563,24 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
         ("CCC", _num(current.get("ccc"),0,"d"), NAVY),
         ("Share count growth", _pct(current.get("share_count_growth_pct")), NAVY),
     ], 5)
+    if current.get("economic_reality_quality"):
+        story.append(Paragraph("<b>ECONOMIC REALITY</b> · reported accounting kept intact; financing and operating obligations are classified before scoring.", styles["MFSmall"]))
+        kpi_strip([
+            ("Econ quality", _txt(current.get("economic_reality_quality")), NAVY),
+            ("Reported net debt", _money(current.get("reported_net_debt")), NAVY),
+            ("Economic net debt", _money(current.get("economic_net_debt")), NAVY),
+            ("Operating leases", _money(current.get("operating_lease_liability")), NAVY),
+            ("Lease / liabilities", _pct(current.get("operating_lease_share_of_liabilities_pct"), signed=False), NAVY),
+            ("Revenue / leases", _num(current.get("lease_revenue_productivity_x"),2,"x"), NAVY),
+            ("Growth capex proxy", _money(current.get("growth_capex_proxy")), NAVY),
+            ("Owner-cash proxy", _money(current.get("owner_cash_proxy")), NAVY),
+            ("FCF after SBC", _money(current.get("fcf_after_sbc")), NAVY),
+            ("Lease-adj ROIC", _pct(current.get("lease_adjusted_roic_pct"), signed=False), NAVY),
+        ], 5)
+        for flag in (current.get("economic_reality_flags") or [])[:6]:
+            story.append(Paragraph("<b>"+escape(_txt(flag.get("code")).replace("_"," "))+"</b> · "+escape(_txt(flag.get("detail"),360)), styles["MFSmall"]))
+        if current.get("economic_reality_unresolved"):
+            story.append(Paragraph("<b>ACCOUNTING REVIEW</b> · material classification is unresolved; directional scoring is conservative until verified.", styles["MFSmall"]))
     hist=(data.get("fundamentals") or {}).get("history") or []
     if hist:
         rows=[["Period","Revenue growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"]]
@@ -988,6 +1006,27 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
         ("Net debt / FCF",_num(current.get("net_debt_to_fcf"),1,"x"),NAVY),("Inventory / Rev",_pct(current.get("inventory_to_revenue_pct"),signed=False),NAVY),
         ("Receivables / Rev",_pct(current.get("receivables_to_revenue_pct"),signed=False),NAVY),("CCC",_num(current.get("ccc"),0,"d"),NAVY),("Share count growth",_pct(current.get("share_count_growth_pct")),NAVY),
     ],5)
+    if current.get("economic_reality_quality"):
+        heading("Economic Reality",2,"Reported accounting → economic interpretation")
+        kpis([
+            ("Econ quality",_txt(current.get("economic_reality_quality")),NAVY),
+            ("Reported net debt",_money(current.get("reported_net_debt")),NAVY),
+            ("Economic net debt",_money(current.get("economic_net_debt")),NAVY),
+            ("Operating leases",_money(current.get("operating_lease_liability")),NAVY),
+            ("Lease / liabilities",_pct(current.get("operating_lease_share_of_liabilities_pct"),signed=False),NAVY),
+            ("Revenue / leases",_num(current.get("lease_revenue_productivity_x"),2,"x"),NAVY),
+            ("Growth capex proxy",_money(current.get("growth_capex_proxy")),NAVY),
+            ("Owner-cash proxy",_money(current.get("owner_cash_proxy")),NAVY),
+            ("FCF after SBC",_money(current.get("fcf_after_sbc")),NAVY),
+            ("Lease-adj ROIC",_pct(current.get("lease_adjusted_roic_pct"),signed=False),NAVY),
+        ],5)
+        for flag in (current.get("economic_reality_flags") or [])[:6]:
+            p=doc.add_paragraph()
+            p.add_run(_txt(flag.get("code")).replace("_"," ")+" · ").bold=True
+            p.add_run(_txt(flag.get("detail"),360))
+        if current.get("economic_reality_unresolved"):
+            p=doc.add_paragraph("ACCOUNTING REVIEW · material classification is unresolved; directional scoring is conservative until verified.")
+            for r in p.runs:r.bold=True
     hist=(data.get("fundamentals") or {}).get("history") or []
     if hist:
         add_table(["Period","Rev growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"],[[r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),_pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),_num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),_pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),_num(r.get("ccc"),0,"d")] for r in hist[-8:]],small=True)
