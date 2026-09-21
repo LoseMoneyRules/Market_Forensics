@@ -5,10 +5,11 @@ from datetime import datetime, timedelta, timezone
 from flask import abort, g, jsonify, redirect, render_template, request, url_for
 
 from .access import audit, require_control_view
-from .core_models import Company, Coverage, Job, ResearchGateApproval, Security
+from .core_models import Company, Coverage, HistoricalPrice, Job, ResearchGateApproval, Security
 from .data_providers import latest_snapshot
 from .extensions import db
 from .jobs import enqueue_job
+from .historical_data import preferred_provider
 from .readiness import research_readiness
 from .research_cache import patch_research_cache_readiness
 from .research_synthesis import valuation_price_history
@@ -189,13 +190,33 @@ def live_price_history(ticker: str):
         .first()
     )
     job = active or latest
+    provider = preferred_provider(ctx["security"].id)
+    cache_query = HistoricalPrice.query.filter_by(security_id=ctx["security"].id)
+    if provider:
+        cache_query = cache_query.filter(HistoricalPrice.provider == provider)
+    cache_count = cache_query.count()
+    cache_first = db.session.query(db.func.min(HistoricalPrice.trade_date)).filter(
+        HistoricalPrice.security_id == ctx["security"].id,
+        *([HistoricalPrice.provider == provider] if provider else []),
+    ).scalar()
+    cache_last = db.session.query(db.func.max(HistoricalPrice.trade_date)).filter(
+        HistoricalPrice.security_id == ctx["security"].id,
+        *([HistoricalPrice.provider == provider] if provider else []),
+    ).scalar()
     return jsonify({
         "ticker": ctx["security"].ticker,
         "rows": rows,
         "count": len(rows),
         "first_date": rows[0]["date"] if rows else None,
         "last_date": rows[-1]["date"] if rows else None,
-        "provider": rows[-1].get("provider") if rows else None,
+        "provider": rows[-1].get("provider") if rows else provider,
+        "cache": {
+            "count": cache_count,
+            "first_date": cache_first.isoformat() if cache_first else None,
+            "last_date": cache_last.isoformat() if cache_last else None,
+            "provider": provider,
+            "target_years": 10,
+        },
         "job": {
             "id": job.id if job else None,
             "status": job.status if job else None,
