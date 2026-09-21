@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.2.14  
+**Current product line:** 0.3.0  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -88,23 +88,43 @@ Exact accounting bridges are allowed when mathematically deterministic, for exam
 
 Model priors may be used as explicit assumptions, but they are not facts and must never be presented as if they came from a filing.
 
-### 3.3 Price is the decision interface, not the thesis
+### 3.3 Reported accounting is not automatically economic reality
+
+The filed statement is always preserved. Market Forensics may add an auditable **Economic Reality** interpretation layer, but it must never silently rewrite the filing.
+
+Permanent classification rules:
+
+- total liabilities are never treated as financial debt;
+- operating leases are contractual obligations and operating capital, not automatically borrowing;
+- finance leases, supplier finance/reverse factoring, pensions, redeemable claims, preferred/minority enterprise claims and contingent consideration are classified separately from ordinary operating liabilities;
+- restricted cash does not offset financing debt;
+- deferred/contract revenue, deferred tax and operating provisions are not generic financial debt;
+- growth-capex, SBC, restructuring/impairment/acquisition charges and high-R&D business models can distort naive FCF, margin or ROIC signals and therefore require a reported-versus-economic view;
+- a D&A-based maintenance-capex estimate is a diagnostic proxy, never a reported fact;
+- sector-specific balance sheets such as banks, insurers and REITs must not inherit generic industrial leverage, working-capital or FCF scoring;
+- if a material classification cannot be resolved, the model must fail closed: keep the number visible, lower Economic Reality quality, disable the affected automatic score/method and require review rather than guessing.
+
+The canonical valuation equity bridge uses classified economic net debt when available. Operating lease liabilities remain separately visible unless the valuation method itself is explicitly lease-adjusted. This avoids mixing a lease-inclusive debt bridge with operating metrics that already expense operating lease economics.
+
+Discovery Stage 2 uses the same Economic Reality engine as Research. A material unresolved accounting classification cannot become a P1/P2 candidate; it remains WATCH until Research verifies the bridge.
+
+### 3.4 Price is the decision interface, not the thesis
 
 The current price is used to compare against Bear / Base / Bull fair value and to reverse-engineer market-implied expectations.
 
 Price movement by itself does not validate or invalidate a fundamental thesis.
 
-### 3.4 ADD ON EVIDENCE, NOT ON PRICE
+### 3.5 ADD ON EVIDENCE, NOT ON PRICE
 
 Position additions must be justified by improved evidence, not merely by a lower share price.
 
-### 3.5 Invalidation is fixed before investment
+### 3.6 Invalidation is fixed before investment
 
 Numerical thesis invalidation thresholds are set before investment and are not rewritten after earnings or price movement to preserve the narrative.
 
 A locked pre-investment invalidation cannot be silently changed retroactively.
 
-### 3.6 Research and Portfolio remain separate
+### 3.7 Research and Portfolio remain separate
 
 Research asks:
 
@@ -118,19 +138,19 @@ Portfolio asks:
 
 Shares, average cost, P/L, position size, money-loss budget, Portfolio sizing and Position Action live under Portfolio, not Research.
 
-### 3.7 Human approval is explicit
+### 3.8 Human approval is explicit
 
 Process Readiness is not a machine confidence score.
 
 It is a record that CONTROL reviewed the current evidence for each research gate.
 
-### 3.8 Validation cannot rescue incomplete research
+### 3.9 Validation cannot rescue incomplete research
 
 Validate is downstream of Research.
 
 A historical score cannot bypass missing Research gates or substitute for a thesis, valuation, bear case, monitoring rule or source review.
 
-### 3.9 Diagnostics cannot override canonical decision states
+### 3.10 Diagnostics cannot override canonical decision states
 
 Evidence score, Tape score, macro context, management score, peer comparison and similar diagnostics support interpretation.
 
