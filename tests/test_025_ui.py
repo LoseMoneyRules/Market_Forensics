@@ -174,3 +174,25 @@ def test_025_global_ui_semantics_readability_and_sticky_security_contract():
     assert "font-size:12.5px" not in css
     assert "font='12px system-ui'" not in js
     assert not any(word in css.lower() for word in ("purple", "violet", "magenta"))
+
+
+def test_025_global_vertical_rhythm_and_auth_spacing_contract():
+    css = Path("mfapp/static/css/app.css").read_text()
+    login = Path("mfapp/templates/login.html").read_text()
+    invite = Path("mfapp/templates/invite.html").read_text()
+    setup = Path("mfapp/templates/setup_2fa.html").read_text()
+    verify = Path("mfapp/templates/verify.html").read_text()
+    invite_created = Path("mfapp/templates/invite_created.html").read_text()
+    trace = Path("mfapp/templates/trace_console.html").read_text()
+
+    assert ".form-stack{display:grid;gap:14px}" in css
+    assert ".form-stack>.button{width:100%;min-height:44px}" in css
+    assert ".auth-card .form-stack+.micro{margin:18px 0 0}" in css
+    assert ".auth-card .error-id+.button{margin-top:16px}" in css
+    assert ".copy-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px" in css
+    assert ".tape-change-grid{margin-bottom:18px}" in css
+    assert 'class="form-stack"' in login
+    for template in (invite, setup, verify):
+        assert 'class="button primary auth-submit"' in template
+    assert 'class="button" data-copy="#invite-link"' in invite_created
+    assert 'class="button" type="submit">Clear log</button>' in trace
