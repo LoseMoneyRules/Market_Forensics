@@ -606,6 +606,10 @@ def market_scan(user_id: int) -> dict[str, Any]:
     stage1_rows, fundamental_screen = screen_full_universe(
         user_id, stage1_rows, errors, provider_calls,
     )
+    stage15_hypotheses = [_market_mispricing_hypothesis(row) for row in stage1_rows]
+    stage15_eligible = [row for row in stage15_hypotheses if row.get("eligible")]
+    stage15_long = sum(1 for row in stage15_eligible if row.get("side") == "LONG")
+    stage15_short = sum(1 for row in stage15_eligible if row.get("side") == "SHORT")
     symbols = {str(row.get("ticker") or "").upper() for row in stage1_rows if row.get("ticker")}
     local_context = _coverage_context_map(user_id, symbols)
     finalists = _select_stage2_finalists(stage1_rows, local_context)
@@ -822,6 +826,9 @@ def market_scan(user_id: int) -> dict[str, Any]:
         "stage1_full_universe_count": int(stage1.get("full_universe_count") or 0),
         "stage1_scan_mode": str(stage1.get("scan_mode") or "FULL_UNIVERSE"),
         "fundamental_screen": fundamental_screen,
+        "stage15_mispricing_count": len(stage15_eligible),
+        "stage15_long_count": stage15_long,
+        "stage15_short_count": stage15_short,
         "stage1_cursor_start": int(stage1.get("cursor_start") or 0),
         "stage1_cursor_end": int(stage1.get("cursor_end") or 0),
         "stage1_snapshot_requested_count": int(stage1.get("snapshot_requested_count") or 0),
@@ -863,19 +870,26 @@ def market_scan(user_id: int) -> dict[str, Any]:
             "fill_quota": "none",
             "full_universe_each_run": True,
             "unknown_stage2_requires_marketwide_fundamental_screen": True,
+            "stage15_requires_valuation_operating_tension": True,
+            "stage15_price_move_ranked": False,
+            "stage15_liquidity_tiebreak_only": True,
+            "stage15_no_fill_quota": True,
             "stage2_deep_enrichment_limit": FORENSIC_ENRICH_LIMIT,
         },
         "ranking_basis": [
-            "full-market SEC fundamental pre-screen for unknown names",
+            "full-market SEC fundamental evidence",
+            "Stage 1.5 valuation-versus-operating mispricing hypothesis",
+            "valuation tension strength",
+            "aligned filed operating evidence",
+            "contradiction penalty",
+            "evidence breadth",
+            "dollar volume only as final tie-break",
             "stored intrinsic / historical / peer evidence for known names",
-            "priority tier after deep forensics",
-            "absolute Base gap",
-            "valuation quality / method count",
-            "operating confirmation or contradiction",
-            "ticker",
+            "canonical valuation gap and quality after deep forensics",
+            "ticker only as deterministic final tie-break",
         ],
         "contract_version": CONTRACT_VERSION,
-        "enrichment_mode": "FULL_STAGE0_FULL_MARKET_STAGE1_SEC_FRAME_PRESCREEN_BOUNDED_DEEP_STAGE2",
+        "enrichment_mode": "FULL_MARKET_MISPRICING_STAGE15_THEN_BOUNDED_CANONICAL_STAGE2",
     }
 
 
