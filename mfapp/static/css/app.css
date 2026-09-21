@@ -438,6 +438,11 @@ html[data-theme="dark"] .mobile-backdrop{background:rgba(2,8,14,.68)}
 .tape-context-card.negative{border-left-color:var(--semantic-negative);background:var(--semantic-negative-bg)}
 .tape-context-card.watch{border-left-color:var(--semantic-caution);background:var(--semantic-caution-bg)}
 .tape-context-card.info{border-left-color:var(--semantic-info);background:var(--semantic-info-bg)}
+.tape-context-card[data-semantic="positive"]{border-left-color:var(--semantic-positive);background:var(--semantic-positive-bg)}
+.tape-context-card[data-semantic="negative"]{border-left-color:var(--semantic-negative);background:var(--semantic-negative-bg)}
+.tape-context-card[data-semantic="caution"]{border-left-color:var(--semantic-caution);background:var(--semantic-caution-bg)}
+.tape-context-card[data-semantic="neutral"]{border-left-color:var(--semantic-neutral-line);background:var(--semantic-neutral-bg)}
+.tape-context-card[data-semantic="info"]{border-left-color:var(--semantic-info);background:var(--semantic-info-bg)}
 .monitoring-how-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .monitoring-how-grid>div{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft)}
 .monitoring-how-grid span{display:block;font-size:13px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
