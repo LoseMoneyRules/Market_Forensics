@@ -707,14 +707,17 @@ def render_pdf_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) -
     hist=(data.get("fundamentals") or {}).get("history") or []
     if hist:
         rows=[["Period","Revenue growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"]]
-        for r in hist[-8:]:
-            rows.append([
-                r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),
-                _pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),
-                _num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),
-                _pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),
-                _num(r.get("ccc"),0,"d"),
-            ])
+        for r in hist[-10:]:
+            if r.get("missing_year"):
+                rows.append([r.get("period"),"MISSING","-","-","-","-","-","-","-","-"])
+            else:
+                rows.append([
+                    r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),
+                    _pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),
+                    _num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),
+                    _pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),
+                    _num(r.get("ccc"),0,"d"),
+                ])
         story.append(rule_table(rows, widths=[.53*inch,.68*inch,.62*inch,.58*inch,.58*inch,.59*inch,.52*inch,.67*inch,.67*inch,.51*inch], font_style="MFCellSmall"))
     summary=(data.get("fundamentals") or {}).get("summary")
     if summary:
@@ -1230,7 +1233,7 @@ def render_docx_v2(data: dict[str, Any], *, logo_stream: BytesIO | None = None) 
             for r in p.runs:r.bold=True
     hist=(data.get("fundamentals") or {}).get("history") or []
     if hist:
-        add_table(["Period","Rev growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"],[[r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),_pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),_num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),_pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),_num(r.get("ccc"),0,"d")] for r in hist[-8:]],small=True)
+        add_table(["Period","Rev growth","Gross M","Op M","FCF M","CFO/NI","ROIC","Inv/Rev","Rec/Rev","CCC"],[[r.get("period"),_pct(r.get("revenue_growth_pct")),_pct(r.get("gross_margin_pct"),signed=False),_pct(r.get("operating_margin_pct"),signed=False),_pct(r.get("fcf_margin_pct"),signed=False),_num(r.get("cfo_to_net_income"),2,"x"),_pct(r.get("roic_pct"),signed=False),_pct(r.get("inventory_to_revenue_pct"),signed=False),_pct(r.get("receivables_to_revenue_pct"),signed=False),_num(r.get("ccc"),0,"d")] for r in hist[-10:]],small=True)
 
     heading("Financial flows",1,"Follow the money")
     steps=_flow_rows(data)
