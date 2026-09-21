@@ -426,3 +426,86 @@ def test_030_fundamentals_forensics_surfaces_strengths_red_flags_inconsistency_a
     assert any(item["code"] == "EXPECTED_FIELD_GAPS" for item in result["data_gaps"])
     assert any(item["code"] == "TTM_SEQUENCE_GAP" for item in result["data_gaps"])
     assert result["trend_cards"]
+
+
+
+def test_030_discovery_does_not_restore_reported_debt_cash_when_economic_reality_missing(monkeypatch):
+    import mfapp.discovery_forensics as df
+
+    monkeypatch.setattr(df, "metrics_from_history", lambda history, **kwargs: {
+        "revenue": 900.0,
+        "net_income": 90.0,
+        "fcf": 80.0,
+        "shares": 100.0,
+        "basis_usable": True,
+        "net_debt": None,
+        "company_quality": {"state": "INSUFFICIENT EVIDENCE"},
+        "valuation_policy": {"method_exclusions": ["ev_sales"], "ledger": []},
+    })
+    monkeypatch.setattr(df, "default_cases", lambda metrics, company_type: {
+        "BEAR": {"probability": 0.25},
+        "BASE": {"probability": 0.50},
+        "BULL": {"probability": 0.25},
+        "weights": {"pe": 1.0, "ev_sales": 0.0, "fcf_yield": 1.0},
+        "horizon_years": 5,
+    })
+
+    captured = {}
+    def fake_evaluate(metrics, cases, weights, years, **kwargs):
+        captured.update(metrics)
+        return {
+            "quality": "DATA_WARNING",
+            "warnings": ["Economic Reality not materialized"],
+            "scenarios": {
+                "BEAR": {"fair_value": 8.0, "pe": 8.0, "ev_sales": None, "fcf_yield": 8.0},
+                "BASE": {"fair_value": 10.0, "pe": 10.0, "ev_sales": None, "fcf_yield": 10.0},
+                "BULL": {"fair_value": 12.0, "pe": 12.0, "ev_sales": None, "fcf_yield": 12.0},
+            },
+        }
+    monkeypatch.setattr(df, "evaluate", fake_evaluate)
+
+    current = {
+        "revenue": 1_000.0,
+        "net_income": 100.0,
+        "fcf": 90.0,
+        "cash": 300.0,
+        "debt": 700.0,
+        "shares_outstanding": 100.0,
+        "operating_income": 150.0,
+        "quality": {},
+    }
+    df._valuation_from_history(
+        [{"fiscal_year": 2025, "revenue": 900.0}],
+        current,
+        {"revenue": 900.0},
+        10.0,
+    )
+    assert captured["net_debt"] is None
+    assert captured["net_debt_basis"] == "ECONOMIC_REALITY_NOT_MATERIALIZED"
+    assert captured["economic_reality_unresolved"] is True
+
+
+def test_030_fundamentals_template_exposes_complete_forensic_contract():
+    from pathlib import Path
+
+    template = Path("mfapp/templates/company_section.html").read_text(encoding="utf-8")
+    for marker in (
+        "FUNDAMENTALS FORENSICS · 0.3.0",
+        "CURRENT FINANCIAL ANATOMY",
+        "EVIDENCE / PROVENANCE",
+        "Full Economic Reality ledger",
+        "COMPLETE FILED HISTORY",
+        "Decision-critical gaps",
+        "All visible gaps",
+    ):
+        assert marker in template
+
+
+def test_030_full_report_contract_carries_fundamentals_forensics_source():
+    from pathlib import Path
+
+    contract = Path("mfapp/report_contract.py").read_text(encoding="utf-8")
+    renderer = Path("mfapp/report_render_v2.py").read_text(encoding="utf-8")
+    assert '"forensics": dict(cache.get("fundamentals_forensics") or {})' in contract
+    assert 'ff=(data.get("fundamentals") or {}).get("forensics") or {}' in renderer
+    assert "RED FLAGS / WATCH" in renderer
