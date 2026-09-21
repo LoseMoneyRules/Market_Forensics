@@ -7,7 +7,7 @@ from typing import Any
 from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 from .company_quality import build_company_quality
 
-ENGINE_VERSION = "0.3.0"
+ENGINE_VERSION = "0.3.1"
 
 DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
 QUALITY_ALIASES = {
