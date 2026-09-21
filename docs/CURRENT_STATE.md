@@ -11,8 +11,16 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.3.0**  
+**State-Version: 0.3.1**  
 **Product:** Market Forensics  
+**0.3.1 source branch:** `release/0.3.1-rerating-peer-research-reset`, created directly from clean main `ed5f5e4c948acc36b93d0388fcfd2c55d247b3ff`; no patch-on-patch branch ancestry.  
+**0.3.1 scope:** RE-RATING, PEER TRIANGULATION & RESEARCH RESET — deterministic new-financial-evidence review reset; point-in-time historical multiple regimes and bounded multiple bridge; market-implied expectations; multi-dimensional CLOSE/PARTIAL/REFERENCE peer classification; peer-adjusted relative multiple; independent intrinsic/historical/peer triangulation; sourced catalyst timeline and evidence-based Decision Window; canonical reuse by Valuation, Discovery and Reports.  
+**0.3.1 Research reset:** when a newly normalized FY/Q filing, recent restatement or material re-normalization is materialized after a gate approval, only financially dependent gates become `REVIEW REQUIRED`. Prior approval rows, analyst notes and assumptions remain preserved. Business, Tape, Journal and Audit remain approved unless their own evidence changes. The UI must show `NEW FINANCIAL EVIDENCE — REVIEW REQUIRED`, current filing basis, and reopened gates.  
+**0.3.1 publication rule:** historical publications remain immutable. Current Research cannot create/publish a new snapshot while the current financial basis has reopened required gates.  
+**0.3.1 valuation rule:** historical and peer relative value are independent cross-checks. No blind arithmetic average and no automatic peer blend into Bear/Base/Bull. The previous peer-overlay API remains compatibility-only with weight 0.0. Missing data stays missing; EV/EBITDA remains unavailable until EBITDA is a canonical normalized fact/derivation.  
+**0.3.1 timing rule:** Decision Window states are NO URGENCY / BUILDING WINDOW / ACTIVE WINDOW / CLOSING WINDOW / THESIS BROKEN and are driven by stored catalysts, re-rating conditions, monitoring/invalidation and open valuation evidence — never price movement alone. ADD ON EVIDENCE, NOT ON PRICE.  
+**0.3.1 architecture:** one canonical `valuation_forensics.py` materialized by RECALCULATE. Valuation Web, Discovery Stage 2 and Reports consume the same cache payload. Normal GETs do not call providers or run peer/historical scans.  
+**Permanent development rule:** NO PATCH SU PATCH. Start material releases from clean `main`; do not create parallel analytical engines.  
 **Architecture:** web-native Flask + MariaDB production  
 **Runtime principle:** FAST UI → bounded background jobs → cached/materialized results → non-disruptive UI updates  
 **Production:** 0.3.0 on Namecheap; verified production health after manual deploy run `35627648767` / deploy #58 from main source `398552c0a9a81f9221a42451efa066c169900e9d` at 2026-09-21T16:48:38Z; /health matched VERSION and returned `architecture=web-native`, `database=primary`, `reports=rich`, `status=ok`.  
