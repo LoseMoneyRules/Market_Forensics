@@ -367,6 +367,12 @@ def _market_mispricing_hypothesis(row: dict[str, Any]) -> dict[str, Any]:
             add(short_valuation, 2, f"P/E proxy {pe:.1f}x with non-growing revenue")
         elif pe >= 30 and revenue is not None and revenue < 0:
             add(short_valuation, 1, f"P/E proxy {pe:.1f}x despite revenue decline")
+        if (
+            revenue is not None and revenue >= 8 and pe <= 40
+            and pe / max(revenue, .1) <= 1.5
+            and not any("P/E proxy" in text for _, text in long_valuation)
+        ):
+            add(long_valuation, 2, f"Growth-adjusted P/E {pe:.1f}x vs revenue growth {revenue:.1f}%")
 
     if ps is not None:
         if ps <= 1 and (revenue is not None and revenue >= 0) and (op_margin is None or op_margin >= 0):
@@ -379,6 +385,21 @@ def _market_mispricing_hypothesis(row: dict[str, Any]) -> dict[str, Any]:
             add(short_valuation, 2, f"P/S proxy {ps:.1f}x with non-growing revenue")
         elif ps >= 3 and revenue is not None and revenue <= -5:
             add(short_valuation, 1, f"P/S proxy {ps:.1f}x despite revenue decline")
+        efficiency = (
+            revenue + op_margin
+            if revenue is not None and op_margin is not None
+            else None
+        )
+        if (
+            efficiency is not None and efficiency >= 30 and ps <= 5
+            and not any("P/S proxy" in text for _, text in long_valuation)
+        ):
+            add(long_valuation, 2, f"Growth+margin adjusted P/S {ps:.1f}x vs {efficiency:.1f} combined points")
+        elif (
+            efficiency is not None and efficiency >= 20 and ps <= 3.5
+            and not any("P/S proxy" in text for _, text in long_valuation)
+        ):
+            add(long_valuation, 1, f"Growth+margin adjusted P/S {ps:.1f}x vs {efficiency:.1f} combined points")
 
     long_op = sum(points for points, _ in long_operating)
     short_op = sum(points for points, _ in short_operating)
