@@ -367,6 +367,7 @@ def build_economic_reality(
             "code": "TAX_RATE_ANOMALY", "tone": "REVIEW",
             "detail": f"Effective tax expense / pretax income is {raw_tax_rate * 100.0:.1f}%; net-income valuation evidence requires normalization review.",
         })
+        suppressions.append("PE_EARNINGS_NORMALIZATION_REVIEW")
     unusual_nonoperating = sum(
         abs(value or 0.0) for value in (
             n(facts.get("gain_loss_asset_sale")),
@@ -380,6 +381,7 @@ def build_economic_reality(
             "code": "NONOPERATING_EARNINGS_DISTORTION", "tone": "REVIEW",
             "detail": f"Identified non-operating gains/losses are {unusual_nonoperating_pct:.1f}% of revenue; P/E and net-margin evidence require normalization review.",
         })
+        suppressions.append("PE_EARNINGS_NORMALIZATION_REVIEW")
     if special_charges_to_revenue is not None and special_charges_to_revenue >= 1.0:
         flags.append({
             "code": "SPECIAL_CHARGES_MATERIAL", "tone": "CONTEXT",
