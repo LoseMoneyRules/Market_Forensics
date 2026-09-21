@@ -191,6 +191,10 @@ def test_025_global_vertical_rhythm_and_auth_spacing_contract():
     assert ".auth-card .error-id+.button{margin-top:16px}" in css
     assert ".copy-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px" in css
     assert ".tape-change-grid{margin-bottom:18px}" in css
+    assert ".micro{font-size:13px;line-height:1.45;color:var(--muted)}" in css
+    assert ".panel-label{margin-bottom:4px;font-size:13px" in css
+    assert ".text-link{display:inline-flex;margin-top:2px" in css
+    assert ".secret-code{display:block;margin-top:8px" in css
     assert 'class="form-stack"' in login
     for template in (invite, setup, verify):
         assert 'class="button primary auth-submit"' in template
