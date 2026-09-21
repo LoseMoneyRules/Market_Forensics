@@ -241,13 +241,21 @@ def recalculate_company(company_id: int, coverage_id: int | None = None) -> dict
                 model.assumptions = dict(model.assumptions or {}) | {"latest_result": valuation}; model.calculation_version = CALCULATION_VERSION
     db.session.commit()
     cache = None
+    autofill = None
     if coverage_id:
+        coverage = db.session.get(Coverage, coverage_id)
+        if coverage is not None:
+            # Canonical ordering: statement/flow calculations -> current 0.3 valuation
+            # and auto research -> one materialized Research cache. Never publish a
+            # cache from pre-prefill scenarios and then update valuation behind it.
+            autofill = prefill_coverage(coverage_id, coverage.user_id)
         from .research_cache import refresh_research_cache
         cache = refresh_research_cache(coverage_id)
     return {
         "periods": calculated,
         "metrics": metrics_out[-5:],
         "valuation": valuation,
+        "autofill": autofill,
         "research_cache": {
             "event_id": cache.get("_event_id"),
             "generated_at": cache.get("_generated_at"),
@@ -723,7 +731,8 @@ def _execute(job: Job) -> dict[str, Any]:
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
         result = refresh_company_fundamentals(company, security, job.user_id); result["recalculation"] = recalculate_company(company.id, coverage_id)
-        if coverage_id: result["autofill"] = prefill_coverage(coverage_id, job.user_id)
+        if coverage_id:
+            result["autofill"] = (result.get("recalculation") or {}).get("autofill")
         management_job = enqueue_job(
             "MANAGEMENT_SCAN",
             user_id=job.user_id,
@@ -741,9 +750,7 @@ def _execute(job: Job) -> dict[str, Any]:
         return result
     if kind == "RECALCULATE":
         if not job.company_id: raise RuntimeError("company_id is required")
-        result = recalculate_company(job.company_id, coverage_id)
-        if coverage_id: result["autofill"] = prefill_coverage(coverage_id, job.user_id)
-        return result
+        return recalculate_company(job.company_id, coverage_id)
     if kind == "RESEARCH_PREFILL":
         if not coverage_id: raise RuntimeError("coverage_id is required")
         return prefill_coverage(coverage_id, job.user_id)
