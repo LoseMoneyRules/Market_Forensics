@@ -404,7 +404,11 @@ def market_scan(user_id: int) -> dict[str, Any]:
         methods = int(evidence.get("valuation_methods") or 0)
         quality = str(evidence.get("quality") or "DATA_WARNING").upper()
 
+        economic_reality = dict(evidence.get("economic_reality") or {})
+        accounting_context = list(evidence.get("accounting_context") or [])
         warning_parts = [str(x) for x in evidence.get("warnings") or [] if x]
+        if economic_reality.get("material_unresolved"):
+            warning_parts.append("Economic Reality accounting classification is materially unresolved; candidate is WATCH-only until Research verification.")
         if quality != "INTRINSIC":
             warning_parts.append(f"Valuation quality is {quality}; treat this as a research lead, not a validated fair value.")
         if methods < 2:
@@ -434,6 +438,7 @@ def market_scan(user_id: int) -> dict[str, Any]:
             str(item.get("stage2_selection_reason") or ""),
         ]
         reasons.extend(str(row.get("detail") or "") for row in operating_signals[:2])
+        reasons.extend(str(row.get("detail") or "") for row in accounting_context[:2])
         reasons = [reason for reason in reasons if reason]
 
         candidate = dict(item)
@@ -460,6 +465,10 @@ def market_scan(user_id: int) -> dict[str, Any]:
                 or [operating_state]
             ),
             "operating_snapshot": dict(evidence.get("snapshot") or {}),
+            "economic_reality": economic_reality,
+            "economic_reality_quality": str(economic_reality.get("quality") or "UNAVAILABLE"),
+            "economic_reality_unresolved": bool(economic_reality.get("material_unresolved")),
+            "accounting_context": accounting_context,
             "target_status": "ROOM TO BASE" if side == "LONG" else "ABOVE BASE",
             "radar_label": _family_label(side, evidence),
             "why_found": reasons,
