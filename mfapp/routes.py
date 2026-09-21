@@ -14,6 +14,7 @@ from .decision_support import company_brief, journal_prefill, management_account
 from .management_promises import evaluate_promises
 from .extensions import db
 from .finra import stored_summary as finra_stored_summary
+from .fundamentals_forensics import build_fundamentals_forensics
 from .jobs import enqueue_job
 from .data_providers import latest_snapshot, provider_status
 from .models import AuditEvent, Invite, User
@@ -35,7 +36,7 @@ from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
 from .symbols import validate_ticker
-from .valuation_engine import stored_model_base_quality, valuation_base_quality, valuation_is_decision_grade
+from .valuation_engine import infer_company_type, stored_model_base_quality, valuation_base_quality, valuation_is_decision_grade
 
 bp = Blueprint("web", __name__)
 
@@ -866,13 +867,36 @@ def company_section(ticker, section):
                     }
                     break
         economic_reality = dict(((current_financial or {}).get("quality") or {}).get("economic_reality") or {})
+        completeness = numbers_completeness(company.id)
+        company_type = infer_company_type(company.sector, company.industry)
+        forensic_history = history_with_current(company.id, 15)
+        fundamentals_forensics = build_fundamentals_forensics(
+            forensic_history,
+            current=current_financial,
+            completeness=completeness,
+            company_type=company_type,
+        )
+        economic_refresh_queued = False
+        if current_financial and not economic_reality and provider_status(g.user.id).get("sec"):
+            sec_job = enqueue_job(
+                "SEC_INGEST",
+                user_id=g.user.id,
+                company_id=company.id,
+                security_id=ctx["security"].id,
+                payload={"coverage_id": coverage.id},
+                priority=40,
+            )
+            economic_refresh_queued = sec_job is not None
         extra.update({
             "financials": financials,
             "quarterly_financials": quarterly_financials,
             "current_financial": current_financial,
             "economic_reality": economic_reality,
             "leverage_display": leverage_display,
-            "numbers_completeness": numbers_completeness(company.id),
+            "numbers_completeness": completeness,
+            "fundamentals_forensics": fundamentals_forensics,
+            "fundamentals_company_type": company_type,
+            "economic_refresh_queued": economic_refresh_queued,
             "forecast_rows": forecasts,
             "numbers_scale_series": scale_series,
         })
