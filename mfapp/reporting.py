@@ -509,7 +509,9 @@ def render_discovery_pdf(scan: dict[str, Any], branding: dict[str, str] | None =
     for idx, row in enumerate(candidates, start=1):
         signals=list(row.get("forensic_signals") or [])
         signal = str((signals[0] or {}).get("detail") or "") if signals and isinstance(signals[0],dict) else ""
-        reason = " · ".join(x for x in [str(row.get("radar_label") or ""), str(row.get("priority_reason") or ""), signal] if x)
+        accounting=list(row.get("accounting_context") or [])
+        accounting_note = str((accounting[0] or {}).get("detail") or "") if accounting and isinstance(accounting[0],dict) else ""
+        reason = " · ".join(x for x in [str(row.get("radar_label") or ""), str(row.get("priority_reason") or ""), signal, accounting_note] if x)
         invalidates=str(row.get("what_invalidates") or "")
         if invalidates:
             reason += (" | Invalidates: " if reason else "Invalidates: ") + invalidates
