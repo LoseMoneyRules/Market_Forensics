@@ -67,7 +67,7 @@
 **Verified opportunity-funnel PR CI:** run `35469153142` / #1116 = completed / success on `55f59f3fdc9099491110bfd7c72a16ade52eb281`.  
 **Accepted opportunity-funnel merge:** `adfd99593f6db378cf8cf99a41976a2e85c6c49d`.  
 **Verified opportunity-funnel post-merge main CI:** run `35469221771` / #1117 = completed / success; release suite, production-minimal startup/rich-report smoke and self-contained reporting-vendor smoke all passed.  
-**Release phase:** 0.2.14 Research Reports V2 is complete in `main`, including same-version report completion PR #47 / squash `f819a1a93718f06e2a1201a595c211d28a6133b5`: Bear/Base/Bull valuation visual immediately follows the Research Conclusion hero, Discovery has a rebuilt decision-useful landscape PDF, and source/provenance typography is compact bank-report scale. No analytical engine was changed. Source branch `release/0.2.14-research-reports-v2` was created directly from clean main `22a12451bd7d3c1b5ba4bd663ac4d20784e362b4`; PR #46 merged by squash as `50f0450047d13b02d9f18824842a9cae4a3bbef4`. Scope remained reporting-only: canonical report data contract, Executive PDF, Full PDF, Full Word, native report charts, Local/Web parity audit, provider-free report GET, report-specific tests and reporting cleanup. No valuation/Tape/Discovery/Portfolio/Process Readiness/database/deploy engine redesign was introduced. Production remains independently verified at 0.2.13 deploy #53; 0.2.14 has NOT been deployed.  
+**Release phase:** 0.3.0 Economic Reality + Company Quality is the active source release. PR #48 carries the 0.3.0 implementation from clean 0.2.14 main; merge, post-merge CI and Namecheap production remain independently verified states. The top-level Production line is canonical for what is actually live.
 
 Production and main are separately verified states. A merge to main does not imply a Namecheap deploy.
 
@@ -93,11 +93,25 @@ Core contract:
 - Decision Evidence uses economic leverage and accounting-aware cash/margin rules; material unresolved classification blocks BUY/SELL;
 - Discovery contract is BROAD_FORENSIC_DISCOVERY_V3; Stage 2 reuses the same Economic Reality engine, suppresses identified false short signals and caps material accounting uncertainty at WATCH instead of P1/P2;
 - PDF/Word Research reports carry the same economic basis and flags;
+- Company Quality adds a deterministic, non-scorecard read across operating durability, returns, cash quality, balance-sheet resilience, reinvestment efficiency, capital allocation and accounting quality; outputs are STRONG / SOUND / MIXED / FRAGILE / UNRESOLVED / INSUFFICIENT EVIDENCE with explicit dimension states and alarm bells;
+- Company Quality remains separate from valuation attractiveness: a strong company receives no hidden premium, while evidenced weaknesses can only apply bounded downside adjustments;
+- the canonical Quality → Valuation policy can raise auto-case discount rates, haircut forward/terminal growth, shift probability toward Bear and exclude an accounting-invalid valuation method; every effect is exposed in a Valuation Impact Ledger;
+- accounting/economic effects that directly change value are distinguished from diagnostics that remain context only; operating leases change classification/fixed-charge risk without being silently double-counted as borrowing, growth-capex remains a proxy rather than an invented FCF restatement, and high R&D remains context unless a defensible capitalization model exists;
+- Management execution, Research Evidence, Discovery and Valuation now consume the same Economic Reality definitions rather than maintaining parallel debt/FCF/working-capital interpretations;
+- pre-0.3 valuation/research caches are automatically marked stale by engine-version mismatch so existing Coverage is recalculated through the normal background path after upgrade;
+- Overview exposes Company Quality / alarm bells / strengths; Valuation exposes the Quality → Valuation bridge; PDF/Word carry both;
 - 0.3.0 regressions include a CMG-scale lease-heavy case plus finance leases/supplier finance/enterprise claims, restricted cash, deferred revenue, growth capex, SBC, sector-policy suppression and Discovery accounting-review gating.
 
 No accounting reinterpretation is allowed to erase contractual obligations. Economic Reality exists to prevent category errors in scoring and valuation, not to make liabilities disappear.
 
 Production remains independently verified at 0.2.13 until an explicit later deploy. 0.2.14 was not deployed before this release branch; main and production remain separate states.
+
+Deployment integrity in 0.3.0:
+- CI and deploy both fail if VERSION, CURRENT_STATE State-Version and HOW_MARKET_FORENSICS_WORKS Current product line disagree;
+- a successful deploy records the actual deployed source SHA before upload;
+- only after final production health succeeds, the workflow updates the single top-level Production line in CURRENT_STATE on main with deployed VERSION, source SHA and workflow run;
+- historical release notes are never rewritten by deployment automation;
+- the sync is retried if main moves concurrently and a failed docs sync is surfaced instead of leaving a silently stale source of truth.
 
 ## 0.2.14 release scope — Research Reports V2
 
