@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from .core_models import (
@@ -22,6 +23,22 @@ def _hash(value: Any) -> str:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _utc_naive(value: Any) -> datetime | None:
+    """Compare persisted timestamps safely across legacy DB/driver timezone shapes."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 def _gate(label: str, key: str, evidence: Any, evidence_ready: bool) -> dict[str, Any]:
@@ -98,29 +115,26 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     ]
 
     approvals = {row.gate_key: row for row in ResearchGateApproval.query.filter_by(coverage_id=coverage.id).all()}
-    basis_materialized_at = None
-    try:
-        from datetime import datetime
-        basis_materialized_at = datetime.fromisoformat(str(financial_basis.get("materialized_at"))) if financial_basis.get("materialized_at") else None
-    except Exception:
-        basis_materialized_at = None
+    basis_materialized_at = _utc_naive(financial_basis.get("materialized_at"))
+    thesis_revision_at_cmp = _utc_naive(thesis_revision_at)
 
     for gate in gates:
         approval = approvals.get(gate["key"])
+        approval_at = _utc_naive(approval.approved_at) if approval else None
         evidence_changed = bool(approval and approval.evidence_hash != gate["evidence_hash"])
         financial_review_required = bool(
             approval
             and gate["key"] in FINANCIAL_REVIEW_GATES
             and basis_materialized_at is not None
-            and approval.approved_at is not None
-            and basis_materialized_at > approval.approved_at
+            and approval_at is not None
+            and basis_materialized_at > approval_at
         )
         thesis_review_required = bool(
             approval
             and gate["key"] in {"overview", "monitoring"}
-            and thesis_revision_at is not None
-            and approval.approved_at is not None
-            and thesis_revision_at > approval.approved_at
+            and thesis_revision_at_cmp is not None
+            and approval_at is not None
+            and thesis_revision_at_cmp > approval_at
         )
         review_required = financial_review_required or thesis_review_required
 
