@@ -274,6 +274,7 @@ UI rules also include:
 - one canonical mobile navigation; the drawer/control shell owns phone and tablet portrait navigation and must never leave an intermediate width without a reachable primary menu;
 - research-step navigation is server-rendered; JavaScript may control open/closed state but must not reconstruct missing canonical markup;
 - mobile controls use practical touch targets (about 44 px where applicable), important tables preserve information through controlled overflow/ledger layouts, and 320–430 px phone widths must remain usable without zoom;
+- vertical rhythm is canonical rather than page-specific: peer sections/panels use about 18 px separation, form field/action stacks use about 14 px, and compact control groups use about 8–10 px; layout wrappers that zero child margins must restore the section gap themselves;
 - shared component presentation belongs in canonical CSS; inline event/style fixes and release-number override layers are not an accepted cleanup strategy;
 - Research → Financial Flows remains inside Research, not a separate primary product;
 - Validate remains immediately after Sources / Audit.
