@@ -3,6 +3,12 @@
     <div><p class="eyebrow">RESEARCH CONTROL</p><h2>Process readiness</h2><p class="muted">Evidence can be ready automatically. Approve or reopen a gate immediately; only genuinely heavy analytical work runs as a background job.</p></div>
     <strong>{{ readiness.done }}/{{ readiness.total }}</strong>
   </div>
+  {% if readiness.degraded %}
+  <div class="notice amber research-control-degraded">
+    <strong>RESEARCH CONTROL TEMPORARILY UNAVAILABLE.</strong>
+    Stored evidence remains visible so Fundamentals, Expectations, Financial Flows and Sources can still be reviewed. Approval, validation and publication remain blocked until the control layer is healthy.
+  </div>
+  {% endif %}
   {% if readiness.financial_review_required %}
   {% set basis = readiness.financial_basis or {} %}
   <div class="notice amber research-basis-alert">
