@@ -262,7 +262,10 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
         field for field in normalized_fields
         if current and n(current.get(field)) is not None and source_map.get(field)
     )
+    critical_unresolved_count = len(set(missing_current) | set(missing_continuity)) + len(missing_derived)
     unresolved_count = len(set(missing_current) | set(missing_continuity) | set(missing_expected_fields)) + len(missing_derived)
+    economic = dict(((current or {}).get("quality") or {}).get("economic_reality") or {})
+    economic_ready = bool(economic) and not bool(economic.get("material_unresolved"))
     return {
         "annual_count": len(annual),
         "quarter_count": len(quarters),
@@ -277,9 +280,11 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
         "source_covered_field_count": len(source_covered_fields),
         "source_covered_fields": source_covered_fields,
         "unresolved_count": unresolved_count,
+        "critical_unresolved_count": critical_unresolved_count,
+        "economic_reality_ready": economic_ready,
         "quarter_gaps": quarter_gaps,
         "ttm_ready": ttm_ready,
-        "analysis_ready": bool(ttm_ready and unresolved_count == 0),
+        "analysis_ready": bool(ttm_ready and critical_unresolved_count == 0 and economic_ready),
     }
 
 
