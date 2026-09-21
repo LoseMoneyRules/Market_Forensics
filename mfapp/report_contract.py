@@ -13,7 +13,7 @@ from .core_models import (
 from .current_financials import annual_rows, current_row
 
 
-REPORT_CONTRACT_VERSION = "0.3.1"
+REPORT_CONTRACT_VERSION = "0.3.2"
 
 
 def _n(value: Any) -> float | None:
@@ -41,7 +41,7 @@ def _compact(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
 
 
 def _fundamentals(company_id: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    history = list(reversed(annual_rows(company_id, 8)))
+    history = list(reversed(annual_rows(company_id, 10)))
     out = []
     for row in history:
         metrics = dict(row.get("metrics") or {})
