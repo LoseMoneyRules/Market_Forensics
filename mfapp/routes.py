@@ -950,8 +950,13 @@ def company_section(ticker, section):
         current_financial = current_row(company.id)
         forecasts = forecast_rows(company.id, ctx["model"], 3)
         scale_series = [
-            {"label": f"FY{row.get('fiscal_year')}", "revenue": row.get("revenue"), "fcf": row.get("fcf")}
-            for row in reversed(financials)
+            {
+                "label": f"FY{row.get('fiscal_year')}",
+                "revenue": row.get("revenue"),
+                "fcf": row.get("fcf"),
+                "missing_year": bool(row.get("missing_year")),
+            }
+            for row in reversed(annual_history_rows)
         ]
         if current_financial and current_financial.get("period_type") == "TTM":
             scale_series.append({
