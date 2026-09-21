@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 
 from mfapp import create_app
 from mfapp.core_models import (
-    Company, Coverage, FinancialPeriod, NormalizedFinancial, ResearchGateApproval,
+    Company, Coverage, FinancialPeriod, MarketSnapshot, NormalizedFinancial, ResearchGateApproval,
     ResearchState, ResearchVersion, RiskPlan, Security, Snapshot,
 )
 from mfapp.extensions import db
@@ -475,4 +475,53 @@ def test_thesis_version_ui_and_documentation_contract():
     assert "NEW THESIS VERSION" in readiness
     assert "Invalidation is immutable per thesis version" in how
     assert "0.3.1 thesis-invalidation rule" in current
+    assert Path("VERSION").read_text().strip() == "0.3.1"
+
+
+def test_quote_api_emits_explicit_utc_and_header_marks_time_for_browser_localization(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "browser-local-time")
+    uid, _, coverage_id = seed_workspace(app, "LTZ")
+    stamp = datetime(2026, 9, 21, 18, 28, 0)
+
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        db.session.add(MarketSnapshot(
+            security_id=coverage.security_id,
+            provider="Verified quote consensus",
+            price=123.45,
+            currency="USD",
+            as_of=stamp,
+            quality="VERIFIED",
+            payload={},
+        ))
+        db.session.commit()
+
+    client = app.test_client()
+    login(client, uid)
+
+    live = client.get("/company/LTZ/price/live")
+    assert live.status_code == 200
+    payload = live.get_json()
+    assert payload["as_of"] == "2026-09-21T18:28:00Z"
+    assert payload["provider"] == "Verified quote consensus"
+
+    page = client.get("/company/LTZ/overview")
+    assert page.status_code == 200
+    assert b'data-local-time' in page.data
+    assert b'datetime="2026-09-21T18:28:00Z"' in page.data
+
+
+def test_browser_local_time_contract_uses_explicit_utc_and_browser_timezone():
+    js = Path("mfapp/static/js/app.js").read_text()
+    routes = Path("mfapp/workspace_routes.py").read_text()
+    header = Path("mfapp/templates/_company_header.html").read_text()
+
+    assert "normalizeUtcTimestamp" in js
+    assert "browserLocalTime" in js
+    assert "timeZoneName:'short'" in js
+    assert "return value.replace(' ', 'T') + 'Z';" in js
+    assert "document.querySelectorAll('time[data-utc], [data-local-time]')" in js
+    assert '"as_of": _utc_iso(snap.as_of) if snap else None' in routes
+    assert 'data-local-time' in header
+    assert "%Y-%m-%dT%H:%M:%SZ" in header
     assert Path("VERSION").read_text().strip() == "0.3.1"
