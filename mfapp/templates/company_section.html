@@ -298,14 +298,14 @@
       <details>
         <summary><strong>Normalized filing field sources</strong> · {{ current_financial.source_map|length }} mapped entries</summary>
         <div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Field</th><th>Source / tag / method</th></tr></thead><tbody>
-          {% for key,value in current_financial.source_map.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{{ value }}</small></td></tr>{% else %}<tr><td colspan="2" class="empty-cell">No normalized source map is stored for this basis.</td></tr>{% endfor %}
+          {% for key,value in current_financial.source_map.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{% if value is mapping %}{{ value.get('provider') or value.get('namespace') or 'filing' }}{% if value.get('tag') %} · {{ value.get('tag') }}{% endif %}{% if value.get('method') %} · {{ value.get('method')|replace('_',' ') }}{% endif %}{% if value.get('filed') %} · filed {{ value.get('filed') }}{% endif %}{% if value.get('accession') %} · {{ value.get('accession') }}{% endif %}{% else %}{{ value }}{% endif %}</small></td></tr>{% else %}<tr><td colspan="2" class="empty-cell">No normalized source map is stored for this basis.</td></tr>{% endfor %}
         </tbody></table></div>
       </details>
       {% if economic_reality and economic_reality.fact_sources %}
       <details>
         <summary><strong>Economic Reality fact sources</strong> · {{ economic_reality.fact_sources|length }} classified inputs</summary>
         <div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Economic fact</th><th>Source</th></tr></thead><tbody>
-          {% for key,value in economic_reality.fact_sources.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{{ value }}</small></td></tr>{% endfor %}
+          {% for key,value in economic_reality.fact_sources.items() %}<tr><td><strong>{{ key|replace('_',' ') }}</strong></td><td><small>{% if value is mapping %}{{ value.get('namespace') or value.get('provider') or 'filing' }}{% if value.get('tag') %} · {{ value.get('tag') }}{% endif %}{% if value.get('method') %} · {{ value.get('method')|replace('_',' ') }}{% endif %}{% if value.get('filed') %} · filed {{ value.get('filed') }}{% endif %}{% if value.get('accession') %} · {{ value.get('accession') }}{% endif %}{% else %}{{ value }}{% endif %}</small></td></tr>{% endfor %}
         </tbody></table></div>
       </details>
       {% endif %}
