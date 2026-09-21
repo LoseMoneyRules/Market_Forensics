@@ -24,7 +24,7 @@ MIN_DOLLAR_VOLUME = 15_000_000.0
 MIN_DAILY_VOLUME = 200_000.0
 MAX_PER_SIDE = 10
 MAX_WATCH = 10
-CONTRACT_VERSION = "FULL_MARKET_FORENSIC_DISCOVERY_V4"
+CONTRACT_VERSION = "FULL_MARKET_MISPRICING_DISCOVERY_V5"
 
 
 def _headers(user_id: int) -> dict[str, str] | None:
@@ -257,17 +257,197 @@ def _scan_cadence(health: dict[str, Any], coverage_progress: dict[str, Any]) -> 
     }
 
 
+
+def _market_mispricing_hypothesis(row: dict[str, Any]) -> dict[str, Any]:
+    """Build an auditable full-market mispricing hypothesis before deep valuation.
+
+    Stage 1.5 does NOT estimate fair value and does not decide P1/P2. It asks a
+    narrower question: is the current market valuation visibly in tension with
+    the direction of filed operating evidence? Only names with evidence on both
+    sides of that question are allowed to spend deep Companyfacts/valuation work.
+    """
+    screen = dict(row.get("fundamental_screen") or {})
+    metrics = dict(screen.get("metrics") or {})
+    status = str(screen.get("status") or "MISSING").upper()
+    if status not in {"READY", "PARTIAL"}:
+        return {
+            "eligible": False, "side": "NEUTRAL", "dislocation_points": 0,
+            "valuation_points": 0, "operating_points": 0, "contradiction_points": 0,
+            "valuation_signals": [], "operating_signals": [],
+            "reason": "Comparable SEC fundamental evidence is unavailable.",
+        }
+
+    revenue = _n(metrics.get("revenue_yoy_pct"))
+    op_margin = _n(metrics.get("operating_margin_pct"))
+    op_change = _n(metrics.get("operating_margin_change_pp"))
+    fcf_margin = _n(metrics.get("fcf_margin_pct"))
+    inv_growth = _n(metrics.get("inventory_growth_pct"))
+    rec_growth = _n(metrics.get("receivables_growth_pct"))
+    pe = _n(metrics.get("pe_proxy"))
+    ps = _n(metrics.get("ps_proxy"))
+    fcf_yield = _n(metrics.get("fcf_yield_pct"))
+
+    long_operating: list[tuple[int, str]] = []
+    short_operating: list[tuple[int, str]] = []
+    long_valuation: list[tuple[int, str]] = []
+    short_valuation: list[tuple[int, str]] = []
+
+    def add(bucket: list[tuple[int, str]], points: int, text: str) -> None:
+        bucket.append((int(points), text))
+
+    # Operating direction: improvement/deterioration from comparable filed data.
+    if revenue is not None:
+        if revenue >= 8:
+            add(long_operating, 2, f"Revenue {revenue:+.1f}% YoY")
+        elif revenue >= 2:
+            add(long_operating, 1, f"Revenue {revenue:+.1f}% YoY")
+        elif revenue <= -8:
+            add(short_operating, 2, f"Revenue {revenue:+.1f}% YoY")
+        elif revenue <= -2:
+            add(short_operating, 1, f"Revenue {revenue:+.1f}% YoY")
+
+    if op_change is not None:
+        if op_change >= 2:
+            add(long_operating, 3, f"Operating margin {op_change:+.1f} pp YoY")
+        elif op_change >= .75:
+            add(long_operating, 1, f"Operating margin {op_change:+.1f} pp YoY")
+        elif op_change <= -2:
+            add(short_operating, 3, f"Operating margin {op_change:+.1f} pp YoY")
+        elif op_change <= -.75:
+            add(short_operating, 1, f"Operating margin {op_change:+.1f} pp YoY")
+
+    if fcf_margin is not None:
+        if fcf_margin >= 8:
+            add(long_operating, 2, f"FCF margin {fcf_margin:.1f}%")
+        elif fcf_margin >= 3:
+            add(long_operating, 1, f"FCF margin {fcf_margin:.1f}%")
+        elif fcf_margin < 0:
+            add(short_operating, 2, f"FCF margin {fcf_margin:.1f}%")
+
+    if revenue is not None and inv_growth is not None:
+        spread = inv_growth - revenue
+        if spread <= -8:
+            add(long_operating, 1, f"Inventory growth trails revenue by {abs(spread):.1f} pp")
+        elif spread >= 12:
+            add(short_operating, 1, f"Inventory growth exceeds revenue by {spread:.1f} pp")
+
+    if revenue is not None and rec_growth is not None:
+        spread = rec_growth - revenue
+        if spread <= -8:
+            add(long_operating, 1, f"Receivables growth trails revenue by {abs(spread):.1f} pp")
+        elif spread >= 12:
+            add(short_operating, 1, f"Receivables growth exceeds revenue by {spread:.1f} pp")
+
+    # Valuation tension: only a hypothesis. Canonical Stage 2 valuation decides
+    # whether a real intrinsic gap exists; these thresholds only decide where to look.
+    if fcf_yield is not None:
+        if fcf_yield >= 10:
+            add(long_valuation, 4, f"FCF yield proxy {fcf_yield:.1f}%")
+        elif fcf_yield >= 7:
+            add(long_valuation, 3, f"FCF yield proxy {fcf_yield:.1f}%")
+        elif fcf_yield >= 5:
+            add(long_valuation, 2, f"FCF yield proxy {fcf_yield:.1f}%")
+        elif fcf_yield <= 0:
+            add(short_valuation, 3, f"FCF yield proxy {fcf_yield:.1f}%")
+        elif fcf_yield <= 2:
+            add(short_valuation, 2, f"FCF yield proxy {fcf_yield:.1f}%")
+        elif fcf_yield <= 3:
+            add(short_valuation, 1, f"FCF yield proxy {fcf_yield:.1f}%")
+
+    if pe is not None:
+        if pe <= 10:
+            add(long_valuation, 3, f"P/E proxy {pe:.1f}x")
+        elif pe <= 15:
+            add(long_valuation, 2, f"P/E proxy {pe:.1f}x")
+        elif pe <= 20:
+            add(long_valuation, 1, f"P/E proxy {pe:.1f}x")
+        if pe >= 45 and (revenue is None or revenue <= 3):
+            add(short_valuation, 3, f"P/E proxy {pe:.1f}x with weak growth")
+        elif pe >= 35 and revenue is not None and revenue <= 0:
+            add(short_valuation, 2, f"P/E proxy {pe:.1f}x with non-growing revenue")
+        elif pe >= 30 and revenue is not None and revenue < 0:
+            add(short_valuation, 1, f"P/E proxy {pe:.1f}x despite revenue decline")
+
+    if ps is not None:
+        if ps <= 1 and (revenue is not None and revenue >= 0) and (op_margin is None or op_margin >= 0):
+            add(long_valuation, 2, f"P/S proxy {ps:.1f}x with non-deteriorating revenue")
+        elif ps <= 2 and (revenue is not None and revenue >= 0) and (op_margin is not None and op_margin >= 5):
+            add(long_valuation, 1, f"P/S proxy {ps:.1f}x with positive operating margin")
+        if ps >= 8 and (revenue is None or revenue <= 5):
+            add(short_valuation, 3, f"P/S proxy {ps:.1f}x without matching growth")
+        elif ps >= 5 and revenue is not None and revenue <= 0:
+            add(short_valuation, 2, f"P/S proxy {ps:.1f}x with non-growing revenue")
+        elif ps >= 3 and revenue is not None and revenue <= -5:
+            add(short_valuation, 1, f"P/S proxy {ps:.1f}x despite revenue decline")
+
+    long_op = sum(points for points, _ in long_operating)
+    short_op = sum(points for points, _ in short_operating)
+    long_val = sum(points for points, _ in long_valuation)
+    short_val = sum(points for points, _ in short_valuation)
+
+    long_ok = long_val >= 2 and (long_op >= 2 or (long_val >= 4 and long_op >= 1)) and short_op < max(3, long_op)
+    short_ok = short_val >= 2 and (short_op >= 2 or (short_val >= 4 and short_op >= 1)) and long_op < max(3, short_op)
+
+    choices: list[tuple[tuple[int, int, int, int], str]] = []
+    if long_ok:
+        choices.append(((long_val + long_op, long_val, long_op, -short_op), "LONG"))
+    if short_ok:
+        choices.append(((short_val + short_op, short_val, short_op, -long_op), "SHORT"))
+    choices.sort(reverse=True)
+
+    if not choices or (len(choices) > 1 and choices[0][0] == choices[1][0]):
+        return {
+            "eligible": False, "side": "NEUTRAL",
+            "dislocation_points": max(long_val + long_op, short_val + short_op),
+            "valuation_points": max(long_val, short_val),
+            "operating_points": max(long_op, short_op),
+            "contradiction_points": min(long_op, short_op),
+            "valuation_signals": [], "operating_signals": [],
+            "reason": "No clean valuation-versus-operating tension survived contradiction checks.",
+        }
+
+    side = choices[0][1]
+    valuation_rows = long_valuation if side == "LONG" else short_valuation
+    operating_rows = long_operating if side == "LONG" else short_operating
+    contradiction = short_op if side == "LONG" else long_op
+    valuation_points = long_val if side == "LONG" else short_val
+    operating_points = long_op if side == "LONG" else short_op
+    valuation_signals = [text for _, text in sorted(valuation_rows, reverse=True)]
+    operating_signals = [text for _, text in sorted(operating_rows, reverse=True)]
+    reason = (
+        f"{side} market-mispricing hypothesis: valuation tension {valuation_points} pts + "
+        f"operating evidence {operating_points} pts"
+        + (f" vs {contradiction} contradictory pts" if contradiction else "")
+        + ". "
+        + "; ".join((valuation_signals + operating_signals)[:4])
+    )
+    return {
+        "eligible": True,
+        "side": side,
+        "dislocation_points": valuation_points + operating_points,
+        "valuation_points": valuation_points,
+        "operating_points": operating_points,
+        "contradiction_points": contradiction,
+        "evidence_count": len(valuation_rows) + len(operating_rows),
+        "valuation_signals": valuation_signals,
+        "operating_signals": operating_signals,
+        "reason": reason,
+    }
+
+
 def _select_stage2_finalists(
     rows: list[dict[str, Any]],
     local_context: dict[str, dict[str, Any]],
     *,
     limit: int = FORENSIC_ENRICH_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Choose deep-forensic finalists only after market-wide evidence screening.
+    """Allocate deep valuation only to auditable market-mispricing hypotheses.
 
-    Known Coverage names may qualify from stored intrinsic/historical/peer evidence.
-    Unknown names must have an eligible SEC-frame fundamental pre-screen. Market
-    activity, alphabetical rotation and liquidity alone never allocate Stage-2 budget.
+    Known Coverage can enter from already-materialized intrinsic/historical/peer
+    gaps. Unknown names must first show BOTH valuation tension and aligned filed
+    operating evidence across the full-market SEC pre-screen. Price movement,
+    ticker order and liquidity never create eligibility; dollar volume is only a
+    final tie-break after the evidence dimensions.
     """
     known_edge: list[dict[str, Any]] = []
     broad_long: list[dict[str, Any]] = []
@@ -276,15 +456,14 @@ def _select_stage2_finalists(
     for row in rows:
         ticker = str(row.get("ticker") or "").upper()
         context = local_context.get(ticker) or {}
-        screen = dict(row.get("fundamental_screen") or {})
         gap = _n(context.get("base_gap_pct"))
         vf = dict(context.get("valuation_forensics") or {})
-        forensic_gaps = [
-            abs(v) for v in (
+        directional_known = [
+            value for value in (
                 _n(gap), _n(vf.get("historical_gap_pct")), _n(vf.get("peer_gap_pct"))
-            ) if v is not None
+            ) if value is not None
         ]
-        strongest_forensic_gap = max(forensic_gaps) if forensic_gaps else None
+        strongest_forensic_gap = max((abs(value) for value in directional_known), default=None)
         item = dict(row)
         item["known_context"] = context
         item["in_coverage"] = bool(context)
@@ -295,28 +474,27 @@ def _select_stage2_finalists(
                 "at or beyond the Discovery WATCH edge."
             )
             item["stage2_forensic_gap_pct"] = strongest_forensic_gap
+            item["market_mispricing"] = {
+                "eligible": True,
+                "side": "LONG" if (_n(gap) or 0) >= 0 else "SHORT",
+                "source": "STORED_RESEARCH",
+                "dislocation_points": 0,
+                "reason": item["stage2_selection_reason"],
+            }
             known_edge.append(item)
             continue
 
-        if not screen.get("eligible"):
+        hypothesis = _market_mispricing_hypothesis(row)
+        if not hypothesis.get("eligible"):
             continue
 
-        signals = list(screen.get("signals") or [])
-        signal_text = "; ".join(
-            str(signal.get("detail") or signal.get("label") or "")
-            for signal in signals[:3]
-            if signal.get("detail") or signal.get("label")
-        )
-        item["stage2_selection_reason"] = (
-            f"Full-market SEC fundamental pre-screen {screen.get('side')} "
-            f"strength {int(screen.get('strength') or 0)}"
-            + (f": {signal_text}" if signal_text else ".")
-        )
-        item["stage2_screen_strength"] = int(screen.get("strength") or 0)
-        item["stage2_screen_signal_count"] = len(signals)
-        if str(screen.get("side") or "").upper() == "LONG":
+        item["market_mispricing"] = hypothesis
+        item["stage2_selection_reason"] = str(hypothesis.get("reason") or "")
+        item["stage2_screen_strength"] = int(hypothesis.get("dislocation_points") or 0)
+        item["stage2_screen_signal_count"] = int(hypothesis.get("evidence_count") or 0)
+        if hypothesis.get("side") == "LONG":
             broad_long.append(item)
-        elif str(screen.get("side") or "").upper() == "SHORT":
+        elif hypothesis.get("side") == "SHORT":
             broad_short.append(item)
 
     known_edge.sort(key=lambda row: (
@@ -328,17 +506,20 @@ def _select_stage2_finalists(
         row["ticker"],
     ))
 
-    def broad_sort(row: dict[str, Any]) -> tuple:
-        screen = dict(row.get("fundamental_screen") or {})
+    def market_sort(row: dict[str, Any]) -> tuple:
+        hypothesis = dict(row.get("market_mispricing") or {})
         return (
-            -int(screen.get("strength") or 0),
-            -len(list(screen.get("signals") or [])),
+            -int(hypothesis.get("dislocation_points") or 0),
+            -int(hypothesis.get("valuation_points") or 0),
+            -int(hypothesis.get("operating_points") or 0),
+            int(hypothesis.get("contradiction_points") or 0),
+            -int(hypothesis.get("evidence_count") or 0),
             -(_n(row.get("dollar_volume")) or 0.0),
             row["ticker"],
         )
 
-    broad_long.sort(key=broad_sort)
-    broad_short.sort(key=broad_sort)
+    broad_long.sort(key=market_sort)
+    broad_short.sort(key=market_sort)
 
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -349,27 +530,28 @@ def _select_stage2_finalists(
             selected.append(item)
             seen.add(ticker)
 
-    # Preserve a bounded lane for already-researched dislocations, then allocate
-    # the remaining capacity symmetrically across full-market LONG/SHORT screens.
-    for item in known_edge[:4]:
+    # Coverage gets a small reserved lane because it already has decision-grade
+    # materialized evidence. It cannot crowd the full-market search out.
+    known_cap = min(4, len(known_edge), max(0, int(limit)))
+    for item in known_edge[:known_cap]:
         append(item)
 
-    li = si = 0
-    while len(selected) < limit and (li < len(broad_long) or si < len(broad_short)):
-        if li < len(broad_long):
-            append(broad_long[li])
-            li += 1
-        if len(selected) >= limit:
-            break
-        if si < len(broad_short):
-            append(broad_short[si])
-            si += 1
+    market_capacity = max(0, int(limit) - len(selected))
+    long_target = (market_capacity + 1) // 2
+    short_target = market_capacity // 2
+    for item in broad_long[:long_target]:
+        append(item)
+    for item in broad_short[:short_target]:
+        append(item)
 
-    for item in known_edge[4:]:
+    # If one side has fewer genuine hypotheses, use remaining capacity for the
+    # other side by evidence rank. Never add neutral/filler names to hit quota.
+    leftovers = broad_long[long_target:] + broad_short[short_target:]
+    leftovers.sort(key=market_sort)
+    for item in leftovers:
         append(item)
-    for item in broad_long[li:]:
-        append(item)
-    for item in broad_short[si:]:
+
+    for item in known_edge[known_cap:]:
         append(item)
 
     return selected[:limit]
