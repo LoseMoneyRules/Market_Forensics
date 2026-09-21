@@ -28,6 +28,28 @@
       </div>
     </div>
 
+    {% set cq = synthesis.get('company_quality') or {} %}
+    {% if cq %}
+    <div class="panel company-quality-read">
+      <div class="panel-head">
+        <div><p class="eyebrow">COMPANY QUALITY</p><h2>{{ cq.get('state','INSUFFICIENT EVIDENCE') }}</h2><p class="muted">{{ cq.get('headline','') }}</p></div>
+        <span class="status-chip">{{ cq.get('coverage',0) }}% evidence coverage</span>
+      </div>
+      <div class="lens-grid mature-lenses">
+        {% for d in cq.get('dimensions',[]) %}
+        <div class="lens-card lens-state"><span>{{ d.label }}</span><strong>{{ d.state|replace('_',' ') }}</strong><small>{{ d.detail }}</small></div>
+        {% endfor %}
+      </div>
+      {% if cq.get('alarm_bells') %}
+      <div class="two-col">
+        <div><h3>ALARM BELLS</h3>{% for flag in cq.get('alarm_bells',[])[:6] %}<div class="list-row"><div><strong>{{ flag.code|replace('_',' ') }}</strong><p>{{ flag.detail }}</p></div><span class="status-chip">{{ flag.severity }}</span></div>{% endfor %}</div>
+        <div><h3>ECONOMIC STRENGTHS</h3>{% for flag in cq.get('strengths',[])[:6] %}<div class="list-row"><div><strong>{{ flag.code|replace('_',' ') }}</strong><p>{{ flag.detail }}</p></div></div>{% else %}<p class="muted">No strength clears the automatic threshold yet.</p>{% endfor %}</div>
+      </div>
+      {% endif %}
+      <p class="muted">Company Quality judges the business economics, not whether the stock is cheap. Qualitative moat/customer/competition evidence remains a separate Business review.</p>
+    </div>
+    {% endif %}
+
     <div class="two-col">
       <form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='overview') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
