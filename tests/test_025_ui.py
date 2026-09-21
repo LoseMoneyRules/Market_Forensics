@@ -158,6 +158,8 @@ def test_025_global_ui_semantics_readability_and_sticky_security_contract():
     assert ".tape-context-card.watch{border-left-color:var(--semantic-caution)" in css
     assert ".tape-context-card.negative{border-left-color:var(--semantic-negative)" in css
     assert ".tape-context-card.positive{border-left-color:var(--semantic-positive)" in css
+    assert '.tape-context-card[data-semantic="caution"]' in css
+    assert '.tape-context-card[data-semantic="neutral"]' in css
 
     assert "neutral: ['NEUTRAL','FAIR','BALANCED'" in js
     caution_block = js.split("caution:", 1)[1].split("info:", 1)[0]
