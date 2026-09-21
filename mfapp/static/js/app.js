@@ -167,7 +167,10 @@
       }
       const q = await response.json();
       if (Number.isFinite(Number(q.price))) {
-        const formattedPrice = '
+        const formattedPrice = '$' + Number(q.price).toFixed(2);
+        if (priceNode) priceNode.textContent = formattedPrice;
+        topbarPriceNodes.forEach((node)=>{ node.textContent = formattedPrice; });
+      }
       if (priceMeta) {
         priceMeta.textContent = '';
         delete priceMeta.dataset.semantic;
