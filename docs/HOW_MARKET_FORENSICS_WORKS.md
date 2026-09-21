@@ -135,23 +135,51 @@ User-edited valuation assumptions remain explicit human inputs. Automatic policy
 
 Company Quality is a filed/economic evidence read, not a claim that moat, competitive durability, customer concentration or product quality has been proven. Those qualitative questions remain part of the Business gate and require sourced review.
 
-### 3.5 Price is the decision interface, not the thesis
+### 3.5 Fundamentals is the accounting evidence room
+
+Fundamentals is not a headline KPI page. It is the canonical place to inspect the filed operating evidence before valuation or narrative.
+
+The page must preserve four layers in this order:
+
+1. **reported/normalized facts** — the complete current normalized income statement, cash-flow, balance-sheet, capital-return and share fields, plus comparable annual/quarter history;
+2. **derived trends** — growth, margins, cash conversion, working-capital cycles, ROIC, asset turnover, dilution and other deterministic metrics;
+3. **forensic evidence** — explicit strengths, WATCH items, RED FLAG items, deterministic reconciliation inconsistencies and data/classification gaps;
+4. **Economic Reality** — financing claims, leases, liquidity offsets, fixed charges, hidden/debt-like obligations and material accounting distortions, with source provenance.
+
+Fundamentals must expose source/provenance for the current normalized filing basis and the Economic Reality fact inputs when stored. Missing facts stay missing.
+
+Automatic forensic interpretation is deterministic and materialized in the Research cache by the normal background recalculation job. Normal Fundamentals GET navigation reads that stored result and must not run SEC/network calls or heavy analytical engines synchronously.
+
+Reconciliation warnings such as Revenue − COGS ≠ Gross Profit, CFO − CapEx ≠ FCF, Assets ≠ Liabilities + Equity, or Pretax − Tax ≠ Net Income are **REVIEW** evidence. They are not accusations of accounting misconduct: presentation differences, noncontrolling/mezzanine claims, discontinued operations or ingestion mapping can explain a mismatch.
+
+Data completeness distinguishes:
+- all visible/historically expected missing fields;
+- decision-critical gaps needed for the core analysis;
+- Economic Reality readiness.
+
+A non-critical missing field remains visible without automatically blocking all analysis. Missing/unresolved Economic Reality does block canonical leverage and the EV-to-equity bridge.
+
+Existing Coverage created before 0.3.0 is migrated non-destructively: if the stored current filing lacks the Economic Reality snapshot, Market Forensics queues a deduplicated SEC ingest in the background, keeps reported facts visible, and fails closed on economic leverage/EV conclusions until the new classification is materialized.
+
+PDF/Word Full Research reports carry the same materialized Fundamentals strengths, red flags/watch items, inconsistencies and data gaps.
+
+### 3.6 Price is the decision interface, not the thesis
 
 The current price is used to compare against Bear / Base / Bull fair value and to reverse-engineer market-implied expectations.
 
 Price movement by itself does not validate or invalidate a fundamental thesis.
 
-### 3.6 ADD ON EVIDENCE, NOT ON PRICE
+### 3.7 ADD ON EVIDENCE, NOT ON PRICE
 
 Position additions must be justified by improved evidence, not merely by a lower share price.
 
-### 3.7 Invalidation is fixed before investment
+### 3.8 Invalidation is fixed before investment
 
 Numerical thesis invalidation thresholds are set before investment and are not rewritten after earnings or price movement to preserve the narrative.
 
 A locked pre-investment invalidation cannot be silently changed retroactively.
 
-### 3.8 Research and Portfolio remain separate
+### 3.9 Research and Portfolio remain separate
 
 Research asks:
 
@@ -165,19 +193,19 @@ Portfolio asks:
 
 Shares, average cost, P/L, position size, money-loss budget, Portfolio sizing and Position Action live under Portfolio, not Research.
 
-### 3.9 Human approval is explicit
+### 3.10 Human approval is explicit
 
 Process Readiness is not a machine confidence score.
 
 It is a record that CONTROL reviewed the current evidence for each research gate.
 
-### 3.10 Validation cannot rescue incomplete research
+### 3.11 Validation cannot rescue incomplete research
 
 Validate is downstream of Research.
 
 A historical score cannot bypass missing Research gates or substitute for a thesis, valuation, bear case, monitoring rule or source review.
 
-### 3.11 Diagnostics cannot override canonical decision states
+### 3.12 Diagnostics cannot override canonical decision states
 
 Evidence score, Tape score, macro context, management score, peer comparison and similar diagnostics support interpretation.
 
@@ -189,13 +217,13 @@ They cannot bypass:
 - Research Conclusion logic;
 - locked invalidation discipline.
 
-### 3.12 Manual analyst work wins
+### 3.13 Manual analyst work wins
 
 Automatic drafting may populate blank fields or fields still marked as auto-generated.
 
 Manual analyst edits are never silently overwritten by a refresh.
 
-### 3.13 Normal navigation stays fast
+### 3.14 Normal navigation stays fast
 
 Normal GET requests read stored/materialized data and render.
 
@@ -210,7 +238,7 @@ They must not:
 
 Heavy work is queued.
 
-### 3.14 Fail visibly, not silently
+### 3.15 Fail visibly, not silently
 
 When something cannot be proven or computed:
 
@@ -220,7 +248,7 @@ When something cannot be proven or computed:
 - preserve last-good information only when clearly labeled;
 - never silently pretend a fallback is equivalent to primary evidence.
 
-### 3.15 Minimal bold, institutional readability
+### 3.16 Minimal bold, institutional readability
 
 Use as little bold as possible.
 
@@ -247,7 +275,7 @@ UI rules also include:
 - Research → Financial Flows remains inside Research, not a separate primary product;
 - Validate remains immediately after Sources / Audit.
 
-### 3.16 No patch-on-patch implementation
+### 3.17 No patch-on-patch implementation
 
 Do not solve product regressions with stacked duplicate implementations.
 
@@ -261,7 +289,7 @@ Avoid:
 
 There should be one canonical implementation for a capability.
 
-### 3.17 Local parity is preserved deliberately
+### 3.18 Local parity is preserved deliberately
 
 Local V3.1.12 is not a runtime dependency, but accepted capabilities cannot silently disappear.
 
