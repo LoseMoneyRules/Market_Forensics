@@ -195,6 +195,11 @@ def _valuation(ctx: dict[str, Any]) -> dict[str, Any]:
         "horizon_years": int(saved.get("horizon_years") or 5),
         "calibration": dict(saved.get("calibration") or {}),
         "scenarios": scenarios,
+        "company_quality": dict(latest.get("company_quality") or valuation.get("company_quality") or {}),
+        "valuation_policy": dict(latest.get("valuation_policy") or valuation.get("valuation_policy") or {}),
+        "valuation_impact_ledger": list(latest.get("valuation_impact_ledger") or valuation.get("valuation_impact_ledger") or []),
+        "method_exclusions": list(latest.get("method_exclusions") or valuation.get("method_exclusions") or []),
+        "effective_input_weights": dict(latest.get("effective_input_weights") or valuation.get("effective_input_weights") or {}),
         "engine_version": _text(latest.get("engine_version") or getattr(model, "calculation_version", "")),
     }
 
@@ -350,6 +355,8 @@ def build_report_data(ctx: dict[str, Any], *, mode: str = "full", branding: dict
             "rows": list(lenses.get("rows") or []),
         },
         "valuation": valuation,
+        "company_quality": dict(synthesis.get("company_quality") or valuation.get("company_quality") or {}),
+        "valuation_impact_ledger": list(synthesis.get("valuation_impact_ledger") or valuation.get("valuation_impact_ledger") or []),
         "thesis": {
             "thesis": _text(research.thesis), "counter_evidence": _text(research.counter_evidence),
             "market_view": _text(research.variant_market), "our_view": _text(research.variant_us),
