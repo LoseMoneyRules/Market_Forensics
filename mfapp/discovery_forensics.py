@@ -459,7 +459,8 @@ def _valuation_from_history(
     company_type: str = "Generic",
 ) -> dict[str, Any]:
     """Reuse the canonical valuation engine; Discovery owns no duplicate valuation model."""
-    metrics = metrics_from_history(annual)
+    quality_history = list(annual) + ([current_ttm] if current_ttm else [])
+    metrics = metrics_from_history(quality_history, company_type=company_type)
     if current_ttm and _num(current_ttm.get("revenue")) is not None:
         revenue = _num(current_ttm.get("revenue"))
         net_income = _num(current_ttm.get("net_income"))
@@ -528,6 +529,9 @@ def _valuation_from_history(
             ["TTM net-margin evidence has a tax/non-operating distortion flag; P/E assumptions retain the multi-year filed basis."]
             if current_ttm and has_suppression(economic_from_row(current_ttm), "PE_EARNINGS_NORMALIZATION_REVIEW") else []
         ),
+        "company_quality": result.get("company_quality") or metrics.get("company_quality") or {},
+        "valuation_policy": result.get("valuation_policy") or metrics.get("valuation_policy") or {},
+        "valuation_impact_ledger": result.get("valuation_impact_ledger") or [],
     }
 
 def _local_forensics(
@@ -569,6 +573,9 @@ def _local_forensics(
         "valuation_methods": methods,
         "snapshot": snapshot,
         "economic_reality": dict(snapshot.get("economic_reality") or {}),
+        "company_quality": dict(stored_valuation.get("company_quality") or {}),
+        "valuation_policy": dict(stored_valuation.get("valuation_policy") or {}),
+        "valuation_impact_ledger": list(stored_valuation.get("valuation_impact_ledger") or []),
         "accounting_context": list((snapshot.get("economic_reality") or {}).get("flags") or []),
         "signals": signals,
         "long_score": long_score,
@@ -622,6 +629,9 @@ def _external_forensics(
         "sic_description": sic_description,
         "snapshot": snapshot,
         "economic_reality": dict(snapshot.get("economic_reality") or {}),
+        "company_quality": dict(valuation.get("company_quality") or {}),
+        "valuation_policy": dict(valuation.get("valuation_policy") or {}),
+        "valuation_impact_ledger": list(valuation.get("valuation_impact_ledger") or []),
         "accounting_context": list((snapshot.get("economic_reality") or {}).get("flags") or []),
         "signals": signals,
         "long_score": long_score,
