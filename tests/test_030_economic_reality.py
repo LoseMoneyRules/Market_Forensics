@@ -7,6 +7,7 @@ from mfapp.decision_engine import build_research_intelligence
 from mfapp.discovery_forensics import _signals, discovery_opportunity
 from mfapp.economic_reality import build_economic_reality, has_suppression
 from mfapp.company_quality import build_company_quality
+from mfapp.fundamentals_forensics import build_fundamentals_forensics
 from mfapp.valuation_engine import default_cases, evaluate, metrics_from_history
 from tools.sync_production_state import sync_current_state
 
@@ -351,3 +352,77 @@ def test_030_production_state_sync_changes_only_canonical_production_line():
     assert chr(96) + "abcdef1234567890" + chr(96) in updated
     assert "**Historical note:** production once was 0.2.11." in updated
     assert updated.count("**Production:**") == 1
+
+
+
+def test_030_reported_debt_minus_cash_is_visible_but_not_canonical_without_economic_reality():
+    current = {
+        "revenue": 1_000.0,
+        "net_income": 80.0,
+        "cfo": 120.0,
+        "capex": 40.0,
+        "fcf": 80.0,
+        "cash": 100.0,
+        "debt": 500.0,
+        "equity": 400.0,
+        "operating_income": 120.0,
+        "pretax_income": 100.0,
+        "income_tax": 20.0,
+    }
+    metrics = financial_metrics(current, {})
+    assert metrics["reported_net_debt"] == 400.0
+    assert metrics["economic_net_debt"] is None
+    assert metrics["net_debt"] is None
+    assert metrics["net_debt_to_fcf"] is None
+    assert metrics["net_debt_basis"] == "ECONOMIC_REALITY_NOT_MATERIALIZED"
+    assert metrics["economic_reality_unresolved"] is True
+
+
+def test_030_company_quality_is_not_clean_before_economic_reality_materializes():
+    rows = [
+        {"fiscal_year": 2024, "period_end": "2024-12-31", "revenue": 1_000.0, "operating_income": 180.0, "net_income": 130.0, "cfo": 170.0, "capex": 40.0, "fcf": 130.0, "cash": 100.0, "debt": 0.0, "equity": 500.0, "shares_outstanding": 100.0},
+        {"fiscal_year": 2025, "period_end": "2025-12-31", "revenue": 1_100.0, "operating_income": 205.0, "net_income": 150.0, "cfo": 195.0, "capex": 45.0, "fcf": 150.0, "cash": 120.0, "debt": 0.0, "equity": 550.0, "shares_outstanding": 99.0},
+    ]
+    quality = build_company_quality(rows, "Consumer / Brand")
+    assert quality["state"] == "INSUFFICIENT EVIDENCE"
+    accounting = next(row for row in quality["dimensions"] if row["key"] == "accounting_quality")
+    balance = next(row for row in quality["dimensions"] if row["key"] == "balance_sheet")
+    assert accounting["state"] == "UNKNOWN"
+    assert balance["state"] == "UNKNOWN"
+    assert not any(row["code"] == "CLEAN_ACCOUNTING_SIGNAL" for row in quality["strengths"])
+
+
+def test_030_fundamentals_forensics_surfaces_strengths_red_flags_inconsistency_and_gaps():
+    rows = [
+        _quality_row(2023, 1_000, 160, 120, 150, 50, 80, 100, 500, 100, receivables=100),
+        _quality_row(2024, 1_050, 140, 100, 110, 55, 75, 150, 460, 104, receivables=135),
+        _quality_row(2025, 1_000, 80, 80, 35, 60, 70, 300, 420, 116, receivables=220),
+    ]
+    for idx, row in enumerate(rows):
+        row["cogs"] = row["revenue"] * 0.60
+        row["gross_profit"] = row["revenue"] - row["cogs"]
+        row["assets"] = row["liabilities"] + row["equity"]
+        row["metrics"] = financial_metrics(row, rows[idx - 1] if idx else {})
+    # Create a deterministic source/reconciliation issue in the current row.
+    rows[-1]["assets"] += 100.0
+    rows[-1]["metrics"] = financial_metrics(rows[-1], rows[-2])
+
+    completeness = {
+        "missing_current_fields": [],
+        "missing_expected_fields": ["inventory"],
+        "missing_continuity_fields": ["inventory"],
+        "missing_derived_metrics": [],
+        "quarter_gaps": ["Only 3 stored quarter(s) are available for current TTM."],
+    }
+    result = build_fundamentals_forensics(
+        rows,
+        current=rows[-1],
+        completeness=completeness,
+        company_type="Consumer / Brand",
+    )
+    assert result["red_flags"]
+    assert any(item["code"] == "RECEIVABLES_REVENUE_DIVERGENCE" for item in result["red_flags"])
+    assert any(item["code"] == "BALANCE_SHEET_RECONCILIATION" for item in result["inconsistencies"])
+    assert any(item["code"] == "EXPECTED_FIELD_GAPS" for item in result["data_gaps"])
+    assert any(item["code"] == "TTM_SEQUENCE_GAP" for item in result["data_gaps"])
+    assert result["trend_cards"]
