@@ -141,7 +141,14 @@ def _publication_view(publication: Publication, role: str) -> dict:
 @bp.post("/company/<ticker>/snapshot")
 @role_required("CONTROL")
 def snapshot_company(ticker):
-    require_control_view(); ctx = _ctx(ticker); snapshot = create_snapshot(
+    require_control_view(); ctx = _ctx(ticker)
+    if not ctx["readiness"].get("ready_to_validate"):
+        pending = [gate.get("label") for gate in ctx["readiness"].get("gates", []) if not gate.get("approved")]
+        audit("publication.blocked_readiness", "coverage", ctx["coverage"].id, {"ticker": ctx["security"].ticker, "pending": pending, "financial_basis": ctx["readiness"].get("financial_basis") or {}})
+        db.session.commit()
+        flash("Current Research is not ready to publish. Review the current financial basis: " + ", ".join(pending[:6]) + ("…" if len(pending) > 6 else ""), "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="overview"))
+    snapshot = create_snapshot(
         ctx["coverage"], g.user.id, snapshot_type="DECISION",
         decision_context={
             "research_conclusion": ctx["decision_lenses"].get("research_conclusion"),
@@ -168,6 +175,11 @@ def preview_snapshot(ticker, snapshot_id):
 def publish_snapshot(ticker, snapshot_id):
     require_control_view(); ctx = _ctx(ticker); snapshot = db.session.get(Snapshot, snapshot_id)
     if not snapshot or snapshot.coverage_id != ctx["coverage"].id: abort(404)
+    if not ctx["readiness"].get("ready_to_validate"):
+        audit("publication.blocked_new_financial_basis", "coverage", ctx["coverage"].id, {"snapshot_id": snapshot.id, "financial_basis": ctx["readiness"].get("financial_basis") or {}})
+        db.session.commit()
+        flash("Publication blocked: Research must be reviewed on the current financial basis. The historical snapshot remains unchanged.", "error")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="overview"))
     version = (db.session.query(db.func.max(Publication.version)).filter(Publication.coverage_id == ctx["coverage"].id).scalar() or 0) + 1
     title = str(request.form.get("title") or f"{ctx['security'].ticker} Research").strip()
     payload = {
