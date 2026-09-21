@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from math import isfinite
 from typing import Any, Iterable
 
+from .economic_reality import economic_from_row, metric as economic_metric
+
 CALCULATION_VERSION = "0.2.0"
 
 
@@ -130,9 +132,34 @@ def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None =
     if metrics["dso"] is not None and metrics["dio"] is not None and metrics["dpo"] is not None:
         metrics["cash_conversion_days"] = metrics["dso"] + metrics["dio"] - metrics["dpo"]
     cash, debt = number(current.get("cash")), number(current.get("debt")); fcf = number(current.get("fcf"))
+    reported_net_debt = None
     if cash is not None or debt is not None:
-        metrics["net_debt"] = (debt or 0.0) - (cash or 0.0)
-        if fcf not in (None, 0) and fcf > 0: metrics["net_debt_to_fcf"] = metrics["net_debt"] / fcf
+        reported_net_debt = (debt or 0.0) - (cash or 0.0)
+    economic = economic_from_row(current)
+    economic_net_debt = economic_metric(economic, "economic_net_debt")
+    canonical_net_debt = economic_net_debt if economic_net_debt is not None else reported_net_debt
+    metrics["reported_net_debt"] = reported_net_debt
+    metrics["economic_net_debt"] = economic_net_debt
+    metrics["net_debt"] = canonical_net_debt
+    metrics["net_debt_basis"] = (
+        str(economic.get("debt_basis") or "ECONOMIC_REALITY")
+        if economic_net_debt is not None else "REPORTED_DEBT_MINUS_CASH"
+    )
+    metrics["economic_reality_quality"] = str(economic.get("quality") or "UNAVAILABLE")
+    metrics["economic_reality_unresolved"] = bool(economic.get("material_unresolved"))
+    metrics["operating_lease_liability"] = economic_metric(economic, "operating_lease_liability")
+    metrics["operating_lease_share_of_liabilities_pct"] = economic_metric(economic, "operating_lease_share_of_liabilities_pct")
+    metrics["lease_revenue_productivity_x"] = economic_metric(economic, "lease_revenue_productivity_x")
+    metrics["growth_capex_proxy"] = economic_metric(economic, "growth_capex_proxy")
+    metrics["maintenance_capex_proxy"] = economic_metric(economic, "maintenance_capex_proxy")
+    metrics["owner_cash_proxy"] = economic_metric(economic, "owner_cash_proxy")
+    metrics["fcf_after_sbc"] = economic_metric(economic, "fcf_after_sbc")
+    metrics["economic_roic_pct"] = economic_metric(economic, "economic_roic_pct")
+    metrics["lease_adjusted_roic_pct"] = economic_metric(economic, "lease_adjusted_roic_pct")
+    metrics["economic_reality_flags"] = list(economic.get("flags") or [])
+    metrics["economic_reality_suppressions"] = list(economic.get("suppressions") or [])
+    if canonical_net_debt is not None and fcf not in (None, 0) and fcf > 0:
+        metrics["net_debt_to_fcf"] = canonical_net_debt / fcf
     rec, inv, pay = number(current.get("receivables")), number(current.get("inventory")), number(current.get("payables"))
     if rec is not None or inv is not None or pay is not None:
         metrics["working_capital"] = (rec or 0.0) + (inv or 0.0) - (pay or 0.0)
@@ -148,7 +175,15 @@ def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None =
         tax_rate = max(0.0, min(0.35, income_tax / pretax_income))
         invested_capital = debt + equity - cash
         if invested_capital > 0:
-            metrics["roic_pct"] = operating_income * (1.0 - tax_rate) / invested_capital * 100.0
+            metrics["reported_roic_pct"] = operating_income * (1.0 - tax_rate) / invested_capital * 100.0
+            metrics["roic_pct"] = metrics["reported_roic_pct"]
+    if metrics.get("economic_roic_pct") is not None:
+        metrics["roic_pct"] = metrics["economic_roic_pct"]
+        metrics["roic_basis"] = "ECONOMIC_CAPITAL"
+    elif metrics.get("roic_pct") is not None:
+        metrics["roic_basis"] = "REPORTED_DEBT_EQUITY_CASH"
+    else:
+        metrics["roic_basis"] = "UNRESOLVED"
     return metrics
 
 
