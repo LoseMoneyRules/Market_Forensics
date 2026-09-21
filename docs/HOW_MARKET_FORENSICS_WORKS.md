@@ -208,7 +208,7 @@ No event date may be invented. Urgency cannot be derived from price movement alo
 
 Valuation Web, Reports and Discovery Stage 2 read the same materialized output. Compatibility adapters may reshape the payload for older views but must not calculate a second answer.
 
-### 3.5 Fundamentals is the accounting evidence room
+### 3.10 Fundamentals is the accounting evidence room
 
 Fundamentals is not a headline KPI page. It is the canonical place to inspect the filed operating evidence before valuation or narrative.
 
@@ -236,23 +236,23 @@ Existing Coverage created before 0.3.0 is migrated non-destructively: if the sto
 
 PDF/Word Full Research reports carry the same materialized Fundamentals strengths, red flags/watch items, inconsistencies and data gaps.
 
-### 3.6 Price is the decision interface, not the thesis
+### 3.11 Price is the decision interface, not the thesis
 
 The current price is used to compare against Bear / Base / Bull fair value and to reverse-engineer market-implied expectations.
 
 Price movement by itself does not validate or invalidate a fundamental thesis.
 
-### 3.7 ADD ON EVIDENCE, NOT ON PRICE
+### 3.12 ADD ON EVIDENCE, NOT ON PRICE
 
 Position additions must be justified by improved evidence, not merely by a lower share price.
 
-### 3.8 Invalidation is fixed before investment
+### 3.13 Invalidation is fixed before investment
 
 Numerical thesis invalidation thresholds are set before investment and are not rewritten after earnings or price movement to preserve the narrative.
 
 A locked pre-investment invalidation cannot be silently changed retroactively.
 
-### 3.9 Research and Portfolio remain separate
+### 3.14 Research and Portfolio remain separate
 
 Research asks:
 
@@ -266,19 +266,19 @@ Portfolio asks:
 
 Shares, average cost, P/L, position size, money-loss budget, Portfolio sizing and Position Action live under Portfolio, not Research.
 
-### 3.10 Human approval is explicit
+### 3.15 Human approval is explicit
 
 Process Readiness is not a machine confidence score.
 
 It is a record that CONTROL reviewed the current evidence for each research gate.
 
-### 3.11 Validation cannot rescue incomplete research
+### 3.16 Validation cannot rescue incomplete research
 
 Validate is downstream of Research.
 
 A historical score cannot bypass missing Research gates or substitute for a thesis, valuation, bear case, monitoring rule or source review.
 
-### 3.12 Diagnostics cannot override canonical decision states
+### 3.17 Diagnostics cannot override canonical decision states
 
 Evidence score, Tape score, macro context, management score, peer comparison and similar diagnostics support interpretation.
 
@@ -290,13 +290,13 @@ They cannot bypass:
 - Research Conclusion logic;
 - locked invalidation discipline.
 
-### 3.13 Manual analyst work wins
+### 3.18 Manual analyst work wins
 
 Automatic drafting may populate blank fields or fields still marked as auto-generated.
 
 Manual analyst edits are never silently overwritten by a refresh.
 
-### 3.14 Normal navigation stays fast
+### 3.19 Normal navigation stays fast
 
 Normal GET requests read stored/materialized data and render.
 
@@ -311,7 +311,7 @@ They must not:
 
 Heavy work is queued.
 
-### 3.15 Fail visibly, not silently
+### 3.20 Fail visibly, not silently
 
 When something cannot be proven or computed:
 
@@ -321,7 +321,7 @@ When something cannot be proven or computed:
 - preserve last-good information only when clearly labeled;
 - never silently pretend a fallback is equivalent to primary evidence.
 
-### 3.16 Minimal bold, institutional readability
+### 3.21 Minimal bold, institutional readability
 
 Use as little bold as possible.
 
@@ -352,7 +352,7 @@ UI rules also include:
 - Research → Financial Flows remains inside Research, not a separate primary product;
 - Validate remains immediately after Sources / Audit.
 
-### 3.17 No patch-on-patch implementation
+### 3.22 No patch-on-patch implementation
 
 Do not solve product regressions with stacked duplicate implementations.
 
@@ -366,7 +366,7 @@ Avoid:
 
 There should be one canonical implementation for a capability.
 
-### 3.18 Local parity is preserved deliberately
+### 3.23 Local parity is preserved deliberately
 
 Local V3.1.12 is not a runtime dependency, but accepted capabilities cannot silently disappear.
 
@@ -1173,31 +1173,25 @@ Discovery disables reference-price fallback.
 
 A candidate cannot qualify unless Base is intrinsic and supported by at least two valuation methods.
 
-### 12.10 Peer valuation overlay
+### 12.10 Peer relative-value cross-check
 
-Automatic peer triangulation is a bounded cross-check.
+Peer evidence is an independent valuation world, not an overlay on intrinsic Bear / Base / Bull.
 
-It can use peer:
+The 0.3.1 canonical peer engine can use currently supported relative multiples including:
 
 - P/E;
+- EV / EBIT;
 - EV / Sales;
-- FCF Yield.
+- P / FCF;
+- FCF Yield as an inverse corroborating measure.
 
-Eligibility requires:
+EV / EBITDA remains missing until EBITDA is a canonical normalized fact or deterministic derivation.
 
-- at least 2 peers;
-- at least 2 peer valuation methods.
+Only **CLOSE PEER** and **PARTIAL PEER** observations can set comparable-peer medians. The engine then shows explicit bounded adjustments for supported differences such as growth, operating margin, FCF margin, ROIC, leverage and cash conversion.
 
-Weight:
+There is **no automatic peer weight, no 15–20% blend, and no multiplicative peer shift into intrinsic fair value**. The compatibility peer-overlay schema remains weight 0.0 so older views can render without changing the intrinsic result.
 
-- 15% normally;
-- 20% when at least 5 peers and 3 methods exist.
-
-The final multiplicative shift is capped at ±10%.
-
-Peer evidence can cross-check intrinsic value.
-
-It cannot become a peer-only valuation engine.
+Relative value must stay separate and auditable; convergence or divergence with intrinsic and historical-multiple evidence is the conclusion.
 
 ---
 
@@ -1236,19 +1230,27 @@ Macro is contextual and cannot override company evidence.
 
 ### 13.2 Automatic peer triangulation
 
-Current peer discovery prefers:
+0.3.1 peer selection is multi-dimensional rather than SIC-only.
 
-1. exact SEC SIC;
-2. SIC division;
-3. same stored industry fallback.
+Available evidence can contribute to comparability through:
+
+- exact SIC and SIC division;
+- stored industry and sector;
+- geography;
+- market-cap / size similarity;
+- revenue growth;
+- operating and FCF margins;
+- ROIC;
+- leverage;
+- capital intensity.
+
+Peers are classified as **CLOSE PEER**, **PARTIAL PEER**, **REFERENCE ONLY** or **NOT COMPARABLE**. Only CLOSE/PARTIAL peers establish comparable medians and peer-adjusted relative-value ranges.
 
 Important limitation:
 
-The peer universe is constrained by companies already represented in the database with usable fundamentals.
+The peer universe is still constrained by companies already represented in the database with usable normalized fundamentals and a stored market snapshot. Sparse stored-company coverage can therefore create sparse or biased peer evidence.
 
-Therefore a sparse Coverage/database can create a weak or biased peer set.
-
-The peer engine must expose peer count, method and missing eligibility rather than pretending a weak peer set is robust.
+The engine must expose peer count, comparability tier, similarity evidence, missing metrics and limitations rather than treating sector membership as proof of comparability.
 
 ---
 
