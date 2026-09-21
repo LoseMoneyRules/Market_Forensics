@@ -132,8 +132,7 @@ def test_025_discovery_legibility_and_valuation_visual_legend_contract():
     assert ".discovery-method" in css and "font-size:13px" in css
 
     assert 'class="kpi-grid valuation-scenario-kpis"' in valuation
-    for scenario in ("bear", "base", "bull"):
-        assert f"valuation-kpi-{scenario}" in valuation
+    assert 'valuation-kpi-{{ name|lower }}' in valuation
     assert "valuation-quality-grid" in valuation
     assert ".valuation-scenario-kpis .valuation-kpi-bear{border-top-color:var(--mf-chart-bear)}" in css
     assert ".valuation-scenario-kpis .valuation-kpi-base{border-top-color:var(--mf-chart-price)}" in css
