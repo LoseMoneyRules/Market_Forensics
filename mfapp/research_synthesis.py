@@ -141,6 +141,10 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
     expected_gap = ((expected / price - 1.0) * 100.0) if expected is not None and price not in (None, 0) else None
     valuation_decision_grade = valuation_is_decision_grade(valuation)
     base_quality = valuation_base_quality(valuation)
+    company_quality = dict(valuation.get("company_quality") or {})
+    company_quality_state = str(company_quality.get("state") or "INSUFFICIENT EVIDENCE")
+    valuation_policy = dict(valuation.get("valuation_policy") or {})
+    valuation_impact_ledger = list(valuation.get("valuation_impact_ledger") or [])
     horizon = int((model.assumptions or {}).get("horizon_years") or 5) if model else 5
     target_year = date.today().year + horizon
 
@@ -187,6 +191,8 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
         why.append(f"Largest stored expectation variant: {top['label']} {top['delta_pct']:+.1f}% vs market input.")
     if getattr(research, "variant_us", "").strip():
         why.append(research.variant_us.strip())
+    if company_quality.get("headline"):
+        why.append(f"Company quality: {company_quality_state}. {company_quality.get('headline')}")
     if not why:
         why.append("Model/market difference is not yet fully evidenced; complete Expectations and variant-perception inputs.")
 
@@ -249,6 +255,15 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
         why_not_yet.extend(str(x) for x in intelligence.get("warnings", [])[:2])
     if negatives:
         why_not_yet.append(f"{len(negatives)} opposing/watch evidence signal(s) remain unresolved.")
+    if company_quality_state in {"MIXED", "FRAGILE", "UNRESOLVED"}:
+        alarms = list(company_quality.get("alarm_bells") or [])
+        if alarms:
+            why_not_yet.append(
+                f"Company quality is {company_quality_state}: " +
+                "; ".join(str(row.get("detail") or "") for row in alarms[:2] if row.get("detail"))
+            )
+        else:
+            why_not_yet.append(f"Company quality is {company_quality_state}; review the quality dimensions before treating valuation as sufficient.")
     if not why_not_yet:
         why_not_yet.append("No major process blocker is visible; use Validate before treating the research file as decision-ready.")
 
@@ -299,8 +314,12 @@ def build_synthesis(*, coverage: Coverage, security: Security, company: Any, res
         "what_kills": what_kills[:4],
         "research_action": intelligence.get("action") or "WAIT",
         "confidence": intelligence.get("confidence") or "LOW",
+        "company_quality": company_quality,
+        "company_quality_state": company_quality_state,
+        "valuation_policy": valuation_policy,
+        "valuation_impact_ledger": valuation_impact_ledger,
         "readiness": {"done": readiness.get("done", 0), "total": readiness.get("total", 0)},
-        "engine_version": ENGINE_VERSION,
+        "engine_version": "0.3.0",
     }
 
 
