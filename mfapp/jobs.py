@@ -40,7 +40,7 @@ from .valuation_engine import valuation_base_quality
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
 TERMINAL_JOB_STATUSES = ("DONE", "FAILED", "CANCELLED", "SUPERSEDED")
 DEFAULT_JOB_LEASE_SECONDS = 30 * 60
-JOB_LEASE_SECONDS = {"DISCOVERY_SCAN": 6 * 60}
+JOB_LEASE_SECONDS = {"DISCOVERY_SCAN": 10 * 60}
 
 
 def utcnow() -> datetime:
@@ -827,9 +827,9 @@ class JobDeadlineExceeded(TimeoutError):
 
 
 def _job_deadline_seconds(job_type: str) -> int | None:
-    # Discovery has a cheap screen plus a bounded SEC/fair-value shortlist.
-    # It remains background-only and hard bounded, but 90s is no longer a valid
-    # limit once we deliberately verify operating evidence for the finalists.
+    # Full-market Discovery checks the entire eligible market, refreshes the
+    # cached SEC-frame baseline when needed, then deeply verifies a bounded
+    # finalist set. Keep a hard ceiling, but size it for the full-market contract.
     return 300 if str(job_type).upper() == "DISCOVERY_SCAN" else None
 
 

@@ -518,7 +518,7 @@ Discovery is an investigation funnel, not a BUY/SELL engine.
 
 Any ticker entering Coverage or Portfolio must be validated again before persistence. Unknown or unresolvable symbols are rejected rather than creating placeholders. Discovery candidates do not create Coverage, full Research, Portfolio positions or thesis mutations automatically; **Promote** remains an explicit CONTROL action.
 
-Discovery 0.2.12 has three stages.
+0.3.1 Discovery uses a full-market evidence-first funnel.
 
 ### Stage 0 — cached broad operating-equity universe
 
@@ -535,125 +535,102 @@ Stage 0 is fail-closed:
 
 The universe is materialized separately from Coverage. Being present in Stage 0 does not create a company Research record.
 
-### Stage 1 — cheap rotating forensic screen
+### Stage 1 — full-universe market screen
 
-Stage 1 is background-only and intentionally cheap.
+Every successful Discovery run requests market snapshots for **every eligible Stage-0 name**. There is no rotating cursor and no “this ticker was not its turn” state.
 
-It advances through the cached Stage-0 universe in a bounded rotating batch and uses only market metadata/snapshots plus already-materialized Coverage clues when they exist.
+Stage 1 applies the same cheap rules to the whole universe:
 
-Current bounded controls:
+- current market snapshot requested for every eligible Stage-0 symbol;
+- snapshots are chunked and modestly parallelized;
+- liquidity qualification uses the previous completed daily bar when available;
+- new external names must satisfy the configured price, daily-volume and dollar-liquidity floors before deeper work;
+- current controls remain $5 minimum price, 200k completed-day shares and $15M completed-day dollar volume;
+- Most Active and Movers do not decide who enters the scan;
+- a raw price move is context only and never a qualification rule.
 
-- one rotating broad-universe slice of at most 360 names per run;
-- Most Active and Movers are retained only as a secondary activity lane capped at 160 names;
-- stored Coverage context is capped at 80 names per run;
-- snapshot requests are chunked sequentially in groups of 60;
-- liquidity qualification uses the previous completed daily bar when available, so an early-session run does not become activity-biased merely because the current day's volume is incomplete;
-- new external names must satisfy the configured price, daily-volume and dollar-liquidity floors before deep enrichment; the 0.2.12 opportunity-funnel tuning uses $5 minimum price, 200k completed-day shares and $15M completed-day dollar volume so investable mid-caps are not discarded merely for lacking mega-cap liquidity;
-- already-materialized intrinsic Coverage gaps may be used as a cheap prioritization clue;
-- Stage 1 never calls SEC Companyfacts.
+If the requested snapshot count is not equal to the Stage-0 universe size, Discovery health becomes critical rather than silently treating the scan as complete.
 
-The deep-enrichment budget deliberately reserves capacity for quiet liquid names from the broad rotation. This prevents current market activity from monopolizing Discovery.
+### Stage 1.5 — market-wide SEC fundamental pre-screen
 
-The Stage-1 cursor is checkpointed. Repeated scans therefore advance through the broad universe over time instead of repeatedly rescanning only the same movers.
+Every liquid Stage-1 name is then evaluated against a comparable SEC XBRL Frames baseline before an unknown company is allowed to consume Stage-2 budget.
 
-### Stage 2 — bounded forensic enrichment
+The pre-screen uses stored/cached market-wide filed evidence such as:
 
-Only a small Stage-1 finalist set may spend SEC/filed-data budget. The 0.2.12 opportunity-funnel tuning caps deep enrichment at 10 finalists per run, up from 8, while keeping SEC work sequential and bounded.
+- comparable revenue growth;
+- operating-margin direction;
+- cash-flow / FCF margin;
+- inventory versus revenue growth;
+- receivables versus revenue growth;
+- current-price P/E and FCF-yield proxies when a usable share denominator and annual facts exist.
+
+The screen is directional and auditable: LONG and SHORT points come from named evidence signals. Missing SEC-frame evidence is explicitly marked MISSING/PARTIAL. A ticker with no usable fundamental screen is **not** selected for deep Stage 2 merely because it is active, liquid, volatile, quiet or alphabetically next.
+
+SEC frame data is cached for 24 hours; current market prices are refreshed every Discovery run, so price-dependent screening can change without redownloading the whole filed baseline.
+
+### Stage 2 — bounded deep forensic enrichment
+
+Deep Companyfacts/valuation work remains bounded for provider and shared-hosting discipline, but the shortlist now comes from the **entire market-wide pre-screen**, not from a rotating slice.
+
+Current deep-enrichment cap is 20 finalists per run. Capacity is balanced between LONG and SHORT market-wide pre-screen leads, with a bounded lane for already-covered names that have stored intrinsic/historical/peer-relative dislocations.
 
 For external finalists:
 
 - SEC ticker resolution is performed once per run;
-- SEC submissions and Companyfacts are called only for bounded finalists;
+- SEC submissions and Companyfacts are called only for finalists;
+- external finalist enrichment is modestly parallelized but remains bounded;
 - fiscal-year end must be respected;
 - four coherent filed quarters are required for current TTM;
 - a comparable prior TTM is required for operating confirmation;
 - the **canonical valuation engine** is reused; Discovery does not own a duplicate valuation model;
 - reference-price fallback is disabled.
 
-Discovery and Validation are deliberately separated. Discovery is allowed to preserve a research lead before all decision-grade checks are complete; Research/Validation remains the stricter decision layer.
+Discovery and Validation are deliberately separated. Discovery may preserve a research lead before all final decision-grade checks are complete; Research/Validation remains stricter.
 
-Opportunity tiers are:
+Opportunity tiers remain:
 
 - **P1 · Strong Opportunity** — decision-grade INTRINSIC Base, at least two usable valuation methods, absolute Base gap of at least 25%, and aligned filed TTM operating confirmation.
-- **P2 · Valuation Opportunity** — decision-grade INTRINSIC Base, at least two usable valuation methods, absolute Base gap of at least 20%, and no material filed operating contradiction. A company does not need a dramatic operating acceleration merely to deserve Research.
+- **P2 · Valuation Opportunity** — decision-grade INTRINSIC Base, at least two usable valuation methods, absolute Base gap of at least 20%, and no material filed operating contradiction.
 - **WATCH · Emerging / Verification Needed** — either a 12–20% Base gap with aligned operating confirmation, or a gap of at least 20% where valuation quality/method count, operating alignment or short actionability still needs verification.
 - **Rejected** — evidence integrity prevents a useful research lead: Base/gap cannot be constructed, coherent filed TTM is unavailable, corporate-action/share basis is unresolved, ticker/SEC enrichment fails, or there is no minimum Discovery edge.
 
-P1/P2 Short leads must also be currently actionability-compatible (minimum short price and shortable flag). A compelling downside setup that is not currently short-actionable is preserved as WATCH rather than silently disappearing.
+P1/P2 Short leads must also be currently actionability-compatible. A compelling downside setup that is not currently short-actionable is preserved as WATCH rather than silently disappearing.
 
-A raw price move, Most Active rank or generic score can never create P1/P2/WATCH by itself.
-
-Final ranking is lexicographic and visible rather than a hidden composite: opportunity tier, absolute Base gap, valuation quality/method count, operating confirmation/contradiction, then ticker.
-
-Candidate output must expose at least:
-
-- ticker and current price;
-- Bear / Base / Bull where available;
-- Base fair-value gap;
-- valuation quality and method count;
-- operating confirmation;
-- direction and opportunity tier (P1 / P2 / WATCH);
-- why the name entered;
-- what would invalidate the Discovery setup;
-- data freshness;
-- warnings.
-
-Evidence-grounded family labels may include Valuation Dislocation, Quality at Discount, Fundamental Inflection, Forensic Divergence and Deterioration / Short Setup. Labels are derived from the underlying gap/operating signals; they are not marketing categories.
-
-There is no filler quota. Zero leads remains a valid successful run, but the funnel no longer requires final-validation-level operating confirmation for every valuation opportunity.
+There is no filler quota.
 
 ### Discovery hosting / provider discipline
 
-Discovery is designed for shared hosting:
+Discovery remains background-only:
 
 - normal Discovery GET is provider-free and reads stored job/cache state;
-- execution happens in the existing background job system;
 - Stage 0 is cached;
-- Stage 1 is chunked, checkpointed and incremental;
-- Stage 2 has a hard 10-finalist cap and runs SEC work sequentially;
-- provider-call counts, Stage-0/1/2 counts, exclusions and job status are visible in the stored result/UI;
-- a stale prior successful result remains readable while a new scan is queued/running;
-- no deploy workflow change or new dependency is required by 0.2.12.
+- Stage 1 checks the full eligible universe every successful run;
+- the market-wide SEC frame pre-screen is cached and refreshed on a bounded cadence;
+- Stage 2 remains capped at 20 deep finalists;
+- provider-call counts, full-market snapshot coverage, SEC fundamental coverage, Stage-2 counts, exclusions and job status are visible in the stored result/UI;
+- a stale prior successful result remains readable while a new scan is queued/running.
 
-### Discovery observability, freshness and rerun cadence
-
-0.2.12 also records whether Discovery itself is healthy enough to trust.
+### Discovery observability and rerun cadence
 
 A completed run stores:
 
-- Stage-0 current and prior eligible-universe size, with a critical flag for a drop greater than 30%;
-- stale Stage-0 cache status;
-- requested versus returned Stage-1 snapshots;
-- unusually concentrated Stage-1 exclusion patterns;
-- the count and percentage of Stage-0 names actually touched in the last 7 and 30 days;
-- the estimated number of successful rotating runs needed to touch one full current Stage-0 universe;
-- a bounded ticker-level rejection log for Stage-2 enrichment and final qualification.
+- Stage-0 current and prior eligible-universe size;
+- requested versus returned full-market snapshots;
+- the exact percentage of liquid names with usable SEC full-market fundamental evidence;
+- missing/partial SEC pre-screen coverage;
+- Stage-2 selected/enriched counts;
+- a bounded ticker-level rejection log;
+- separated freshness for market, filed fundamentals, valuation and universe eligibility.
 
-Candidate freshness is not one ambiguous timestamp. It is separated into:
-
-- market snapshot;
-- filed fundamentals / TTM period;
-- valuation materialization;
-- Stage-0 universe eligibility refresh.
-
-Discovery also applies conservative basis-review guards before final qualification. A large YoY share-count discontinuity, short filed history, or a recent registration/listing filing such as S-1/F-1/10-12 creates a **CORPORATE ACTION / BASIS REVIEW** rejection instead of silently allowing a possibly mismatched price/share basis into the final list.
-
-Promotion provenance is immutable operating history: when CONTROL promotes a qualified Discovery candidate, the Coverage audit records the originating scan and the exact Discovery evidence visible at promotion time. This does not make Discovery a Research truth source; it preserves what Discovery saw when the human chose to start Research.
-
-Recommended manual cadence is deterministic and provider-free on GET:
-
-- critical universe/provider anomaly → retry in about 1 day;
-- warning-level anomaly → retry in about 3 days;
-- healthy but less than 25% of the current universe touched in 30 days → about every 3 days while establishing breadth;
-- established breadth → weekly.
-
-This is guidance, not an automatic trade or research action.
+Healthy Discovery normally suggests weekly execution. Warning-level provider/data anomalies suggest retrying in about 3 days; critical incomplete-universe or incomplete-evidence conditions suggest retrying in about 1 day.
 
 ### Discovery limitation to remember
 
-Broad coverage is **incremental**, not a synchronous full-market deep valuation pass. A single run deeply enriches only a bounded 10-name finalist set. Repeated runs advance the Stage-1 cursor through the cached operating-equity universe.
+The **search universe is synchronous and full-market**; deep Companyfacts valuation is not.
 
-This is deliberate: it trades scan latency for provider discipline and shared-hosting reliability. Stage 1 still has no licensed whole-market fundamental/consensus dataset, so unknown names without stored evidence are prefiltered mainly by security validity, liquidity, broad rotation and current market metadata before Stage 2 performs the real forensic test.
+Every successful run checks every eligible symbol for market/liquidity and every liquid symbol against the market-wide SEC fundamental pre-screen. Only the strongest evidence-backed finalists receive deep Companyfacts + canonical valuation.
+
+SEC Frames do not cover every issuer/taxonomy equally. Missing frame evidence stays missing and is surfaced as a coverage limitation; it is never replaced by market-activity guessing. A future licensed whole-market fundamental dataset may improve that coverage, but it must preserve provenance and the anti-blind-selection rule.
 
 ---
 
@@ -1975,13 +1952,13 @@ However a critical disappearance of evidence can theoretically remain approved u
 
 **Improvement:** distinguish ordinary evidence change from a critical evidence-invalid state without silently erasing human approval.
 
-### 24.3 Discovery breadth is incremental
+### 24.3 Discovery full-market fundamental coverage is SEC-frame-limited
 
-0.2.12 removes the structural Most Active / Movers universe dependency by maintaining a cached broad operating-equity universe and rotating Stage 1 through it.
+0.3.1 removes rotating Stage-1 breadth. Every successful Discovery run now checks the full eligible market universe and applies a market-wide SEC XBRL Frames pre-screen before unknown names may enter deep forensics.
 
-The remaining limitation is depth-per-run: shared-hosting/provider discipline means only a bounded finalist set receives SEC Companyfacts and canonical valuation on each scan. 0.2.12 now exposes 7/30-day universe touch coverage and a suggested rerun cadence so this limitation is measurable rather than hidden.
+The remaining limitation is **fundamental field coverage**, not universe rotation. Some issuers, foreign filers, extension-heavy taxonomies or missing standard tags may not produce enough comparable SEC-frame facts for the cheap market-wide screen. Those names are reported as MISSING/PARTIAL and are not selected blindly from price activity.
 
-**Improvement:** if a licensed whole-market fundamental dataset with appropriate storage/display rights is added later, strengthen Stage-1 cheap dislocation signals without weakening the bounded Stage-2 forensic contract.
+**Improvement:** add a licensed whole-market fundamental dataset or a broader audited IFRS/extension mapping layer while preserving source provenance, full-market coverage diagnostics and the rule that market activity alone cannot allocate Stage-2 budget.
 
 ### 24.4 Peer triangulation is database-limited
 

@@ -31,8 +31,8 @@ def _seed_control(app):
             email="control0212@example.com",
             display_name="Control",
             role="CONTROL",
-            password_hash=hash_password("abcdefghijklmnop"),
-            totp_secret_enc=encrypt_secret("JBSWY3DPEHPK3PXP"),
+            password_hash=hash_password("unit-test-password"),
+            totp_secret_enc=encrypt_secret("unit-test-totp-value"),
             is_active=True,
         )
         db.session.add(user)
@@ -55,30 +55,30 @@ def _stage0():
 
 
 def _stage1_row(ticker="QUIET", *, shortable=True, activity=False):
-    lanes = ["BROAD_ROTATION"]
-    if activity:
-        lanes.append("MARKET_ACTIVITY")
     return {
         "ticker": ticker, "name": f"{ticker} Corp", "exchange": "NYSE",
         "price": 50.0, "daily_volume": 2_000_000, "dollar_volume": 100_000_000,
         "move_pct": 0.2, "shortable": shortable, "easy_to_borrow": shortable,
-        "stage1_lanes": lanes, "stage1_reasons": ["Broad universe rotation."],
+        "stage1_lanes": ["FULL_UNIVERSE"], "stage1_reasons": ["Full-market screen."],
         "snapshot_as_of": "2026-09-19T15:00:00Z",
+        "fundamental_screen": {
+            "status": "READY", "eligible": True, "side": "LONG", "strength": 6,
+            "signals": [{"side": "LONG", "label": "FCF YIELD", "detail": "FCF yield proxy 8.5%", "points": 3}],
+        },
     }
 
 
 def _stage1(rows):
     return {
         "rows": rows, "scanned_count": len(rows), "qualified_count": len(rows),
-        "broad_rotation_count": sum("BROAD_ROTATION" in r["stage1_lanes"] for r in rows),
-        "quiet_broad_count": sum("MARKET_ACTIVITY" not in r["stage1_lanes"] for r in rows),
-        "activity_count": sum("MARKET_ACTIVITY" in r["stage1_lanes"] for r in rows),
-        "cursor_start": 0, "cursor_end": len(rows), "excluded_breakdown": {},
+        "broad_rotation_count": 0, "quiet_broad_count": 0, "activity_count": 0,
+        "full_universe_count": len(rows), "scan_mode": "FULL_UNIVERSE",
+        "cursor_start": 0, "cursor_end": 0, "excluded_breakdown": {},
         "snapshot_requested_count": len(rows), "snapshot_received_count": len(rows),
         "coverage_progress": {
-            "universe_size": 1000, "seen_7d": len(rows), "seen_30d": len(rows),
-            "pct_7d": round(len(rows) / 10.0, 1), "pct_30d": round(len(rows) / 10.0, 1),
-            "estimated_full_rotation_runs": 5,
+            "universe_size": len(rows), "seen_7d": len(rows), "seen_30d": len(rows),
+            "pct_7d": 100.0 if rows else 0.0, "pct_30d": 100.0 if rows else 0.0,
+            "estimated_full_rotation_runs": 1 if rows else 0, "scan_mode": "FULL_UNIVERSE",
         },
     }
 
@@ -106,6 +106,18 @@ def _run_scan(monkeypatch, evidence, *, row=None):
     monkeypatch.setattr(md, "stage0_universe", lambda *args, **kwargs: _stage0())
     monkeypatch.setattr(md, "stage1_screen", lambda *args, **kwargs: _stage1([row]))
     monkeypatch.setattr(md, "_active_coverage_tickers", lambda user_id: set())
+    monkeypatch.setattr(
+        md, "screen_full_universe",
+        lambda user_id, rows, errors, provider_calls: (
+            rows,
+            {
+                "configured": True, "total_liquid_names": len(rows), "ready_count": len(rows),
+                "partial_count": 0, "missing_count": 0, "usable_count": len(rows),
+                "usable_pct": 100.0, "eligible_count": len(rows),
+                "long_screen_count": len(rows), "short_screen_count": 0,
+            },
+        ),
+    )
     monkeypatch.setattr(md, "_coverage_context_map", lambda user_id, symbols: {})
     monkeypatch.setattr(md, "enrich_forensic_candidates", lambda *args, **kwargs: ({row["ticker"]: evidence}, {}))
     return md.market_scan(1)
@@ -283,7 +295,8 @@ def test_0212_normal_discovery_get_is_provider_free(tmp_path, monkeypatch):
     assert "BROAD UNIVERSE DISCOVERY" in response.get_data(as_text=True)
 
 
-def test_0212_stage1_all_lanes_are_hard_bounded(tmp_path, monkeypatch):
+
+def test_0212_stage1_scans_every_stage0_name_each_run(tmp_path, monkeypatch):
     import mfapp.discovery_universe as du
 
     app = _make_app(tmp_path, monkeypatch)
@@ -295,17 +308,16 @@ def test_0212_stage1_all_lanes_are_hard_bounded(tmp_path, monkeypatch):
                 "ticker": f"{prefix}{idx:03d}", "name": f"{prefix}{idx:03d} Corp",
                 "exchange": "NYSE", "shortable": True, "easy_to_borrow": True,
             })
-    activity = {
-        f"A{idx:03d}": {"ticker": f"A{idx:03d}", "activity_rank": idx + 1, "move_pct": 1.0, "activity_sources": ["MOST_ACTIVE"]}
-        for idx in range(200)
-    }
     captured = {}
 
-    monkeypatch.setattr(du, "_activity_pool", lambda *args, **kwargs: activity)
     def fake_snapshots(symbols, *args, **kwargs):
         captured["symbols"] = list(symbols)
         return {
-            ticker: {"price": 20.0, "daily_volume": 3_000_000, "dollar_volume": 60_000_000, "move_pct": 0.0, "as_of": "2026-09-19T15:00:00Z"}
+            ticker: {
+                "price": 20.0, "daily_volume": 3_000_000, "dollar_volume": 60_000_000,
+                "move_pct": 0.0, "as_of": "2026-09-19T15:00:00Z",
+                "liquidity_basis": "PREVIOUS_COMPLETED_DAILY_BAR",
+            }
             for ticker in symbols
         }
     monkeypatch.setattr(du, "_snapshot_map", fake_snapshots)
@@ -317,14 +329,14 @@ def test_0212_stage1_all_lanes_are_hard_bounded(tmp_path, monkeypatch):
             [], Counter(), known_tickers={f"C{idx:03d}" for idx in range(120)},
         )
 
-    assert len(captured["symbols"]) == 480
-    assert result["scanned_count"] == 480
-    assert result["batch_size"] == 360
-    assert result["activity_limit"] == 160
-    assert result["coverage_limit"] == 80
+    assert len(captured["symbols"]) == len(members) == 560
+    assert result["scanned_count"] == 560
+    assert result["batch_size"] == 560
+    assert result["full_universe_count"] == 560
+    assert result["scan_mode"] == "FULL_UNIVERSE"
 
 
-def test_0212_stage1_does_not_advance_checkpoint_when_snapshots_fail(tmp_path, monkeypatch):
+def test_0212_stage1_failed_snapshots_do_not_fake_full_market_coverage(tmp_path, monkeypatch):
     import mfapp.discovery_universe as du
 
     app = _make_app(tmp_path, monkeypatch)
@@ -333,7 +345,6 @@ def test_0212_stage1_does_not_advance_checkpoint_when_snapshots_fail(tmp_path, m
         {"ticker": f"R{idx:03d}", "name": f"R{idx:03d} Corp", "exchange": "NYSE", "shortable": True}
         for idx in range(20)
     ]
-    monkeypatch.setattr(du, "_activity_pool", lambda *args, **kwargs: {})
     monkeypatch.setattr(du, "_snapshot_map", lambda *args, **kwargs: {})
 
     with app.app_context():
@@ -341,30 +352,28 @@ def test_0212_stage1_does_not_advance_checkpoint_when_snapshots_fail(tmp_path, m
             user_id, {"x": "y"}, {"members": members, "generated_at": "2026-09-19T12:00:00"},
             [], Counter(), known_tickers=set(),
         )
-    assert result["cursor_start"] == 0
-    assert result["cursor_end"] == 0
+    assert result["scanned_count"] == 20
+    assert result["snapshot_requested_count"] == 20
+    assert result["snapshot_received_count"] == 0
     assert result["qualified_count"] == 0
 
-
-def test_0212_stage2_and_snapshot_work_are_hard_bounded():
+def test_0212_stage2_is_bounded_after_full_market_prescreen():
     import mfapp.discovery_forensics as df
     import mfapp.discovery_universe as du
     import mfapp.market_discovery as md
 
-    assert df.FORENSIC_ENRICH_LIMIT == 10
-    assert du.STAGE1_BATCH_SIZE == 360
-    assert du.STAGE1_ACTIVITY_LIMIT == 160
-    assert du.STAGE1_COVERAGE_LIMIT == 80
-    assert du.SNAPSHOT_CHUNK_SIZE == 60
+    assert df.FORENSIC_ENRICH_LIMIT == 20
+    assert du.STAGE1_BATCH_SIZE == 0
+    assert du.STAGE1_ACTIVITY_LIMIT == 0
+    assert du.STAGE1_COVERAGE_LIMIT == 0
+    assert du.SNAPSHOT_CHUNK_SIZE == 100
+    assert du.SNAPSHOT_MAX_WORKERS == 4
     rows = [_stage1_row(f"Q{i:03d}") for i in range(100)]
     selected = md._select_stage2_finalists(rows, {}, limit=df.FORENSIC_ENRICH_LIMIT)
-    assert len(selected) == 10
-    # Max normal run: 1 asset refresh + 2 screeners + ceil((360+160+80)/60)
-    # snapshots + 1 SEC map + 2 calls per 10 unknown finalists.
-    assert 1 + 2 + 10 + 1 + (2 * df.FORENSIC_ENRICH_LIMIT) <= 34
+    assert len(selected) == 20
+    assert all(row["fundamental_screen"]["eligible"] for row in selected)
     assert md.MIN_DOLLAR_VOLUME == 15_000_000.0
     assert md.MIN_DAILY_VOLUME == 200_000.0
-
 
 def test_0212_ttm_requires_four_coherent_fiscal_quarters():
     from mfapp.discovery_forensics import _ttm
@@ -395,7 +404,7 @@ def test_0212_final_ranking_is_auditable_not_hidden_composite():
 
 
 
-def test_0212_tracks_recent_broad_universe_coverage(tmp_path, monkeypatch):
+def test_0212_full_market_scan_reaches_full_breadth_in_one_run(tmp_path, monkeypatch):
     import mfapp.discovery_universe as du
 
     app = _make_app(tmp_path, monkeypatch)
@@ -404,7 +413,6 @@ def test_0212_tracks_recent_broad_universe_coverage(tmp_path, monkeypatch):
         {"ticker": f"U{idx:03d}", "name": f"Universe {idx}", "exchange": "NYSE", "shortable": True}
         for idx in range(600)
     ]
-    monkeypatch.setattr(du, "_activity_pool", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         du, "_snapshot_map",
         lambda symbols, *args, **kwargs: {
@@ -423,18 +431,11 @@ def test_0212_tracks_recent_broad_universe_coverage(tmp_path, monkeypatch):
             {"members": members, "generated_at": "2026-09-19T12:00:00"},
             [], Counter(), known_tickers=set(),
         )
-        second = du.stage1_screen(
-            user_id, {"x": "y"},
-            {"members": members, "generated_at": "2026-09-19T12:00:00"},
-            [], Counter(), known_tickers=set(),
-        )
 
-    assert first["coverage_progress"]["seen_7d"] == 360
-    assert first["coverage_progress"]["pct_7d"] == 60.0
-    assert second["coverage_progress"]["seen_7d"] == 600
-    assert second["coverage_progress"]["pct_7d"] == 100.0
-    assert second["coverage_progress"]["estimated_full_rotation_runs"] == 2
-
+    assert first["coverage_progress"]["seen_7d"] == 600
+    assert first["coverage_progress"]["pct_7d"] == 100.0
+    assert first["coverage_progress"]["estimated_full_rotation_runs"] == 1
+    assert first["coverage_progress"]["scan_mode"] == "FULL_UNIVERSE"
 
 def test_0212_universe_health_detects_collapse_and_snapshot_failure():
     from mfapp.market_discovery import _discovery_health
@@ -483,7 +484,7 @@ def test_0212_scan_cadence_builds_breadth_then_becomes_weekly():
     mature = _scan_cadence(health, {"pct_30d": 50.0})
     retry = _scan_cadence({"status": "WARN"}, {"pct_30d": 50.0})
     critical = _scan_cadence({"status": "CRITICAL"}, {"pct_30d": 50.0})
-    assert early["recommended_interval_days"] == 3
+    assert early["recommended_interval_days"] == 7
     assert mature["recommended_interval_days"] == 7
     assert retry["recommended_interval_days"] == 3
     assert critical["recommended_interval_days"] == 1
@@ -515,7 +516,7 @@ def test_0212_discovery_page_renders_sparse_stage2_rejection(tmp_path, monkeypat
             payload={},
             result={
                 "market_scan": {
-                    "contract_version": "BROAD_FORENSIC_DISCOVERY_V3",
+                    "contract_version": "FULL_MARKET_FORENSIC_DISCOVERY_V4",
                     "configured": True,
                     "candidates": [],
                     "errors": [],

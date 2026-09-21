@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
@@ -20,8 +21,8 @@ FORENSIC_WATCH_EDGE_PCT = 12.0
 FORENSIC_EDGE_PCT = 20.0
 FORENSIC_STRONG_EDGE_PCT = 25.0
 FORENSIC_CONFIRM_SCORE = 14
-FORENSIC_ENRICH_LIMIT = 10
-FORENSIC_ENRICH_PER_SIDE = 5  # compatibility alias; Stage 2 is capped by FORENSIC_ENRICH_LIMIT
+FORENSIC_ENRICH_LIMIT = 20
+FORENSIC_ENRICH_PER_SIDE = 10  # compatibility alias; Stage 2 is capped by FORENSIC_ENRICH_LIMIT
 FORENSIC_TIMEOUT = (4, 10)
 
 
@@ -698,6 +699,7 @@ def enrich_forensic_candidates(
         else:
             reject(symbol, reason or "LOCAL FORENSIC DATA INSUFFICIENT")
 
+    external_tasks: list[tuple[dict[str, Any], str, float, dict[str, str]]] = []
     for row in unknown:
         symbol = str(row.get("ticker") or "").upper()
         price = _num(row.get("price"))
@@ -711,19 +713,37 @@ def enrich_forensic_candidates(
         if not meta:
             reject(symbol, "SEC TICKER UNRESOLVED")
             continue
+        external_tasks.append((row, symbol, price, meta))
+
+    # Deep SEC work is still bounded, but modest parallelism keeps a full-market
+    # Discovery run practical without changing who is selected. Selection has
+    # already happened from the full-market fundamental pre-screen.
+    provider_calls["sec_submissions"] = int(provider_calls.get("sec_submissions") or 0) + len(external_tasks)
+    provider_calls["sec_companyfacts"] = int(provider_calls.get("sec_companyfacts") or 0) + len(external_tasks)
+
+    def enrich_external(task: tuple[dict[str, Any], str, float, dict[str, str]]):
+        row, symbol, price, meta = task
         try:
             result, reason = _external_forensics(
-                symbol, price, _num(row.get("move_pct")), meta, headers, provider_calls,
+                symbol, price, _num(row.get("move_pct")), meta, headers, None,
             )
+            return symbol, meta, result, reason, ""
         except Exception as exc:
-            errors.append(f"{symbol} forensic enrichment: {type(exc).__name__}")
-            reject(symbol, "SEC ENRICHMENT ERROR")
-            continue
-        if result:
-            result["sec_name"] = meta.get("name") or symbol
-            out[symbol] = result
-        else:
-            reject(symbol, reason or "FORENSIC DATA INSUFFICIENT")
+            return symbol, meta, None, "", type(exc).__name__
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(enrich_external, task) for task in external_tasks]
+        for future in as_completed(futures):
+            symbol, meta, result, reason, error = future.result()
+            if error:
+                errors.append(f"{symbol} forensic enrichment: {error}")
+                reject(symbol, "SEC ENRICHMENT ERROR")
+                continue
+            if result:
+                result["sec_name"] = meta.get("name") or symbol
+                out[symbol] = result
+            else:
+                reject(symbol, reason or "FORENSIC DATA INSUFFICIENT")
     return out, diagnostics
 
 def discovery_opportunity(result: dict[str, Any]) -> dict[str, Any] | None:
