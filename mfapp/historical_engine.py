@@ -72,7 +72,7 @@ def _instant_asof(companyfacts: dict[str, Any], tags: list[str], cutoff: date, n
     return out
 
 
-def annual_history_asof(companyfacts: dict[str, Any], cutoff: date) -> list[dict[str, Any]]:
+def annual_history_asof(companyfacts: dict[str, Any], cutoff: date, company_type: str = "") -> list[dict[str, Any]]:
     duration = {key: _duration_asof(companyfacts, tags, cutoff) for key, tags in DURATION_TAGS.items()}
     instant = {key: _instant_asof(companyfacts, tags, cutoff) for key, tags in INSTANT_TAGS.items()}
     economic_duration = {key: _duration_asof(companyfacts, list(tags), cutoff) for key, tags in ECONOMIC_DURATION_TAGS.items()}
@@ -118,7 +118,7 @@ def annual_history_asof(companyfacts: dict[str, Any], cutoff: date) -> list[dict
                 economic_sources[field] = {"tag": record.get("tag"), "filed": record.get("filed")}
         row["quality"] = {
             "economic_reality": build_economic_reality(
-                row, facts=economic_facts, fact_sources=economic_sources
+                row, facts=economic_facts, fact_sources=economic_sources, company_type=company_type
             )
         }
         out.append(row)
@@ -235,8 +235,8 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
     companyfacts = _json(f"{SEC_DATA}/api/xbrl/companyfacts/CIK{meta['cik']}.json", user_agent)
     start = date.today() - timedelta(days=366 * years)
     anchors = _first_filing_anchors(companyfacts, start)
-    full_history = annual_history_asof(companyfacts, date.today())
     company_type = infer_company_type(company.sector, company.industry)
+    full_history = annual_history_asof(companyfacts, date.today(), company_type)
 
     run = HistoricalTestRun(
         coverage_id=coverage.id, user_id=user_id, status="RUNNING", engine_version=ENGINE_VERSION,
@@ -246,7 +246,7 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
     reliability_rows: list[dict[str, Any]] = []
 
     for fiscal_year, filing_date in anchors:
-        history = annual_history_asof(companyfacts, filing_date)
+        history = annual_history_asof(companyfacts, filing_date, company_type)
         if len(history) < 2:
             continue
         anchor_row = price_on_or_after(security.id, filing_date, 14, provider=provider)
