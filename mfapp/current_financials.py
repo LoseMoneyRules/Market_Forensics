@@ -206,7 +206,7 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
     # Balance-sheet items are applicability-aware: if a recent filed annual period
     # reported the field, its disappearance from the current basis is an ingestion
     # gap worth surfacing. A business that never reports inventory is not penalized.
-    continuity_fields = ("cash", "debt", "receivables", "inventory", "payables", "equity")
+    continuity_fields = ("cash", "debt", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "shares_outstanding", "diluted_shares")
     historically_present = {
         field for field in continuity_fields
         if any(n(row.get(field)) is not None for row in annual[:3])
@@ -248,7 +248,21 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
             quarter_gaps.append("Latest four stored quarters are not a consecutive fiscal sequence; TTM is withheld.")
 
     ttm_ready = bool(current and current.get("period_type") == "TTM")
-    unresolved_count = len(missing_current) + len(missing_continuity) + len(missing_derived)
+    normalized_fields = FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",)
+    historically_expected = {
+        field for field in normalized_fields
+        if any(n(row.get(field)) is not None for row in annual[:3])
+    }
+    missing_expected_fields = [
+        field for field in normalized_fields
+        if field in historically_expected and (not current or n(current.get(field)) is None)
+    ]
+    source_map = dict((current or {}).get("source_map") or {})
+    source_covered_fields = sorted(
+        field for field in normalized_fields
+        if current and n(current.get(field)) is not None and source_map.get(field)
+    )
+    unresolved_count = len(set(missing_current) | set(missing_continuity) | set(missing_expected_fields)) + len(missing_derived)
     return {
         "annual_count": len(annual),
         "quarter_count": len(quarters),
@@ -257,6 +271,11 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
         "missing_current_fields": missing_current,
         "missing_continuity_fields": missing_continuity,
         "missing_derived_metrics": missing_derived,
+        "missing_expected_fields": missing_expected_fields,
+        "normalized_field_count": len(normalized_fields),
+        "current_populated_field_count": sum(1 for field in normalized_fields if current and n(current.get(field)) is not None),
+        "source_covered_field_count": len(source_covered_fields),
+        "source_covered_fields": source_covered_fields,
         "unresolved_count": unresolved_count,
         "quarter_gaps": quarter_gaps,
         "ttm_ready": ttm_ready,
