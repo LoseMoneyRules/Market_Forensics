@@ -4,6 +4,8 @@ from math import isfinite
 from statistics import median
 from typing import Any
 
+from .economic_reality import economic_from_row, metric as economic_metric
+
 ENGINE_VERSION = "0.2.0"
 
 DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
@@ -160,6 +162,18 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
     fcf = n(latest.get("fcf"))
     cash = n(latest.get("cash")) or 0.0
     debt = n(latest.get("debt")) or 0.0
+    economic = economic_from_row(latest)
+    economic_net_debt = economic_metric(economic, "economic_net_debt")
+    economic_unresolved = bool(economic.get("material_unresolved"))
+    if economic and economic_unresolved:
+        net_debt = None  # exclude EV/Sales rather than guess an equity bridge
+        net_debt_basis = "ECONOMIC_CLASSIFICATION_UNRESOLVED"
+    elif economic_net_debt is not None:
+        net_debt = economic_net_debt
+        net_debt_basis = str(economic.get("debt_basis") or "ECONOMIC_REALITY")
+    else:
+        net_debt = debt - cash
+        net_debt_basis = "REPORTED_DEBT_MINUS_CASH_FALLBACK"
     revenues = [n(x.get("revenue")) for x in rows]
     net_margins = [
         (n(x.get("net_income")) / n(x.get("revenue")))
@@ -195,13 +209,21 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         warnings.append("Net income is unavailable; P/E is excluded from the intrinsic blend.")
     if fcf is None:
         warnings.append("Free cash flow is unavailable; FCF-yield and DCF evidence are weaker.")
+    if economic and economic_unresolved:
+        warnings.append("Economic debt classification is materially unresolved; EV/Sales is excluded until the financing bridge is classified.")
+    elif not economic:
+        warnings.append("Economic Reality classification is not stored on this filing basis yet; valuation uses reported debt minus cash as a transparent fallback.")
     return {
         "fiscal_year": latest.get("fiscal_year"),
         "filed_at": latest.get("filed_at"),
         "revenue": revenue,
         "net_income": net_income,
         "fcf": fcf,
-        "net_debt": debt - cash,
+        "net_debt": net_debt,
+        "net_debt_basis": net_debt_basis,
+        "economic_reality": economic,
+        "economic_reality_quality": str(economic.get("quality") or "UNAVAILABLE"),
+        "economic_reality_unresolved": economic_unresolved,
         "revenue_growth": _cagr(revenues, 3) or _median_growth(revenues),
         "net_margin": median([x for x in net_margins[-3:] if x is not None]) if any(x is not None for x in net_margins[-3:]) else None,
         "fcf_margin": median([x for x in fcf_margins[-3:] if x is not None]) if any(x is not None for x in fcf_margins[-3:]) else None,
