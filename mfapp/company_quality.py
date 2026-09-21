@@ -257,7 +257,10 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
         dimensions.append(_dim("cash_quality", "Cash quality", "SOUND", "Cash conversion is not showing a material filed red flag."))
 
     # 4. Balance-sheet / fixed-charge resilience.
-    if bool(economic.get("material_unresolved")):
+    if financial_sector:
+        detail = "Generic industrial leverage/fixed-charge rules are disabled; sector-specific capital/liquidity evidence is required."
+        dimensions.append(_dim("balance_sheet", "Balance-sheet resilience", "UNKNOWN", detail))
+    elif bool(economic.get("material_unresolved")):
         detail = "Material financing/accounting classification remains unresolved."
         dimensions.append(_dim("balance_sheet", "Balance-sheet resilience", "RED_FLAG", detail))
         alarms.append(_alarm("ECONOMIC_DEBT_UNRESOLVED", "RED", detail, "balance_sheet"))
@@ -291,7 +294,9 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
         dimensions.append(_dim("balance_sheet", "Balance-sheet resilience", "UNKNOWN", "Economic debt/fixed-charge evidence is insufficient."))
 
     # 5. Reinvestment efficiency.
-    if growth_capex_share is not None and growth_capex_share >= 25.0:
+    if financial_sector:
+        dimensions.append(_dim("reinvestment", "Reinvestment efficiency", "UNKNOWN", "Industrial capex/ROIC reinvestment rules are not applied to Financial / REIT companies."))
+    elif growth_capex_share is not None and growth_capex_share >= 25.0:
         if economic_roic is not None and economic_roic >= 12.0 and (revenue_growth is None or revenue_growth >= 3.0):
             detail = f"Growth-capex proxy is {growth_capex_share:.0f}% of capex while economic ROIC is {economic_roic:.1f}%."
             dimensions.append(_dim("reinvestment", "Reinvestment efficiency", "STRONG", detail))
@@ -317,11 +322,11 @@ def build_company_quality(history: list[dict[str, Any]], company_type: str = "Ge
         detail = f"Diluted/share count increased {share_change:+.1f}% over the available multi-year window."
         dimensions.append(_dim("capital_allocation", "Capital allocation", "RED_FLAG", detail))
         alarms.append(_alarm("MATERIAL_DILUTION", "RED", detail, "capital_allocation"))
-    elif payout is not None and payout > 1.50 and economic_net_debt is not None and economic_net_debt > 0:
+    elif not financial_sector and payout is not None and payout > 1.50 and economic_net_debt is not None and economic_net_debt > 0:
         detail = f"Buybacks + dividends are {payout:.2f}x current FCF while economic net debt is positive."
         dimensions.append(_dim("capital_allocation", "Capital allocation", "RED_FLAG", detail))
         alarms.append(_alarm("DEBT_FUNDED_DISTRIBUTION_RISK", "RED", detail, "capital_allocation"))
-    elif (share_change is not None and share_change >= 5.0) or (payout is not None and payout > 1.10 and economic_net_debt is not None and economic_net_debt > 0):
+    elif (share_change is not None and share_change >= 5.0) or (not financial_sector and payout is not None and payout > 1.10 and economic_net_debt is not None and economic_net_debt > 0):
         detail = f"Share count change {share_change:+.1f}%." if share_change is not None else f"Distributions are {payout:.2f}x FCF with positive economic net debt."
         dimensions.append(_dim("capital_allocation", "Capital allocation", "WATCH", detail))
         alarms.append(_alarm("CAPITAL_ALLOCATION_WATCH", "AMBER", detail, "capital_allocation"))
