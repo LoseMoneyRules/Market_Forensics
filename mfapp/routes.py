@@ -271,26 +271,13 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
             priority=95,
         )
 
-    economic_reclass_pending = False
-    current_basis = current_row(company.id)
-    current_economic = dict(((current_basis or {}).get("quality") or {}).get("economic_reality") or {})
-    if current_basis and not current_economic and provider_status(g.user.id).get("sec"):
-        active_sec = Job.query.filter(
-            Job.user_id == g.user.id,
-            Job.company_id == company.id,
-            Job.job_type == "SEC_INGEST",
-            Job.status.in_(["QUEUED", "RUNNING"]),
-        ).first()
-        if active_sec is None and queue_recalc:
-            active_sec = enqueue_job(
-                "SEC_INGEST",
-                user_id=g.user.id,
-                company_id=company.id,
-                security_id=security.id,
-                payload={"coverage_id": coverage.id},
-                priority=40,
-            )
-        economic_reclass_pending = active_sec is not None
+    active_sec = Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.company_id == company.id,
+        Job.job_type == "SEC_INGEST",
+        Job.status.in_(["QUEUED", "RUNNING"]),
+    ).first()
+    economic_reclass_pending = active_sec is not None
 
     cache_pending = active_recalc is not None or economic_reclass_pending
     # Readiness is intentionally live DB state. It is lightweight and user-edited;
