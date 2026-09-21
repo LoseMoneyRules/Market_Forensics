@@ -5,9 +5,8 @@ from typing import Any
 from .valuation_forensics import build_peer_analysis, _multiple_to_equity_value
 
 
-def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_exact_peers: int = 2, limit: int = 8) -> dict[str, Any]:
-    """Compatibility surface backed by the single 0.3.1 peer engine."""
-    peer = build_peer_analysis(company_id, user_id, limit=limit)
+def legacy_triangulation_from_peer(peer: dict[str, Any]) -> dict[str, Any]:
+    """Adapt canonical peer analysis to the older Business-page payload shape."""
     target = dict(peer.get("target") or {})
     adjusted = dict(peer.get("peer_adjusted") or {})
     estimate = _multiple_to_equity_value(
@@ -54,6 +53,11 @@ def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_
     }
 
 
+def automatic_triangulation(company_id: int, user_id: int | None = None, *, min_exact_peers: int = 2, limit: int = 8) -> dict[str, Any]:
+    """Compatibility surface backed by the single 0.3.1 peer engine."""
+    return legacy_triangulation_from_peer(build_peer_analysis(company_id, user_id, limit=limit))
+
+
 def apply_peer_valuation_overlay(valuation: dict[str, Any], triangulation: dict[str, Any]) -> dict[str, Any]:
     """Keep intrinsic valuation independent from relative value.
 
@@ -76,4 +80,4 @@ def apply_peer_valuation_overlay(valuation: dict[str, Any], triangulation: dict[
     return out
 
 
-__all__ = ["automatic_triangulation", "apply_peer_valuation_overlay"]
+__all__ = ["automatic_triangulation", "legacy_triangulation_from_peer", "apply_peer_valuation_overlay"]
