@@ -606,15 +606,15 @@
         <span class="status-chip">{{ tm.flow_feed_scope or 'NO FLOW DATA' }}</span>
       </div>
       <div class="tape-flow-grid">
-        <div><span>Large Buy</span><strong>{{ tm.large_buy|mf_num(0) if tm.large_buy is not none else '—' }}</strong></div>
-        <div><span>Large Sell</span><strong>{{ tm.large_sell|mf_num(0) if tm.large_sell is not none else '—' }}</strong></div>
-        <div><span>Net Large</span><strong>{{ tm.net_large|mf_num(0) if tm.net_large is not none else '—' }}</strong></div>
-        <div><span>Very Large Buy</span><strong>{{ tm.very_large_buy|mf_num(0) if tm.very_large_buy is not none else '—' }}</strong></div>
-        <div><span>Very Large Sell</span><strong>{{ tm.very_large_sell|mf_num(0) if tm.very_large_sell is not none else '—' }}</strong></div>
-        <div><span>Net Very Large</span><strong>{{ tm.net_very_large|mf_num(0) if tm.net_very_large is not none else '—' }}</strong></div>
-        <div><span>Whale Buy</span><strong>{{ tm.whale_buy|mf_num(0) if tm.whale_buy is not none else '—' }}</strong></div>
-        <div><span>Whale Sell</span><strong>{{ tm.whale_sell|mf_num(0) if tm.whale_sell is not none else '—' }}</strong></div>
-        <div><span>Net Whale</span><strong>{{ tm.net_whale|mf_num(0) if tm.net_whale is not none else '—' }}</strong></div>
+        <div><span>Large Buy $</span><strong>{{ tm.large_buy|mf_num(0) if tm.large_buy is not none else '—' }}</strong></div>
+        <div><span>Large Sell $</span><strong>{{ tm.large_sell|mf_num(0) if tm.large_sell is not none else '—' }}</strong></div>
+        <div><span>Net Large $</span><strong>{{ tm.net_large|mf_num(0) if tm.net_large is not none else '—' }}</strong></div>
+        <div><span>Very Large Buy $</span><strong>{{ tm.very_large_buy|mf_num(0) if tm.very_large_buy is not none else '—' }}</strong></div>
+        <div><span>Very Large Sell $</span><strong>{{ tm.very_large_sell|mf_num(0) if tm.very_large_sell is not none else '—' }}</strong></div>
+        <div><span>Net Very Large $</span><strong>{{ tm.net_very_large|mf_num(0) if tm.net_very_large is not none else '—' }}</strong></div>
+        <div><span>Whale Buy $</span><strong>{{ tm.whale_buy|mf_num(0) if tm.whale_buy is not none else '—' }}</strong></div>
+        <div><span>Whale Sell $</span><strong>{{ tm.whale_sell|mf_num(0) if tm.whale_sell is not none else '—' }}</strong></div>
+        <div><span>Net Whale $</span><strong>{{ tm.net_whale|mf_num(0) if tm.net_whale is not none else '—' }}</strong></div>
       </div>
       <p class="muted tape-source-note">
         Method {{ tm.flow_method or '—' }} · flow confidence {{ '%.0f'|format(tm.flow_confidence_pct) if tm.flow_confidence_pct is not none else '—' }}%
