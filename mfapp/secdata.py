@@ -1091,28 +1091,27 @@ def _supersede_period_identity(period: FinancialPeriod) -> None:
 
 
 def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal_year: int, end_date: date, anchor: dict[str, Any] | None) -> FinancialPeriod:
-    period = FinancialPeriod.query.filter_by(company_id=company.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date).first()
     family = _period_family_query(company.id, end_date, period_type).order_by(FinancialPeriod.id.desc()).all()
 
+    # A parser revision must never promote a sparse shell merely because it is the
+    # newest/active row. Pick the richest factual identity across the full same-end
+    # family (including audit-preserved superseded rows), then make that row the
+    # single active canonical identity for the represented period.
+    period = max(
+        family,
+        key=lambda row: _period_evidence_score(row, period_type=period_type, fiscal_year=fiscal_year),
+        default=None,
+    )
     if period is None:
-        # Reuse the richest/current family member when a parser revision corrects
-        # the period identity. Do not create another same-date active duplicate.
-        active_family = [row for row in family if not str(row.period_type or "").startswith("SUPERSEDED_")]
-        period = active_family[0] if active_family else None
-        if period is not None:
-            period.period_type = period_type
-            period.fiscal_year = fiscal_year
-        else:
-            period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
-            db.session.add(period)
-            db.session.flush()
+        period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
+        db.session.add(period)
+        db.session.flush()
+    else:
+        period.period_type = period_type
+        period.fiscal_year = fiscal_year
 
-    # The old bug survived when the corrected row already existed: stale same-end
-    # siblings stayed active and higher-id reads could still select them. Preserve
-    # those rows for audit/provenance, but remove them from the live FY/Q identity
-    # namespace so all downstream consumers see one canonical represented period.
     for sibling in family:
-        if sibling.id != period.id and not str(sibling.period_type or "").startswith("SUPERSEDED_"):
+        if sibling.id != period.id and not str(sibling.period_type or "").startswith(("SUPERSEDED_", "SUP_")):
             _supersede_period_identity(sibling)
 
     period.source_id = source.id
