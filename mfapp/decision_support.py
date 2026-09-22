@@ -397,7 +397,7 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     borrow_fee_pct = n(borrow_fee_payload.get("annualized_fee_pct"))
 
     short_map = {str(row.get("date")): n(row.get("short_pct")) for row in short_volume if row.get("date")}
-    flow_map = {str(row.get("date")): row for row in flow_rows if row.get("date")}
+    flow_map = {str(row.get("date")): row for row in flow_score_by_date.values() if row.get("date")}
     latest_interest = finra.get("latest_short_interest") or {}
     si_change = n(latest_interest.get("change_percent"))
 
