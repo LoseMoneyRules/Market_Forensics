@@ -6,7 +6,7 @@ from decimal import Decimal
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
-from mfapp.core_models import Company, DataQualityIssue, FinancialFlow, FinancialPeriod, Job, NormalizedFinancial, RefreshRun, Security
+from mfapp.core_models import Company, Coverage, DataQualityIssue, FinancialFlow, FinancialPeriod, Job, NormalizedFinancial, RefreshRun, Security, Source
 from mfapp.extensions import db
 from mfapp.jobs import dismiss_terminal_jobs, enqueue_job, run_jobs
 from mfapp.models import User
@@ -119,6 +119,13 @@ def test_033_sga_is_not_blindly_treated_as_total_opex():
     nonop = _annual_fact(start="2025-01-01", end="2025-12-31", value=10, tag="NonoperatingIncomeExpense")
 
     expense, operating = _validated_sga_operating_bridge(gp, sga, pretax, nonop, [])
+    assert expense is None
+    assert operating is None
+
+    # Even a coincidentally equal non-operating magnitude cannot justify using SGA
+    # as total OpEx when the implied bridge is structurally too large.
+    coincidental = _annual_fact(start="2025-01-01", end="2025-12-31", value=150, tag="NonoperatingIncomeExpense")
+    expense, operating = _validated_sga_operating_bridge(gp, sga, pretax, coincidental, [])
     assert expense is None
     assert operating is None
 
@@ -467,6 +474,47 @@ def test_033_failed_job_rolls_back_partial_business_writes(tmp_path, monkeypatch
         assert Company.query.filter_by(legal_name="PARTIAL WRITE").first() is None
         assert db.session.get(Job, job.id).status == "FAILED"
         assert RefreshRun.query.filter_by(job_id=job.id, status="FAILED").count() == 1
+
+
+
+def test_033_refresh_stale_reingests_coverage_with_old_financial_normalizer(tmp_path, monkeypatch):
+    from mfapp.jobs import _stale
+    from mfapp.secdata import SEC_NORMALIZER_VERSION
+
+    app = make_app(tmp_path, monkeypatch, "stale_normalizer")
+    with app.app_context():
+        db.create_all()
+        user = User(
+            email="control-stale@example.com", display_name="Control", role="CONTROL",
+            password_hash="unused-test-hash", totp_secret_enc="unused-test-totp", is_active=True,
+        )
+        company = Company(legal_name="Stale Co", display_name="Stale Co")
+        db.session.add_all([user, company]); db.session.flush()
+        security = Security(company_id=company.id, ticker="STAL", exchange="NYSE")
+        db.session.add(security); db.session.flush()
+        coverage = Coverage(user_id=user.id, security_id=security.id, status="RESEARCH")
+        db.session.add(coverage)
+        db.session.add(Source(
+            company_id=company.id, provider="SEC", source_type="COMPANYFACTS",
+            title="old facts", url="https://data.sec.gov/old",
+            meta={"normalizer_version": "0.3.3"},
+        ))
+        db.session.add(RefreshRun(
+            company_id=company.id, security_id=security.id,
+            refresh_type="SEC_INGEST", status="DONE",
+            started_at=date.today(), finished_at=date.today(),
+        ))
+        db.session.commit()
+
+        monkeypatch.setattr("mfapp.jobs.provider_status", lambda user_id: {"sec": True})
+        result = _stale(user.id)
+        sec_job = Job.query.filter_by(
+            user_id=user.id, company_id=company.id, security_id=security.id,
+            job_type="SEC_INGEST", status="QUEUED",
+        ).first()
+        assert result["coverage_scanned"] == 1
+        assert sec_job is not None
+        assert SEC_NORMALIZER_VERSION == "0.3.3-financial-completeness"
 
 
 def test_033_terminal_job_cleanup_preserves_row_and_marks_dismissed(tmp_path, monkeypatch):
