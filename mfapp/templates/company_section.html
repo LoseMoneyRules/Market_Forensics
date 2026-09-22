@@ -190,7 +190,7 @@
     <div class="panel fundamentals-forensic-read">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">FUNDAMENTALS FORENSICS · 0.3.0</p>
+          <p class="eyebrow">FUNDAMENTALS FORENSICS</p>
           <h2>{{ ff.get('state','INSUFFICIENT EVIDENCE') }}</h2>
           <p class="muted">{{ ff.get('headline','') }}</p>
         </div>
@@ -198,7 +198,7 @@
       </div>
 
       {% if economic_refresh_queued and not economic_reality %}
-      <div class="notice amber"><strong>ECONOMIC REALITY REFRESH QUEUED.</strong> This stored filing basis predates the 0.3.0 classification layer. Reported facts remain visible, but leverage/EV conclusions stay unresolved until the SEC refresh finishes.</div>
+      <div class="notice amber"><strong>ECONOMIC REALITY REFRESH QUEUED.</strong> This stored filing basis predates the current economic-classification layer. Reported facts remain visible, but leverage/EV conclusions stay unresolved until the SEC refresh finishes.</div>
       {% endif %}
 
       {% if ff.get('trend_cards') %}
@@ -319,7 +319,7 @@
     {% if economic_reality %}
     <div class="panel economic-reality-panel">
       <div class="panel-head">
-        <div><p class="eyebrow">ECONOMIC REALITY · 0.3.0</p><h2>Reported accounting → economic interpretation</h2><p class="muted">Filed numbers remain unchanged. This layer separates financing debt, operating capital and non-debt liabilities before valuation or evidence scoring.</p></div>
+        <div><p class="eyebrow">ECONOMIC REALITY</p><h2>Reported accounting → economic interpretation</h2><p class="muted">Filed numbers remain unchanged. This layer separates financing debt, operating capital and non-debt liabilities before valuation or evidence scoring.</p></div>
         <span class="status-chip" data-status-value="{{ 'REVIEW' if economic_reality.material_unresolved else 'PASS' }}">{{ economic_reality.quality or 'UNAVAILABLE' }}{% if economic_reality.material_unresolved %} · REVIEW{% endif %}</span>
       </div>
       <div class="numbers-quality-grid">
