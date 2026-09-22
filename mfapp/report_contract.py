@@ -10,7 +10,7 @@ from .core_models import (
     HistoricalPrice, HistoricalTestRun, HistoricalTestSample, ManagementAssessment,
     MonitoringHistory, MonitoringRule, Source,
 )
-from .current_financials import annual_history_grid, current_row
+from .current_financials import annual_history_grid, canonical_annual_pairs, current_row
 
 
 REPORT_CONTRACT_VERSION = "0.3.2"
@@ -273,7 +273,7 @@ def _monitoring(coverage_id: int) -> list[dict[str, Any]]:
 
 
 def _financial_flows(company_id: int) -> list[dict[str, Any]]:
-    periods = FinancialPeriod.query.filter_by(company_id=company_id).order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()).limit(6).all()
+    periods = [period for period, _ in canonical_annual_pairs(company_id)[:6]]
     period_ids = [row.id for row in periods]
     if not period_ids:
         return []
@@ -281,7 +281,7 @@ def _financial_flows(company_id: int) -> list[dict[str, Any]]:
     by_period: dict[int, dict[str, Any]] = {}
     for period in periods:
         by_period[period.id] = {
-            "period": f"FY{period.fiscal_year}" if period.period_type == "FY" else f"{period.period_type} {period.fiscal_year}",
+            "period": f"FY{period.fiscal_year}",
             "period_end": _iso(period.end_date), "income_statement": None, "cash_flow": None,
         }
     seen = set()
@@ -296,6 +296,7 @@ def _financial_flows(company_id: int) -> list[dict[str, Any]]:
         name = "income_statement" if str(row.flow_type).upper() == "INCOME_STATEMENT" else "cash_flow"
         target[name] = dict(row.payload or {})
     return [by_period[p.id] for p in periods if by_period.get(p.id)]
+
 
 
 def _sources(company_id: int) -> list[dict[str, Any]]:
