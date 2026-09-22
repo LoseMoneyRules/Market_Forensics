@@ -615,7 +615,7 @@ def _valuation_from_history(
         metrics["current_p_b"] = current_pb
         if historical_pb_median not in (None, 0):
             metrics["pb_deviation_from_history_pct"] = (current_pb / historical_pb_median - 1.0) * 100.0
-    defaults = default_cases(metrics, company_type, calibration)
+    defaults = default_cases(metrics, company_type)
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
     result = evaluate(
         metrics, cases, defaults["weights"], defaults["horizon_years"],
