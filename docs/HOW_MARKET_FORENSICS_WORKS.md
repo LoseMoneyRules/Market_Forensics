@@ -1093,77 +1093,59 @@ Sector/industry text is used to infer a starting family, but the user can review
 
 ### 12.3 Starting assumptions
 
-The engine estimates recent:
+The automatic engine derives operating ranges from the company's own filed history:
 
 - revenue growth;
-- net margin;
-- FCF margin;
-- operating margin;
-- net debt;
-- shares.
+- net / operating / EBITDA / FCF margins;
+- diluted-share growth;
+- leverage and fixed-charge evidence;
+- cash-conversion-cycle evidence;
+- ROIC / reinvestment context;
+- net debt and conservative net-cash floor where applicable.
 
-Historical multiples may be point-in-time calibrated when enough valid observations exist.
+Automatic valuation multiples do **not** fall back to fixed company-type or sector proxies. Each method must have the company's own comparable point-in-time filing/price history: use 5Y P10 / median / P90 when at least four comparable anchors exist, otherwise the company's own 10Y history. If that evidence is insufficient, the method remains unavailable.
 
-Otherwise company-type priors are used.
+### 12.4 Bear / Base / Bull distribution policy
 
-Important distinction:
+Default probabilities remain Bear 25%, Base 50%, Bull 25% for expected-value presentation; default explicit horizon remains 5 years.
 
-**Type priors and default growth/margin values are model assumptions, not sourced facts.**
+The automatic price scenarios themselves are distributional rather than fixed ± point adjustments:
 
-This is a current modeling convenience and must remain clearly labeled.
+- Bear = P10 of a deterministic 10,000-draw valuation distribution;
+- Base = P50 / median;
+- Bull = P90.
 
-### 12.4 Bear / Base / Bull default policy
+The simulation ranges come from the company's own historical operating and multiple distributions. Growth companies decay toward terminal economics over the forecast horizon; mature businesses are bounded by conservative long-run growth; cyclicals use longer historical operating distributions rather than extrapolating one TTM peak/trough.
 
-Default probabilities:
+A final integrity guard requires Bear ≤ Base ≤ Bull. If deterministic pre-simulation components invert, the result is downgraded to DATA WARNING rather than silently treating the reordered display as decision-grade evidence.
 
-- Bear 25%;
-- Base 50%;
-- Bull 25%.
+### 12.5 Intrinsic methods and applicability
 
-Default horizon: 5 years.
-
-Current policy starts from Base operating assumptions and applies bounded Bear/Bull changes.
-
-Examples include approximately:
-
-- Bear growth: Base − 5 pts;
-- Bull growth: Base + 5 pts;
-- Bear net margin: Base − 2.5 pts;
-- Bull net margin: Base + 2.5 pts;
-- Bear FCF margin: Base − 3 pts;
-- Bull FCF margin: Base + 3 pts.
-
-Discount/terminal assumptions differ by case.
-
-### 12.5 Intrinsic methods
-
-Primary blended methods:
+The canonical engine can use:
 
 - P/E;
+- P/S;
 - EV / Sales;
-- FCF Yield.
+- EV / EBITDA;
+- FCF Yield;
+- DCF.
 
-DCF is calculated as an independent cross-check, not part of the default three-method blend.
+Method applicability is economic, not cosmetic:
 
-Default weights:
+- thin-margin/high-revenue businesses disable P/S and EV/Sales;
+- high leverage suppresses equity-only shortcuts and increases the discount rate;
+- asset-light/high-margin businesses can weight DCF/cash-flow evidence more heavily;
+- cyclicals de-emphasize spot P/E and prefer normalized EBITDA/cash-flow evidence;
+- unresolved enterprise-value bridges disable affected EV methods;
+- generic Financial / REIT industrial valuation fails closed until sector-specific P/B-ROE, AFFO/NAV or equivalent evidence exists.
 
-- P/E 40%;
-- EV / Sales 25%;
-- FCF Yield 35%.
+Two formulas using the same economic denominator are not two independent confirmations. P1/P2 and decision-grade INTRINSIC require at least two independent valuation families among Earnings, Sales, EBITDA and Cash Flow. FCF Yield + DCF alone therefore remains single-family evidence.
 
-If earnings are non-positive/unavailable, P/E weight goes to zero.
+### 12.6 Robust blend and scenario controls
 
-If FCF is non-positive/unavailable, FCF-yield weight goes to zero.
+Applicable methods remain individually visible. When at least three valid method values exist, a method more than 45% away from the cross-method median has its weight reduced by 70%.
 
-Financial/REIT currently uses P/E only in the default policy.
-
-### 12.6 Robust blend
-
-When at least three methods are valid:
-
-- a method more than 45% away from the cross-method median has its weight reduced by 70%.
-
-This prevents one extreme method from dominating the target.
+SBC is not double counted: the automatic path keeps reported FCF and projects observed diluted-share growth in the per-share denominator. A conservative net-cash floor can bound Bear after current burn and liquidation haircuts. CCC deterioration, leverage, Company Quality and applicable Altman solvency evidence can widen downside / increase discounting; improving capital efficiency can only reduce discounting within explicit bounded limits.
 
 ### 12.7 Manual override
 
@@ -2056,11 +2038,11 @@ Tape combines useful context, but it is not an institutional market-microstructu
 
 **Improvement:** improve options/borrow/liquidity evidence and validate Tape heuristics historically before increasing their influence.
 
-### 24.10 Financial / REIT valuation is simplified
+### 24.10 Financial / REIT valuation is fail-closed
 
-The default Financial / REIT policy is currently P/E-centric.
+The generic industrial valuation engine does not produce decision-grade automatic intrinsic value for banks, insurers or REITs. Their balance sheets and cash-flow definitions require sector-specific valuation evidence such as P/B-ROE, excess capital, AFFO/NAV or equivalent frameworks.
 
-**Improvement:** add sector-specific valuation frameworks where economically appropriate.
+**Improvement:** implement those sector-specific engines before allowing Financial / REIT names to qualify through intrinsic P1/P2 valuation.
 
 ### 24.11 Research Conclusion thresholds need empirical calibration
 
