@@ -6,7 +6,7 @@ from decimal import Decimal
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
-from mfapp.core_models import Company, FinancialPeriod, Job, NormalizedFinancial, RefreshRun
+from mfapp.core_models import Company, FinancialFlow, FinancialPeriod, Job, NormalizedFinancial, RefreshRun
 from mfapp.extensions import db
 from mfapp.jobs import dismiss_terminal_jobs, enqueue_job, run_jobs
 from mfapp.models import User
@@ -113,6 +113,38 @@ def test_033_empty_quarter_shells_do_not_hide_valid_annual_current_basis(tmp_pat
         forecasts = forecast_rows(company.id, None, 3)
         assert len(forecasts) == 3
         assert all(row["revenue"] is not None for row in forecasts)
+
+
+def test_033_recalculate_rebuilds_financial_flows_from_valid_annual_basis(tmp_path, monkeypatch):
+    from mfapp.jobs import recalculate_company
+
+    app = make_app(tmp_path, monkeypatch, "flows")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Flow Co", display_name="Flow Co")
+        db.session.add(company); db.session.flush()
+        period = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2025,
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31), currency="USD",
+        )
+        db.session.add(period); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=period.id,
+            revenue=Decimal("1000"), cogs=Decimal("450"), gross_profit=Decimal("550"),
+            operating_expenses=Decimal("300"), operating_income=Decimal("250"),
+            pretax_income=Decimal("220"), income_tax=Decimal("45"), net_income=Decimal("175"),
+            cfo=Decimal("240"), capex=Decimal("70"), fcf=Decimal("170"),
+            source_map={"revenue": {"provider": "SEC"}}, quality={},
+        ))
+        db.session.commit()
+
+        result = recalculate_company(company.id)
+        assert result["periods"] == 1
+        rows = FinancialFlow.query.filter_by(financial_period_id=period.id).all()
+        assert {row.flow_type for row in rows} == {"INCOME_STATEMENT", "CASH_FLOW"}
+        income = next(row for row in rows if row.flow_type == "INCOME_STATEMENT")
+        assert (income.payload or {}).get("bridge_steps")
+        assert (income.payload or {}).get("nodes")
 
 def test_033_failed_job_rolls_back_partial_business_writes(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "atomic")
