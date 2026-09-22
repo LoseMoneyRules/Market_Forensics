@@ -6,7 +6,7 @@ from decimal import Decimal
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
-from mfapp.core_models import Company, FinancialFlow, FinancialPeriod, Job, NormalizedFinancial, RefreshRun
+from mfapp.core_models import Company, DataQualityIssue, FinancialFlow, FinancialPeriod, Job, NormalizedFinancial, RefreshRun, Security
 from mfapp.extensions import db
 from mfapp.jobs import dismiss_terminal_jobs, enqueue_job, run_jobs
 from mfapp.models import User
@@ -17,6 +17,7 @@ from mfapp.secdata import (
     _bridge_fy_end_instants_to_q4,
     _fiscal_quarter_from_end,
     _quarter_duration_values,
+    _reconcile_financial_field_issues,
     _validated_sga_operating_bridge,
 )
 
@@ -156,6 +157,104 @@ def test_033_weighted_average_shares_are_reconstructed_by_quarter_not_ytd_proxy(
     assert 119 < float(quarters[(2026, "Q3")]["value"]) < 121
     assert 129 < float(quarters[(2026, "Q4")]["value"]) < 131
     assert quarters[(2026, "Q4")]["method"] == "FY_MINUS_9M_WEIGHTED_AVERAGE"
+
+
+
+def test_033_nike_like_companyfacts_flow_resolves_operating_income_and_inventory_end_to_end(tmp_path, monkeypatch):
+    from mfapp.secdata import refresh_company_fundamentals
+
+    app = make_app(tmp_path, monkeypatch, "nike_like")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Retail Co", display_name="Retail Co")
+        security = Security(company=company, ticker="RETL", exchange="NYSE")
+        db.session.add_all([company, security]); db.session.commit()
+
+        def duration_node(label, tag, value):
+            return {
+                "label": label,
+                "units": {"USD": [{
+                    "start": "2025-06-01", "end": "2026-05-31", "val": value,
+                    "form": "10-K", "fp": "FY", "filed": "2026-07-24",
+                    "accn": f"TEST-{tag}", "fy": 2026,
+                }]}
+            }
+
+        facts = {
+            "entityName": "Retail Co",
+            "facts": {"us-gaap": {
+                "RevenueFromContractWithCustomerExcludingAssessedTax": duration_node("Revenues", "rev", 46398),
+                "CostOfRevenue": duration_node("Cost of sales", "cogs", 26487),
+                "GrossProfit": duration_node("Gross profit", "gp", 19911),
+                "SellingGeneralAndAdministrativeExpense": duration_node("Selling and administrative expense", "sga", 16114),
+                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": duration_node("Income before income taxes", "pretax", 3900),
+                "NonoperatingIncomeExpense": duration_node("Nonoperating income expense", "nonop", 103),
+                "IncomeTaxExpenseBenefit": duration_node("Income tax expense", "tax", 792),
+                "NetIncomeLoss": duration_node("Net income", "net", 3108),
+                "InventoryNet": {
+                    "label": "Inventories",
+                    "units": {"USD": [{
+                        "end": "2026-05-31", "val": 7501, "form": "10-K", "fp": "FY",
+                        "filed": "2026-07-24", "accn": "TEST-inventory", "fy": 2026,
+                    }]}
+                },
+            }}
+        }
+        monkeypatch.setattr("mfapp.secdata._ua", lambda user_id: "Research test research@example.com")
+        monkeypatch.setattr("mfapp.secdata._ticker_meta", lambda ticker, ua: {
+            "cik": "0000000001", "name": "Retail Co", "sic": "3021",
+            "sic_description": "Rubber and plastics footwear", "fiscal_year_end": "0531",
+        })
+        monkeypatch.setattr("mfapp.secdata._json", lambda url, ua: facts)
+
+        result = refresh_company_fundamentals(company, security, 1)
+        period = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY", fiscal_year=2026).first()
+        row = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
+
+        assert result["annual_saved"] == 1
+        assert row.inventory == Decimal("7501")
+        assert row.operating_expenses == Decimal("16114")
+        assert row.operating_income == Decimal("3797")
+        assert row.source_map["operating_income"]["method"] == "VALIDATED_GROSS_PROFIT_MINUS_SGA"
+        from mfapp.calculations import financial_metrics
+        assert round(financial_metrics({
+            "revenue": row.revenue,
+            "gross_profit": row.gross_profit,
+            "operating_expenses": row.operating_expenses,
+            "operating_income": row.operating_income,
+        })["operating_margin_pct"], 2) == 8.18
+
+
+def test_033_missing_applicable_inventory_becomes_explicit_data_quality_issue(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "field_integrity")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Continuity Co", display_name="Continuity Co")
+        db.session.add(company); db.session.flush()
+        fy = FinancialPeriod(company_id=company.id, period_type="FY", fiscal_year=2025, end_date=date(2025, 12, 31))
+        q1 = FinancialPeriod(company_id=company.id, period_type="Q1", fiscal_year=2026, end_date=date(2026, 3, 31))
+        db.session.add_all([fy, q1]); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=fy.id, revenue=Decimal("1000"), inventory=Decimal("200"),
+            operating_income=Decimal("100"), source_map={}, quality={},
+        ))
+        db.session.add(NormalizedFinancial(
+            financial_period_id=q1.id, revenue=Decimal("260"), inventory=None,
+            operating_income=Decimal("30"), source_map={}, quality={},
+        ))
+        db.session.commit()
+
+        audit = _reconcile_financial_field_issues(company)
+        db.session.flush()
+        assert "inventory" in audit["missing_expected_fields"]
+        issue = DataQualityIssue.query.filter_by(
+            company_id=company.id,
+            object_type="financial_basis",
+            object_id=str(q1.id),
+            code="MISSING_EXPECTED_INVENTORY",
+            status="OPEN",
+        ).first()
+        assert issue is not None
 
 
 def test_033_fy_end_inventory_bridges_exactly_to_synthetic_q4(tmp_path, monkeypatch):
