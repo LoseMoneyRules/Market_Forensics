@@ -12,6 +12,7 @@ from .extensions import db
 from .data_providers import get_secret
 from .core_models import Company, DataQualityIssue, FinancialPeriod, NormalizedFinancial, Provenance, RawFinancialFact, Security, Source
 from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality
+from .sec_inline_facts import extract_extension_concepts
 
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
@@ -56,6 +57,9 @@ SEMANTIC_LABEL_ALIASES = {
     "net_income": {"net income", "net income loss"},
     "cfo": {"net cash provided by operating activities", "cash provided by operations", "net cash provided by used in operating activities"},
     "capex": {"capital expenditures", "additions to property plant and equipment", "purchases of property plant and equipment"},
+    "buybacks": {"repurchases of common stock", "payments for repurchase of common stock", "share repurchases"},
+    "dividends": {"dividends paid", "payments of dividends", "common stock dividends paid"},
+    "diluted_shares": {"weighted average diluted shares outstanding", "weighted average number of diluted shares outstanding"},
     "cash": {"cash and cash equivalents", "cash and equivalents"},
     "receivables": {"accounts receivable net", "accounts receivable"},
     "inventory": {"inventories", "inventory", "inventories net", "total inventories"},
@@ -63,6 +67,7 @@ SEMANTIC_LABEL_ALIASES = {
     "assets": {"total assets"},
     "liabilities": {"total liabilities"},
     "equity": {"total shareholders equity", "total stockholders equity", "shareholders equity", "stockholders equity"},
+    "shares_outstanding": {"common shares outstanding", "common stock shares outstanding", "shares outstanding"},
 }
 
 DEBT_CURRENT_TAGS = [
@@ -278,6 +283,172 @@ def _ticker_meta(ticker: str, user_agent: str) -> dict[str, str]:
             "fiscal_year_end": str(submission.get("fiscalYearEnd") or ""),
         }
     raise SECRefreshError(f"{target} not found in SEC ticker mapping.")
+
+
+def _filing_extension_source(
+    company: Company,
+    *,
+    cik: str,
+    accession: str,
+    form: str,
+    filed: str,
+    primary_document: str,
+) -> Source:
+    base = f"https://www.sec.gov/Archives/edgar/data/{int(str(cik))}/{str(accession).replace('-', '')}"
+    url = f"{base}/{primary_document}" if primary_document else base
+    source = Source.query.filter_by(
+        company_id=company.id,
+        provider="SEC",
+        source_type="FILING_XBRL_EXTENSION",
+        accession_no=str(accession or ""),
+    ).first()
+    if source is None:
+        source = Source(
+            company_id=company.id,
+            provider="SEC",
+            source_type="FILING_XBRL_EXTENSION",
+            title=f"{form} filing-level XBRL extension fallback",
+            url=url,
+            accession_no=str(accession or ""),
+            published_at=datetime.fromisoformat(str(filed)[:10]) if filed else None,
+            retrieved_at=utcnow(),
+            meta={"form": form, "cik": cik, "fallback_only": True},
+        )
+        db.session.add(source)
+        db.session.flush()
+    else:
+        source.url = source.url or url
+        source.retrieved_at = utcnow()
+    return source
+
+
+def _extension_fallback_needed(
+    duration: dict[str, dict],
+    instant: dict[str, dict],
+    companyfacts: dict,
+    fiscal_year_end: str,
+) -> bool:
+    years = sorted(set().union(*(set(rows) for rows in duration.values()), *(set(rows) for rows in instant.values())))
+    if not years:
+        return True
+    latest = years[-1]
+    operating_company_evidence = (
+        duration.get("gross_profit", {}).get(latest) is not None
+        or duration.get("cogs", {}).get(latest) is not None
+    )
+    if duration.get("revenue", {}).get(latest) is None:
+        return True
+    if operating_company_evidence and duration.get("operating_income", {}).get(latest) is None:
+        return True
+    if operating_company_evidence and instant.get("inventory", {}).get(latest) is None:
+        return True
+
+    # If Inventory is applicable annually but absent from the most recent stored
+    # quarter, a custom filing extension may be the missing current fact.
+    if any(instant.get("inventory", {}).values()):
+        quarter_inventory = _quarter_instants(
+            companyfacts, INSTANT_TAGS["inventory"], fiscal_year_end=fiscal_year_end
+        )
+        quarter_revenue_direct, quarter_revenue_ytd = _quarter_duration_sources(
+            companyfacts, DURATION_TAGS["revenue"], fiscal_year_end
+        )
+        if (quarter_revenue_direct or quarter_revenue_ytd) and not quarter_inventory:
+            return True
+    return False
+
+
+def _augment_companyfacts_with_recent_filing_extensions(
+    company: Company,
+    companyfacts: dict,
+    meta: dict[str, str],
+    user_agent: str,
+    *,
+    max_filings: int = 5,
+) -> dict[str, Any]:
+    """Add exact-label custom filing facts only when standard Companyfacts is thin."""
+    try:
+        submissions = _json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", user_agent)
+    except Exception:
+        return {"attempted": True, "filings_scanned": 0, "concepts_added": 0, "facts_added": 0}
+
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    accns = recent.get("accessionNumber") or []
+    filed = recent.get("filingDate") or []
+    docs = recent.get("primaryDocument") or []
+
+    selected: list[int] = []
+    k_count = 0
+    q_count = 0
+    for idx, form in enumerate(forms):
+        upper = str(form or "").upper()
+        if upper in {"10-K", "10-K/A"} and k_count < 1:
+            selected.append(idx); k_count += 1
+        elif upper in {"10-Q", "10-Q/A"} and q_count < 4:
+            selected.append(idx); q_count += 1
+        if len(selected) >= max_filings:
+            break
+
+    label_aliases = {field: set(aliases) for field, aliases in SEMANTIC_LABEL_ALIASES.items()}
+    label_aliases["_sga_candidate"] = set(SGA_LABEL_ALIASES)
+    extension_namespace = (companyfacts.setdefault("facts", {})).setdefault("filing-extension", {})
+    filings_scanned = concepts_added = facts_added = 0
+
+    for idx in selected:
+        form = str(forms[idx] if idx < len(forms) else "")
+        accession = str(accns[idx] if idx < len(accns) else "")
+        primary = str(docs[idx] if idx < len(docs) else "")
+        filed_at = str(filed[idx] if idx < len(filed) else "")
+        if not accession:
+            continue
+        concepts = extract_extension_concepts(
+            cik=str(meta["cik"]),
+            accession=accession,
+            primary_document=primary,
+            form=form,
+            filed=filed_at,
+            user_agent=user_agent,
+            label_aliases=label_aliases,
+        )
+        filings_scanned += 1
+        if not concepts:
+            continue
+        filing_source = _filing_extension_source(
+            company,
+            cik=str(meta["cik"]),
+            accession=accession,
+            form=form,
+            filed=filed_at,
+            primary_document=primary,
+        )
+        for tag, node in concepts.items():
+            target = extension_namespace.setdefault(
+                tag,
+                {"label": node.get("label") or tag, "units": defaultdict(list)},
+            )
+            if not isinstance(target.get("units"), defaultdict):
+                target["units"] = defaultdict(list, target.get("units") or {})
+            before = sum(len(rows) for rows in target["units"].values())
+            for unit, rows in (node.get("units") or {}).items():
+                for raw in rows:
+                    record = dict(raw)
+                    record["_mf_source_id"] = filing_source.id
+                    record["_mf_derived_method"] = "FILING_EXTENSION_LABEL_FALLBACK"
+                    target["units"][unit].append(record)
+            after = sum(len(rows) for rows in target["units"].values())
+            if before == 0 and after > 0:
+                concepts_added += 1
+            facts_added += max(0, after - before)
+
+    for node in extension_namespace.values():
+        if isinstance(node.get("units"), defaultdict):
+            node["units"] = dict(node["units"])
+    return {
+        "attempted": True,
+        "filings_scanned": filings_scanned,
+        "concepts_added": concepts_added,
+        "facts_added": facts_added,
+    }
 
 
 def _facts(companyfacts: dict, namespace: str, tag: str) -> list[dict[str, Any]]:
@@ -820,7 +991,7 @@ def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) ->
         return
     db.session.add(RawFinancialFact(
         financial_period_id=period.id,
-        source_id=source.id,
+        source_id=int(record.get("_mf_source_id") or source.id),
         taxonomy=str(record.get("namespace") or "us-gaap"),
         tag=str(record.get("tag") or ""),
         unit=str(record.get("unit") or ""),
@@ -1721,7 +1892,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                     "tag": (record or {}).get("tag"), "accession": (record or {}).get("accn"),
                     "filed": (record or {}).get("filed"), "source_id": source.id,
                     "namespace": (record or {}).get("_mf_namespace") or (record or {}).get("namespace") or "us-gaap",
-                    "method": "SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method"),
+                    "method": (record or {}).get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method")),
                 }
             elif getattr(normalized, field, None) is not None:
                 _mark_last_good_retained(source_map, field)
@@ -1734,7 +1905,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
                     "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
-                    "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT",
+                    "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT"),
                 }
             elif getattr(normalized, field, None) is not None:
                 _mark_last_good_retained(source_map, field)
