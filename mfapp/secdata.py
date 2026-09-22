@@ -16,6 +16,7 @@ from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_T
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
+SEC_NORMALIZER_VERSION = "0.3.3"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
@@ -525,6 +526,7 @@ def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> S
             "sic": meta.get("sic") or "",
             "sic_description": meta.get("sic_description") or "",
             "user_agent_present": bool(user_agent),
+            "normalizer_version": SEC_NORMALIZER_VERSION,
         },
     )
     db.session.add(source)
@@ -1298,6 +1300,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "cik": meta["cik"], "name": company.display_name,
         "years": years[-16:], "quarter_periods": [f"FY{fy}-{fp}" for fy, fp in quarter_keys[-24:]],
         "source_id": source.id,
+        "normalizer_version": SEC_NORMALIZER_VERSION,
         "fundamental_fallback": fallback,
         "annual_history": annual_history,
     }
