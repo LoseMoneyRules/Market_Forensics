@@ -18,7 +18,7 @@ from .sec_inline_facts import extract_extension_concepts
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.4-data-surface-integrity-r1"
+SEC_NORMALIZER_VERSION = "0.3.4-data-surface-integrity-r2"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
@@ -63,7 +63,7 @@ SEMANTIC_LABEL_ALIASES = {
     "diluted_shares": {"weighted average diluted shares outstanding", "weighted average number of diluted shares outstanding"},
     "cash": {"cash and cash equivalents", "cash and equivalents"},
     "receivables": {"accounts receivable net", "accounts receivable"},
-    "inventory": {"inventories", "inventory", "inventories net", "total inventories"},
+    "inventory": {"inventories", "inventory", "inventory net", "inventories net", "total inventory", "total inventories"},
     "payables": {"accounts payable", "accounts payable current"},
     "assets": {"total assets"},
     "liabilities": {"total liabilities"},
@@ -1090,6 +1090,66 @@ def _supersede_period_identity(period: FinancialPeriod) -> None:
         normalized.quality = quality
 
 
+def _merge_same_period_evidence(
+    target: FinancialPeriod,
+    family: list[FinancialPeriod],
+    *,
+    period_type: str,
+    fiscal_year: int,
+) -> dict[str, int]:
+    """Consolidate complementary facts from same-end audit siblings.
+
+    Parser migrations may leave one identity with the income statement and another
+    with balance-sheet facts such as Inventory. The represented economic date is
+    identical, so preserving those non-conflicting facts on the canonical row is
+    lossless. Values are never copied across different end dates.
+    """
+    target_row = NormalizedFinancial.query.filter_by(financial_period_id=target.id).first()
+    if target_row is None:
+        target_row = NormalizedFinancial(financial_period_id=target.id)
+        db.session.add(target_row)
+
+    source_map = dict(target_row.source_map or {})
+    quality = dict(target_row.quality or {})
+    recovered: dict[str, int] = {}
+    siblings = sorted(
+        (row for row in family if row.id != target.id),
+        key=lambda row: _period_evidence_score(row, period_type=period_type, fiscal_year=fiscal_year),
+        reverse=True,
+    )
+    for sibling in siblings:
+        sibling_row = NormalizedFinancial.query.filter_by(financial_period_id=sibling.id).first()
+        if sibling_row is None:
+            continue
+        sibling_sources = dict(sibling_row.source_map or {})
+        sibling_quality = dict(sibling_row.quality or {})
+        for field in _PERIOD_RECOVERY_FIELDS:
+            if getattr(target_row, field, None) is not None:
+                continue
+            value = getattr(sibling_row, field, None)
+            if value is None:
+                continue
+            setattr(target_row, field, value)
+            recovered[field] = int(sibling.id)
+            ref = sibling_sources.get(field)
+            if isinstance(ref, dict):
+                copied = dict(ref)
+                copied["same_period_recovered_from_period_id"] = int(sibling.id)
+                source_map[field] = copied
+            elif ref:
+                source_map[field] = ref
+        for key, value in sibling_quality.items():
+            if key not in quality or quality.get(key) in (None, "", {}, []):
+                quality[key] = value
+
+    if recovered:
+        quality["same_period_recovered_fields"] = recovered
+        quality["same_period_recovery"] = "FIELD_LEVEL_SAME_END_DATE"
+    target_row.source_map = source_map
+    target_row.quality = quality
+    return recovered
+
+
 def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal_year: int, end_date: date, anchor: dict[str, Any] | None) -> FinancialPeriod:
     family = _period_family_query(company.id, end_date, period_type).order_by(FinancialPeriod.id.desc()).all()
 
@@ -1109,6 +1169,13 @@ def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal
     else:
         period.period_type = period_type
         period.fiscal_year = fiscal_year
+
+    # Before quarantining duplicate identities, permanently recover any
+    # complementary same-end facts onto the canonical row. This keeps downstream
+    # calculations (not only the UI) on one complete normalized basis.
+    _merge_same_period_evidence(
+        period, family, period_type=period_type, fiscal_year=fiscal_year
+    )
 
     for sibling in family:
         if sibling.id != period.id and not str(sibling.period_type or "").startswith(("SUPERSEDED_", "SUP_")):
