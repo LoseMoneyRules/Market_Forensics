@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.2  
+**Current product line:** 0.3.3  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -93,6 +93,10 @@ Exact accounting bridges are allowed when mathematically deterministic, for exam
 - Q4 = FY − Q1 − Q2 − Q3 only when the components are compatible and complete.
 
 Model priors may be used as explicit assumptions, but they are not facts and must never be presented as if they came from a filing.
+
+0.3.3 adds a permanent **financial-basis recovery rule**. SEC Companyfacts periods are classified from the represented fact end date plus the issuer fiscal year-end; a later filing's `fp` marker may not relabel an older comparative fact. A TTM basis is usable only when four consecutive stored quarters contain a resolved Revenue anchor. If the quarter shells are structurally consecutive but Revenue is incomplete, TTM is withheld and the latest valid filed FY remains the visible current basis while the data gap stays explicit.
+
+A provider refresh may not erase a previously sourced value for the **same financial period** merely because the current provider response fails to resolve that field. Market Forensics retains that last-good same-period fact with explicit `LAST_GOOD_RETAINED` provenance and marks the provider refresh incomplete. This is not permission to carry an old value into a new period: missing new-period evidence stays missing.
 
 ### 3.3 Reported accounting is not automatically economic reality
 
@@ -482,6 +486,10 @@ Production normally runs this from cron, with a browser-triggered detached fallb
 Duplicate active jobs are compacted rather than multiplied.
 
 Dead RUNNING leases are recovered so one crashed worker cannot block the queue forever.
+
+A failed execution is transaction-safe: uncommitted business/data writes from that attempt are rolled back before the durable Job / RefreshRun / CalculationRun failure record is written. CONTROL may dismiss FAILED/CANCELLED rows from the operational queue without deleting the job or its audit/execution history.
+
+**Data ingestion is a subset of background work, not a second executor.** SEC, quotes, price history and FINRA are ingestion jobs; recalculation, validation, Discovery, management scans and Portfolio analytics are other background jobs on the same queue/executor. Settings therefore presents one Data Operations view with queue state plus execution history.
 
 ### 4.4 Research cache
 
