@@ -37,8 +37,10 @@ jobs:
           how = Path("docs/HOW_MARKET_FORENSICS_WORKS.md").read_text(encoding="utf-8")
           state = re.search(r"^\*\*State-Version:\s*([^*\n]+?)\*\*\s*$", current, re.M)
           product = re.search(r"^\*\*Current product line:\*\*\s*([^\n]+?)\s*$", how, re.M)
+          production = re.findall(r"^\*\*Production:\*\*.*$", current, re.M)
           assert state and state.group(1).strip() == version, "VERSION != CURRENT_STATE State-Version"
           assert product and product.group(1).strip() == version, "VERSION != HOW current product line"
+          assert len(production) == 1, f"expected exactly one top-level Production line, found {len(production)}"
           print("release metadata coherent:", version)
           PY
           echo "MF_DEPLOY_SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
