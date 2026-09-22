@@ -98,7 +98,9 @@ Model priors may be used as explicit assumptions, but they are not facts and mus
 
 A provider refresh may not erase a previously sourced value for the **same financial period** merely because the current provider response fails to resolve that field. Market Forensics retains that last-good same-period fact with explicit `LAST_GOOD_RETAINED` provenance and marks the provider refresh incomplete. This is not permission to carry an old value into a new period: missing new-period evidence stays missing.
 
-The 0.3.3 **financial-completeness ladder is issuer-generic and field-generic**. Resolution order is: canonical US-GAAP concept → exact consolidated statement-label fallback → deterministic/reconciled accounting algebra → exact FY-end-to-synthetic-Q4 instant bridge → configured secondary-provider missing-field fallback. No ticker may have a symbol-specific parser exception.
+The 0.3.3 **financial-completeness ladder is issuer-generic and field-generic**. Resolution order is: canonical SEC Companyfacts concept → exact consolidated statement-label fallback → deterministic/reconciled accounting algebra → bounded filing-level iXBRL extension fallback when Companyfacts remains incomplete → exact FY-end-to-synthetic-Q4 instant bridge → configured secondary-provider missing-field fallback. No ticker may have a symbol-specific parser exception.
+
+SEC documents that Companyfacts aggregates standard-taxonomy facts applying to the whole filing entity. Therefore MF must not pretend that searching Companyfacts can recover a true issuer extension concept. When the standard/algebra ladder still leaves an applicable field unresolved, the background SEC ingest may inspect a bounded set of recent 10-K/10-Q primary filings, read numeric iXBRL extension facts, reject dimensional/segment/scenario contexts, map only exact statement labels, and feed those facts back through the same normalizer with filing-level Source/Provenance. This fallback is never executed during normal page rendering.
 
 Operating profit is a concrete example. If a filer supplies Gross Profit and a true Operating Expenses total, Operating Income may be derived exactly. If it supplies only Selling, General & Administrative expense, MF may treat SGA as the full operating-expense layer **only when the resulting operating profit independently reconciles to pre-tax income through reported non-operating evidence**. Otherwise the field stays unresolved; SGA is never blindly assumed to equal all operating expenses. This protects R&D-heavy and other multi-expense companies while resolving retail/manufacturing presentations such as Gross Profit → total S&A → pre-tax income.
 
@@ -498,6 +500,8 @@ Dead RUNNING leases are recovered so one crashed worker cannot block the queue f
 A failed execution is transaction-safe: uncommitted business/data writes from that attempt are rolled back before the durable Job / RefreshRun / CalculationRun failure record is written. CONTROL may dismiss FAILED/CANCELLED rows from the operational queue without deleting the job or its audit/execution history.
 
 **Data ingestion is a subset of background work, not a second executor.** SEC, quotes, price history and FINRA are ingestion jobs; recalculation, validation, Discovery, management scans and Portfolio analytics are other background jobs on the same queue/executor. Settings therefore presents one Data Operations view with queue state plus execution history.
+
+`Refresh stale` treats an obsolete SEC financial normalizer revision as stale evidence even when the last SEC job ran recently. This is the supported bulk-migration path after a normalizer correction: all affected Coverage can be re-ingested and recalculated without opening each ticker individually.
 
 ### 4.4 Research cache
 
