@@ -618,12 +618,12 @@
       </div>
       <p class="muted tape-source-note">
         Method {{ tm.flow_method or '—' }} · flow confidence {{ '%.0f'|format(tm.flow_confidence_pct) if tm.flow_confidence_pct is not none else '—' }}%
-        · sampled volume {{ '%.1f'|format(tm.flow_sample_volume_pct) if tm.flow_sample_volume_pct is not none else '—' }}% of same-feed daily volume
-        · direction-eligible {{ '%.1f'|format(tm.flow_eligible_volume_pct) if tm.flow_eligible_volume_pct is not none else '—' }}%
+        · sampled volume {{ '%.1f'|format(tm.get('flow_sample_volume_pct')) if tm.get('flow_sample_volume_pct') is not none else '—' }}% of same-feed daily volume
+        · direction-eligible {{ '%.1f'|format(tm.get('flow_eligible_volume_pct')) if tm.get('flow_eligible_volume_pct') is not none else '—' }}%
         · Large USD {{ tm.large_threshold|mf_num(0) if tm.large_threshold is not none else '—' }}
         · Whale USD {{ tm.whale_threshold|mf_num(0) if tm.whale_threshold is not none else '—' }}.
-        {% if tm.flow_coverage_status == 'SAMPLED' %}Displayed notionals are sampled observations, not full-day totals; confidence is coverage-weighted.{% elif tm.flow_coverage_status == 'COMPLETE' %}Complete regular-session observation.{% endif %}
-        {% if tm.flow_decision_usable %} This observation may contribute to Tape scoring.{% elif tm.flow_observation_usable %} This observation is visible for context but excluded from Tape rank/regime because coverage is insufficient.{% endif %}
+        {% if tm.get('flow_coverage_status') == 'SAMPLED' %}Displayed notionals are sampled observations, not full-day totals; confidence is coverage-weighted.{% elif tm.get('flow_coverage_status') == 'COMPLETE' %}Complete regular-session observation.{% endif %}
+        {% if tm.get('flow_decision_usable') %} This observation may contribute to Tape scoring.{% elif tm.get('flow_observation_usable') %} This observation is visible for context but excluded from Tape rank/regime because coverage is insufficient.{% endif %}
       </p>
     </div>
 
