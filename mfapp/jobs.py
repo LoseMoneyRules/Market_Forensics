@@ -12,7 +12,7 @@ from typing import Any
 
 from .autofill import prefill_coverage
 from .calculations import CALCULATION_VERSION, build_cash_flow, build_income_statement_flow, calculate_valuation, financial_metrics
-from .current_financials import canonical_annual_pairs, current_row
+from .current_financials import annual_rows, current_row
 from .core_models import (
     Alert, CalculationRun, Company, Coverage, DataQualityIssue, Event, FinancialFlow,
     FinancialPeriod, HistoricalPrice, Job, NormalizedFinancial, RefreshRun, Security, Source,
@@ -223,24 +223,33 @@ def recover_stale_running_jobs(user_id: int | None = None, stale_after_minutes: 
     return recovered
 
 
-def _flow_row(period: FinancialPeriod, row: NormalizedFinancial) -> dict[str, Any]:
+def _flow_row(period: FinancialPeriod, row: NormalizedFinancial | dict[str, Any]) -> dict[str, Any]:
+    get = row.get if isinstance(row, dict) else lambda key: getattr(row, key, None)
     return {
         "period_label": f"FY{period.fiscal_year}", "fiscal_year": period.fiscal_year,
-        "revenue": row.revenue, "cogs": row.cogs, "gross_profit": row.gross_profit,
-        "operating_expenses": row.operating_expenses, "operating_income": row.operating_income,
-        "pretax_income": row.pretax_income, "income_tax": row.income_tax, "net_income": row.net_income,
-        "cfo": row.cfo, "capex": row.capex, "fcf": row.fcf, "buybacks": row.buybacks, "dividends": row.dividends,
+        "revenue": get("revenue"), "cogs": get("cogs"), "gross_profit": get("gross_profit"),
+        "operating_expenses": get("operating_expenses"), "operating_income": get("operating_income"),
+        "pretax_income": get("pretax_income"), "income_tax": get("income_tax"), "net_income": get("net_income"),
+        "cfo": get("cfo"), "capex": get("capex"), "fcf": get("fcf"), "buybacks": get("buybacks"), "dividends": get("dividends"),
     }
 
 
 def recalculate_company(company_id: int, coverage_id: int | None = None) -> dict[str, Any]:
-    # Recalculate only canonical FY identities. Superseded/legacy duplicates stay
-    # auditable but must never generate flows, metrics or valuation inputs.
-    pairs = list(reversed(canonical_annual_pairs(company_id)))
+    # One canonical read contract drives UI, flows and cache materialization.
+    # Same-end audit siblings are fused field-by-field by annual_rows; superseded
+    # identities remain auditable but cannot create a second economic period.
+    canonical_rows = list(reversed(annual_rows(company_id, 100)))
     previous = None; metrics_out = []; calculated = 0
-    for period, row in pairs:
+    for row in canonical_rows:
+        period = db.session.get(FinancialPeriod, int(row["period_id"]))
+        if period is None:
+            continue
         flow_row = _flow_row(period, row)
-        enriched = flow_row | {"receivables": row.receivables, "inventory": row.inventory, "payables": row.payables, "cash": row.cash, "debt": row.debt}
+        enriched = flow_row | {
+            "receivables": row.get("receivables"), "inventory": row.get("inventory"),
+            "payables": row.get("payables"), "cash": row.get("cash"), "debt": row.get("debt"),
+            "quality": row.get("quality") or {},
+        }
         metrics_out.append({"fiscal_year": period.fiscal_year, "metrics": financial_metrics(enriched, previous)}); previous = enriched
         for flow_type, payload in (("INCOME_STATEMENT", build_income_statement_flow(flow_row)), ("CASH_FLOW", build_cash_flow(flow_row))):
             flow = FinancialFlow.query.filter_by(financial_period_id=period.id, flow_type=flow_type, calculation_version=CALCULATION_VERSION).first()
