@@ -138,6 +138,12 @@ def test_036_positioning_refresh_repairs_price_spine_and_tape_get_stays_db_only(
     assert "provider_status" not in display_source
 
 
+def test_036_recovered_financial_source_label_remains_visible():
+    template = Path("mfapp/templates/company_section.html").read_text()
+    assert "value.get('source') or value.get('provider')" in template
+    assert "SAME_PERIOD_EVIDENCE_COALESCE" in Path("mfapp/current_financials.py").read_text()
+
+
 def test_036_release_metadata_is_single_current_version():
     version = Path("VERSION").read_text().strip()
     current = Path("docs/CURRENT_STATE.md").read_text()
