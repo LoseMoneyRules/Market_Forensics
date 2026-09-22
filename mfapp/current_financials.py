@@ -64,11 +64,18 @@ def _period_family_filter(period_types: tuple[str, ...]):
     return or_(*clauses)
 
 
-def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, annual: bool) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
-    # Read every stored identity in the represented-period family, including
-    # audit-preserved SUPERSEDED/SUP rows. Production can contain a rich legacy
-    # row plus a sparse active shell after an older parser revision. Live reads
-    # must choose the richest factual evidence, not blindly trust active/newest id.
+def _canonical_period_groups(
+    company_id: int,
+    period_types: tuple[str, ...],
+) -> list[list[tuple[FinancialPeriod, NormalizedFinancial]]]:
+    """Return every stored identity grouped by represented economic end date.
+
+    A period may legitimately have more than one stored identity after parser
+    migrations or audit-preserving supersession. Those identities are evidence
+    siblings, not competing economic periods. Keeping the group intact lets the
+    read layer recover complementary facts field-by-field without ever carrying
+    values across different period ends.
+    """
     pairs = (
         db.session.query(FinancialPeriod, NormalizedFinancial)
         .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
@@ -76,16 +83,37 @@ def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, a
         .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
         .all()
     )
-    by_end: dict[date, tuple[FinancialPeriod, NormalizedFinancial]] = {}
+    by_end: dict[date, list[tuple[FinancialPeriod, NormalizedFinancial]]] = {}
     for period, normalized in pairs:
-        current = by_end.get(period.end_date)
-        if current is None or _period_candidate_score(period, normalized, annual=annual) > _period_candidate_score(current[0], current[1], annual=annual):
-            by_end[period.end_date] = (period, normalized)
+        by_end.setdefault(period.end_date, []).append((period, normalized))
+    return [
+        by_end[end_date]
+        for end_date in sorted(by_end, reverse=True)
+    ]
+
+
+def _rank_period_group(
+    group: list[tuple[FinancialPeriod, NormalizedFinancial]],
+    *,
+    annual: bool,
+) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
     return sorted(
-        by_end.values(),
-        key=lambda pair: (pair[0].end_date, pair[0].filed_at or date.min, pair[0].id),
+        group,
+        key=lambda pair: _period_candidate_score(pair[0], pair[1], annual=annual),
         reverse=True,
     )
+
+
+def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, annual: bool) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+    # APIs that need a physical FinancialPeriod still receive one representative
+    # identity per economic end date. Data-surface reads use the fused row helper
+    # below so complementary same-period facts are not discarded.
+    out: list[tuple[FinancialPeriod, NormalizedFinancial]] = []
+    for group in _canonical_period_groups(company_id, period_types):
+        ranked = _rank_period_group(group, annual=annual)
+        if ranked:
+            out.append(ranked[0])
+    return out
 
 
 def canonical_annual_pairs(company_id: int) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
@@ -121,14 +149,80 @@ def _period_row(period: FinancialPeriod, normalized: NormalizedFinancial) -> dic
         "source_map": normalized.source_map or {},
         "quality": quality,
     }
-    for field in FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",):
+    for field in NORMALIZED_FIELDS:
         row[field] = n(getattr(normalized, field, None))
     return row
 
 
+def _fused_period_row(
+    group: list[tuple[FinancialPeriod, NormalizedFinancial]],
+    *,
+    annual: bool,
+) -> dict[str, Any]:
+    """Build one canonical display row from same-period evidence siblings.
+
+    The highest-ranked identity owns period metadata. Each financial field,
+    however, comes from the highest-ranked sibling that actually contains that
+    field. Provenance follows the selected value. This is deliberately limited to
+    one represented end date: no prior-period value is ever carried forward.
+    """
+    ranked = _rank_period_group(group, annual=annual)
+    period, normalized = ranked[0]
+    row = _period_row(period, normalized)
+    row["source_map"] = {}
+    quality: dict[str, Any] = {}
+    for candidate_period, candidate_normalized in ranked:
+        candidate_quality = dict(candidate_normalized.quality or {})
+        for key, value in candidate_quality.items():
+            if key not in quality or quality.get(key) in (None, "", {}, []):
+                quality[key] = value
+    logical_type = _logical_period_type(period.period_type)
+    if logical_type != str(period.period_type or ""):
+        quality.setdefault("canonical_read_recovered_identity", str(period.period_type or ""))
+
+    fused_fields: dict[str, int] = {}
+    contributor_ids: set[int] = {int(period.id)}
+    for field in NORMALIZED_FIELDS:
+        row[field] = None
+        for candidate_period, candidate_normalized in ranked:
+            value = n(getattr(candidate_normalized, field, None))
+            if value is None:
+                continue
+            row[field] = value
+            candidate_source = dict(candidate_normalized.source_map or {}).get(field)
+            if candidate_source:
+                if isinstance(candidate_source, dict):
+                    source = dict(candidate_source)
+                    if candidate_period.id != period.id:
+                        source["canonical_read_period_id"] = int(candidate_period.id)
+                    row["source_map"][field] = source
+                else:
+                    row["source_map"][field] = candidate_source
+            if candidate_period.id != period.id:
+                contributor_ids.add(int(candidate_period.id))
+                fused_fields[field] = int(candidate_period.id)
+            break
+
+    if fused_fields:
+        quality["canonical_read_fused_fields"] = fused_fields
+        quality["canonical_read_fused_period_ids"] = sorted(contributor_ids)
+    row["quality"] = quality
+    return row
+
+
+def _fused_period_rows(
+    company_id: int,
+    period_types: tuple[str, ...],
+    *,
+    annual: bool,
+    limit: int,
+) -> list[dict[str, Any]]:
+    groups = _canonical_period_groups(company_id, period_types)[:max(1, limit)]
+    return [_fused_period_row(group, annual=annual) for group in groups if group]
+
+
 def annual_rows(company_id: int, limit: int = 15) -> list[dict[str, Any]]:
-    pairs = canonical_annual_pairs(company_id)[:max(1, limit)]
-    rows = [_period_row(period, normalized) for period, normalized in pairs]
+    rows = _fused_period_rows(company_id, ("FY",), annual=True, limit=limit)
     chronological = list(reversed(rows))
     previous: dict[str, Any] = {}
     for row in chronological:
@@ -238,8 +332,12 @@ def annual_history_grid(
 
 
 def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
-    pairs = canonical_quarter_pairs(company_id)[:max(8, limit)]
-    rows = [_period_row(period, normalized) for period, normalized in pairs]
+    rows = _fused_period_rows(
+        company_id,
+        ("Q1", "Q2", "Q3", "Q4"),
+        annual=False,
+        limit=max(8, limit),
+    )
 
     lookup = {(row.get("fiscal_year"), row.get("period_type")): row for row in rows}
     for row in rows:
