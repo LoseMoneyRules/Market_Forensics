@@ -219,3 +219,87 @@ def test_032_integrity_freshness_shield_widens_simulation(monkeypatch):
     )
     assert result["monte_carlo"]["freshness_scale"] == pytest.approx(1.25)
     assert any("DATA DESYNCHRONIZATION SHIELD" in warning for warning in result["warnings"])
+
+
+
+def test_032_integrity_cash_flow_variants_do_not_count_as_two_independent_methods():
+    metrics = _metrics()
+    assumptions = {
+        "growth": .04,
+        "net_margin": .05,
+        "fcf_margin": .07,
+        "ebitda_margin": .11,
+        "share_growth": .01,
+        "target_fcf_yield": .08,
+        "equity_discount_rate": .10,
+        "terminal_growth": .025,
+        "scenario_multiplier": 1.0,
+        "liquidation_floor": None,
+    }
+    row = scenario_value(
+        metrics,
+        assumptions,
+        {"fcf_yield": 1.0, "dcf": 1.0},
+        5,
+        allow_reference_fallback=False,
+    )
+    assert row["method_count"] == 2
+    assert row["independent_method_count"] == 1
+    assert row["independent_method_families"] == ["CASH_FLOW"]
+    assert row["quality"] == "INTRINSIC_SINGLE_METHOD"
+
+
+def test_032_integrity_cvs_like_revenue_scale_cannot_manufacture_triple_digit_value(monkeypatch):
+    monkeypatch.setattr(ve, "MONTE_CARLO_DRAWS", 600)
+    metrics = _metrics(
+        revenue=380_000.0,
+        gross_profit=55_000.0,
+        operating_income=13_300.0,
+        net_income=5_700.0,
+        fcf=11_400.0,
+        ebitda=20_000.0,
+        net_debt=80_000.0,
+        shares=1_300.0,
+        revenue_growth=.04,
+        gross_margin=.145,
+        net_margin=.015,
+        operating_margin=.035,
+        fcf_margin=.03,
+        ebitda_margin=.0526,
+        capex_to_revenue=.02,
+        share_growth_rate=0.0,
+        net_debt_to_ebitda=4.0,
+    )
+    metrics["history_stats"]["revenue_growth"] = {"sample_size": 6, "p10": -.02, "median": .03, "p90": .07, "std": .035}
+    metrics["history_stats"]["net_margin"] = {"sample_size": 6, "p10": .01, "median": .016, "p90": .022, "std": .005}
+    metrics["history_stats"]["fcf_margin"] = {"sample_size": 6, "p10": .02, "median": .03, "p90": .04, "std": .008}
+    metrics["history_stats"]["operating_margin"] = {"sample_size": 6, "p10": .02, "median": .035, "p90": .05, "std": .01}
+    metrics["history_stats"]["ebitda_margin"] = {"sample_size": 6, "p10": .04, "median": .055, "p90": .07, "std": .01}
+    calibration = {
+        "source": "COMPANY_POINT_IN_TIME_5Y_10Y",
+        "sample_size": 6,
+        "pe": (7.0, 10.0, 14.0),
+        "p_sales": (.15, .30, .55),
+        "ev_sales": (.35, .55, .85),
+        "ev_ebitda": (4.5, 7.0, 10.0),
+        "fcf_yield": (.12, .09, .06),
+        "p_b": (1.0, 1.5, 2.0),
+        "method_stats": {},
+    }
+    defaults = default_cases(metrics, "Generic", calibration)
+    assert defaults["weights"]["p_sales"] == 0.0
+    assert defaults["weights"]["ev_sales"] == 0.0
+    result = evaluate(
+        metrics,
+        {name: defaults[name] for name in ("BEAR", "BASE", "BULL")},
+        defaults["weights"],
+        defaults["horizon_years"],
+        current_price=87.59,
+        allow_reference_fallback=False,
+    )
+    bear = result["scenarios"]["BEAR"]["fair_value"]
+    base = result["scenarios"]["BASE"]["fair_value"]
+    bull = result["scenarios"]["BULL"]["fair_value"]
+    assert bear <= base <= bull
+    assert base < 160.0
+    assert result["scenarios"]["BASE"]["independent_method_count"] >= 2
