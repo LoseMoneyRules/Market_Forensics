@@ -114,6 +114,11 @@ Synthetic Q4 has a separate instant-field rule: FY-end Inventory, Cash, Receivab
 
 After fundamentals ingestion, MF performs an applicability-aware field-integrity audit. A field that was historically applicable (for example Inventory) or an operating-profit field supported by the issuer's statement structure may not silently disappear from the current basis: an explicit `MISSING_EXPECTED_*` data-quality issue is opened until the evidence is resolved.
 
+
+0.3.3 adds a permanent **canonical period-identity rule**. Exactly one active FY identity and one active fiscal-quarter identity may represent a company/end-date within each period family. Historical parser mistakes or migrations may leave duplicate database rows for audit, raw facts and provenance, but those rows are not allowed to compete in live Research. The canonical read model collapses same-end-date duplicates by correct represented fiscal identity, normalized field richness and source coverage; a subsequent SEC ingest marks stale siblings as `SUPERSEDED_*` instead of deleting their history. No downstream analytical surface may bypass this canonical read model merely by sorting `FinancialPeriod.id`.
+
+This canonical period rule is end-to-end: Fundamentals, Current Financial Anatomy, Current Strip, Expectations inputs, Financial Flows, Research readiness/basis, Valuation/forensics, Reports/Publications and recalculation jobs consume the same canonical FY/Q evidence. A duplicate legacy row may remain visible in Audit, but it may not create or remove a fiscal year, hide Inventory/Operating Income/Revenue, generate duplicate flows, or affect fair value / validation inputs.
+
 ### 3.3 Reported accounting is not automatically economic reality
 
 The filed statement is always preserved. Market Forensics may add an auditable **Economic Reality** interpretation layer, but it must never silently rewrite the filing.
@@ -1380,6 +1385,9 @@ Negative exceptions remain negative rather than being cosmetically converted int
 Tape is market-plumbing context, not intrinsic value and not beneficial-owner identification.
 
 0.2.9 restores the accepted Local Tape Engine as **Tape Engine V2**, implemented as a web-native background/materialized capability.
+
+
+**Tape flow integrity is fail-closed.** Large / Very Large / Whale values are dollar-notional trade-size proxies, not share counts and never beneficial-owner identity. Directional print-flow may enter Tape rank/regime only when the stored observation uses the current flow-method version, covers the regular U.S. equity session, comes from consolidated SIP, completes the bounded trade window, filters non-price-forming/out-of-sequence conditions, and passes a same-feed daily-volume/notional sanity check. Partial samples, IEX-only samples, legacy method rows, missing reference volume, or observations whose sampled volume/notional is inconsistent with the daily bar remain auditable but are withheld from Tape scoring. A method-version change invalidates the materialized Research Tape cache automatically.
 
 Inputs can include:
 
