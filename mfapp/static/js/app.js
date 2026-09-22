@@ -637,7 +637,7 @@
   if (realRole !== 'CONTROL' || effectiveRole !== 'CONTROL' || !csrf) return;
   const autoRefresh = document.querySelector('meta[name="mf-auto-refresh"]')?.content === '1';
   const pumpLockKey='mf-job-pump-kick-at';
-  let busy=false, pumpBusy=false, stopped=false, timer=null, baselineFinished=null, dirty=false, refreshOffered=false;
+  let busy=false, pumpBusy=false, stopped=false, timer=null, baselineFinished=null, baselineReady=false, dirty=false, refreshOffered=false, refreshPending=false;
 
   document.addEventListener('input',(event)=>{
     const target=event.target;
@@ -697,16 +697,24 @@
   }
   function maybeRefresh(state){
     const finished=state?.last_finished_id??null;
-    if(baselineFinished===null){baselineFinished=finished;return false}
-    if(finished===null||finished===baselineFinished)return false;
-    baselineFinished=finished;
-    if(!autoRefresh)return false;
+    if(!baselineReady){baselineFinished=finished;baselineReady=true;return false}
+    if(finished!==null&&finished!==baselineFinished){
+      baselineFinished=finished;
+      refreshPending=true;
+    }
+    if(!autoRefresh||!refreshPending)return false;
+    const active=Number(state?.running||0)+Number(state?.queued||0);
+    if(active>0)return false;
     if(ticker) readQuote();
+    if(!dirty){
+      refreshPending=false;
+      window.location.reload();
+      return true;
+    }
+    refreshPending=false;
     refreshOffered=true;
     if(workerChip){
-      workerChip.title=dirty
-        ? 'Background data finished. Unsaved edits are protected; click when ready to refresh.'
-        : 'Background data finished. Click when you want to refresh the full research surface.';
+      workerChip.title='Background data finished. Unsaved edits are protected; click when ready to refresh.';
       workerChip.style.cursor='pointer';
       workerChip.onclick=()=>window.location.reload();
     }
