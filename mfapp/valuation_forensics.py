@@ -15,8 +15,11 @@ from .extensions import db
 from .historical_data import preferred_provider, price_on_or_after
 from .macro_context import macro_context
 from .research_basis import latest_financial_basis
+from .models import UserPreference
+from .discovery_market_fundamentals import PEER_UNIVERSE_CACHE_KEY
+from .valuation_engine import detect_structural_regime
 
-ENGINE_VERSION = "0.3.2-integrity-v1"
+ENGINE_VERSION = "0.3.2-integrity-v2"
 
 # These coefficients deliberately create a bounded explanatory bridge, not a
 # fitted valuation model. They are visible in the output so the analyst can
@@ -539,40 +542,30 @@ def _sic_meta(company_id: int) -> tuple[str, str]:
     return sic, str(meta.get("sic_description") or "")
 
 
-def _similarity(target: dict[str, Any], peer: dict[str, Any], target_company: Company, peer_company: Company, target_sic: str, peer_sic: str) -> dict[str, Any]:
+
+def _economic_similarity(target: dict[str, Any], peer: dict[str, Any]) -> dict[str, Any]:
     score = 0.0
-    evidence = []
     max_score = 0.0
-
-    def categorical(points, matched, label):
-        nonlocal score, max_score
-        max_score += points
-        if matched:
-            score += points
-            evidence.append(label)
-
-    if target_sic and peer_sic:
-        categorical(25, target_sic == peer_sic, "same SIC")
-        categorical(8, target_sic[:2] == peer_sic[:2], "same SIC division")
-    categorical(15, bool(target_company.industry and target_company.industry == peer_company.industry), "same industry")
-    categorical(8, bool(target_company.sector and target_company.sector == peer_company.sector), "same sector")
-    categorical(4, bool(target_company.country and target_company.country == peer_company.country), "same country")
+    evidence: list[str] = []
 
     target_cap, peer_cap = _n(target.get("market_cap")), _n(peer.get("market_cap"))
     if target_cap not in (None, 0) and peer_cap not in (None, 0):
-        max_score += 10
+        max_score += 25.0
         ratio = max(target_cap, peer_cap) / min(target_cap, peer_cap)
-        if ratio <= 2: score += 10; evidence.append("similar size")
-        elif ratio <= 5: score += 6
-        elif ratio <= 10: score += 3
+        if ratio <= 2:
+            score += 25.0; evidence.append("similar size")
+        elif ratio <= 5:
+            score += 17.0
+        elif ratio <= 10:
+            score += 9.0
 
     for key, label, points, tolerance in (
-        ("revenue_growth_pct", "growth", 8, 7.5),
-        ("operating_margin_pct", "operating margin", 8, 6.0),
-        ("fcf_margin_pct", "FCF margin", 6, 6.0),
-        ("roic_pct", "ROIC", 6, 8.0),
-        ("net_debt_to_fcf", "leverage", 4, 1.5),
-        ("capex_to_revenue_pct", "capital intensity", 4, 4.0),
+        ("revenue_growth_pct", "growth", 22.0, 7.5),
+        ("operating_margin_pct", "operating margin", 22.0, 6.0),
+        ("fcf_margin_pct", "FCF margin", 16.0, 6.0),
+        ("roic_pct", "ROIC", 7.0, 8.0),
+        ("net_debt_to_fcf", "leverage", 4.0, 1.5),
+        ("capex_to_revenue_pct", "capital intensity", 4.0, 4.0),
     ):
         tv, pv = _n(target.get(key)), _n(peer.get(key))
         if tv is None or pv is None:
@@ -586,9 +579,117 @@ def _similarity(target: dict[str, Any], peer: dict[str, Any], target_company: Co
             score += points * .5
 
     normalized = score / max_score * 100.0 if max_score else 0.0
-    tier = "CLOSE PEER" if normalized >= 70 else "PARTIAL PEER" if normalized >= 50 else "REFERENCE ONLY" if normalized >= 30 else "NOT COMPARABLE"
-    return {"score": round(normalized, 1), "tier": tier, "evidence": evidence}
+    return {"score": round(normalized, 1), "evidence": evidence, "evidence_points": max_score}
 
+
+def _similarity(target: dict[str, Any], peer: dict[str, Any], target_company: Company, peer_company: Company, target_sic: str, peer_sic: str) -> dict[str, Any]:
+    exact_sic = bool(target_sic and peer_sic and target_sic == peer_sic)
+    same_division = bool(target_sic and peer_sic and target_sic[:2] == peer_sic[:2])
+    same_industry = bool(target_company.industry and target_company.industry == peer_company.industry)
+    same_sector = bool(target_company.sector and target_company.sector == peer_company.sector)
+
+    business_evidence: list[str] = []
+    if exact_sic: business_evidence.append("same SIC")
+    elif same_division: business_evidence.append("same SIC division")
+    if same_industry: business_evidence.append("same industry")
+    if same_sector: business_evidence.append("same sector")
+
+    if exact_sic:
+        business_score = 100.0
+    elif same_industry:
+        business_score = 90.0
+    elif same_division and same_sector:
+        business_score = 72.0
+    elif same_division:
+        business_score = 52.0
+    elif same_sector:
+        business_score = 35.0
+    else:
+        business_score = 0.0
+
+    economic = _economic_similarity(target, peer)
+    economic_score = float(economic.get("score") or 0.0)
+    direct_business = exact_sic or same_industry
+    business_verified = direct_business or (same_division and same_sector)
+
+    if business_verified and direct_business and economic_score >= 65.0:
+        tier = "CLOSE PEER"
+    elif business_verified and economic_score >= 45.0:
+        tier = "PARTIAL PEER"
+    elif (same_division or same_sector) and economic_score >= 45.0:
+        tier = "REFERENCE ONLY"
+    else:
+        tier = "NOT COMPARABLE"
+
+    combined = economic_score * .70 + business_score * .30
+    return {
+        "score": round(combined, 1),
+        "economic_score": round(economic_score, 1),
+        "business_score": round(business_score, 1),
+        "business_verified": business_verified,
+        "tier": tier,
+        "evidence": business_evidence + list(economic.get("evidence") or []),
+    }
+
+
+def _full_market_peer_cache(user_id: int | None) -> dict[str, Any]:
+    if user_id is None:
+        return {}
+    row = UserPreference.query.filter_by(user_id=user_id, key=PEER_UNIVERSE_CACHE_KEY).first()
+    value = dict(row.value or {}) if row and isinstance(row.value, dict) else {}
+    rows = value.get("rows")
+    if not isinstance(rows, list):
+        value["rows"] = []
+    return value
+
+
+def _broad_economic_peer_candidates(
+    target: dict[str, Any],
+    user_id: int | None,
+    *,
+    exclude_tickers: set[str] | None = None,
+    limit: int = 8,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    cache = _full_market_peer_cache(user_id)
+    excluded = {str(x or "").upper() for x in (exclude_tickers or set())}
+    target_ticker = str(target.get("ticker") or "").upper()
+    if target_ticker:
+        excluded.add(target_ticker)
+
+    candidates: list[dict[str, Any]] = []
+    for raw in list(cache.get("rows") or []):
+        if not isinstance(raw, dict):
+            continue
+        ticker = str(raw.get("ticker") or "").upper()
+        if not ticker or ticker in excluded:
+            continue
+        economic = _economic_similarity(target, raw)
+        score = float(economic.get("score") or 0.0)
+        if score < 55.0 or float(economic.get("evidence_points") or 0.0) < 45.0:
+            continue
+        item = dict(raw)
+        item.update({
+            "ticker": ticker,
+            "comparability": "ECONOMIC CANDIDATE · TAXONOMY UNVERIFIED",
+            "similarity_score": round(score, 1),
+            "economic_similarity_score": round(score, 1),
+            "similarity_evidence": list(economic.get("evidence") or []),
+            "used_in_peer_valuation": False,
+            "verification_required": "SIC / industry business comparability",
+        })
+        candidates.append(item)
+    candidates.sort(key=lambda row: (
+        -float(row.get("similarity_score") or 0.0),
+        abs((_n(row.get("market_cap")) or 0.0) - (_n(target.get("market_cap")) or 0.0)),
+        row.get("ticker") or "",
+    ))
+    return candidates[:max(0, limit)], {
+        "source": cache.get("source") or "",
+        "generated_at": cache.get("generated_at"),
+        "market_generated_at": cache.get("market_generated_at"),
+        "row_count": int(cache.get("row_count") or len(cache.get("rows") or [])),
+        "valuation_eligibility": cache.get("valuation_eligibility") or "CANDIDATE_ONLY_UNTIL_BUSINESS_TAXONOMY_VERIFIED",
+    }
 
 def _peer_adjustment(target: dict[str, Any], peers: list[dict[str, Any]], multiple_key: str) -> dict[str, Any]:
     eligible = [p for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"} and _n(p.get(multiple_key)) is not None]
@@ -642,6 +743,7 @@ def _peer_adjustment(target: dict[str, Any], peers: list[dict[str, Any]], multip
     }
 
 
+
 def build_peer_analysis(company_id: int, user_id: int | None = None, limit: int = 10) -> dict[str, Any]:
     company = db.session.get(Company, company_id)
     if not company:
@@ -650,22 +752,54 @@ def build_peer_analysis(company_id: int, user_id: int | None = None, limit: int 
     if not target:
         return {"available": False, "reason": "Target fundamentals/market data unavailable.", "peers": [], "comparisons": []}
     target_sic, target_sic_description = _sic_meta(company.id)
-    candidates = []
+
+    stored_candidates: list[dict[str, Any]] = []
+    stored_tickers: set[str] = set()
+    stored_company_count = 0
     for peer_company in Company.query.filter(Company.id != company.id).all():
+        stored_company_count += 1
         peer = _peer_metric_row(peer_company, user_id)
         if not peer:
             continue
+        ticker = str(peer.get("ticker") or "").upper()
+        if ticker:
+            stored_tickers.add(ticker)
         peer_sic, _ = _sic_meta(peer_company.id)
         similarity = _similarity(target, peer, company, peer_company, target_sic, peer_sic)
         peer.update({
             "sic": peer_sic,
             "comparability": similarity["tier"],
             "similarity_score": similarity["score"],
+            "economic_similarity_score": similarity["economic_score"],
+            "business_similarity_score": similarity["business_score"],
+            "business_verified": similarity["business_verified"],
             "similarity_evidence": similarity["evidence"],
+            "used_in_peer_valuation": similarity["tier"] in {"CLOSE PEER", "PARTIAL PEER"},
         })
-        candidates.append(peer)
-    candidates.sort(key=lambda r: (-float(r.get("similarity_score") or 0), abs((_n(r.get("market_cap")) or 0) - (_n(target.get("market_cap")) or 0))))
-    peers = candidates[:max(2, limit)]
+        stored_candidates.append(peer)
+
+    verified = [
+        row for row in stored_candidates
+        if row.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"}
+        and row.get("business_verified")
+    ]
+    verified.sort(key=lambda r: (
+        0 if r.get("comparability") == "CLOSE PEER" else 1,
+        -float(r.get("similarity_score") or 0.0),
+        abs((_n(r.get("market_cap")) or 0.0) - (_n(target.get("market_cap")) or 0.0)),
+        r.get("ticker") or "",
+    ))
+    peers = verified[:max(2, limit)]
+
+    reference_only = [
+        row for row in stored_candidates
+        if row.get("comparability") == "REFERENCE ONLY"
+    ]
+    reference_only.sort(key=lambda r: (-float(r.get("similarity_score") or 0.0), r.get("ticker") or ""))
+
+    broad_candidates, broad_scope = _broad_economic_peer_candidates(
+        target, user_id, exclude_tickers=stored_tickers, limit=max(4, min(limit, 8))
+    )
 
     comparisons = []
     for key, label in (
@@ -675,33 +809,59 @@ def build_peer_analysis(company_id: int, user_id: int | None = None, limit: int 
         ("operating_margin_pct", "Operating margin"), ("fcf_margin_pct", "FCF margin"),
         ("roic_pct", "ROIC"), ("net_debt_to_fcf", "Leverage"),
     ):
-        vals = [_n(p.get(key)) for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"} and _n(p.get(key)) is not None]
+        vals = [_n(p.get(key)) for p in peers if _n(p.get(key)) is not None]
         comparisons.append({
-            "key": key, "label": label, "target": _n(target.get(key)),
-            "peer_median": median(vals) if vals else None, "sample_size": len(vals),
+            "key": key,
+            "label": label,
+            "target": _n(target.get(key)),
+            "peer_median": median(vals) if vals else None,
+            "sample_size": len(vals),
         })
 
-    primary = next((key for key in ("pe", "ev_ebitda", "ev_ebit", "ev_sales", "p_fcf") if _n(target.get(key)) is not None and sum(1 for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"} and _n(p.get(key)) is not None) >= 2), "pe")
+    primary = next((
+        key for key in ("pe", "ev_ebitda", "ev_ebit", "ev_sales", "p_fcf")
+        if _n(target.get(key)) is not None
+        and sum(1 for p in peers if _n(p.get(key)) is not None) >= 2
+    ), "pe")
     adjusted = _peer_adjustment(target, peers, primary)
-    eligible_count = sum(1 for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"})
+    eligible_count = len(peers)
+
+    if peers:
+        reason = ""
+    elif broad_candidates:
+        reason = (
+            "No business-verified CLOSE/PARTIAL peers are materialized yet. "
+            "Full-market economic candidates are shown for verification but are excluded from the peer median and relative fair value."
+        )
+    else:
+        reason = "No verified comparable peers or full-market economic peer candidates are currently materialized."
+
     return {
-        "available": bool(peers),
-        "reason": "" if peers else "No stored peer fundamentals are available.",
-        "method": "MULTI_DIMENSIONAL_STORED_PEER_SIMILARITY",
+        "available": bool(peers or broad_candidates),
+        "reason": reason,
+        "method": "VERIFIED_BUSINESS_PEERS_PLUS_FULL_MARKET_ECONOMIC_CANDIDATES",
         "sic": target_sic,
         "sic_description": target_sic_description,
         "target": target,
         "peers": peers,
+        "reference_only": reference_only[:5],
+        "economic_candidates": broad_candidates,
         "eligible_peer_count": eligible_count,
+        "stored_company_candidate_count": stored_company_count,
+        "full_market_universe": broad_scope,
         "comparisons": comparisons,
         "peer_adjusted": adjusted,
+        "valuation_rule": (
+            "Only business-verified CLOSE/PARTIAL peers can set the peer median. "
+            "Coverage membership is never a peer criterion. Full-market economic candidates cannot affect valuation until business taxonomy is verified."
+        ),
         "limitations": [
-            "Only companies with stored normalized fundamentals and a stored market snapshot can be compared.",
+            "Full-market economic candidates come from the latest materialized Discovery universe, independent of the Research coverage list.",
+            "A full-market candidate without verified SIC/industry is candidate-only and cannot set the peer-adjusted multiple.",
             "Recurring-revenue mix, customer concentration and competitive position are not scored unless structured evidence exists.",
             "EV/EBITDA is available only when filed D&A and the economic debt bridge are both usable.",
         ],
     }
-
 
 def _multiple_to_equity_value(current: dict[str, Any], multiple_key: str, multiple: float | None) -> float | None:
     multiple = _n(multiple)
@@ -894,7 +1054,18 @@ def build_valuation_forensics(
     price = _n(market.price) if market else _n(valuation.get("current_price"))
     current_financial = current_row(company.id) or {}
     current = _economics_from_row(current_financial, price=price)
-    observations = _historical_observations(company.id, security.id, 10)
+    annual_history = list(reversed(annual_rows(company.id, 12)))
+    structural_regime = detect_structural_regime(annual_history)
+    all_observations = _historical_observations(company.id, security.id, 10)
+    regime_start = int(structural_regime.get("regime_start_fiscal_year") or 0)
+    observations = (
+        [
+            row for row in all_observations
+            if int(row.get("fiscal_year") or 0) >= regime_start
+        ]
+        if structural_regime.get("history_filter_applies") and regime_start
+        else all_observations
+    )
     stats = _multiple_stats(observations, current)
     macro = macro_context(company.id)
     bridge = _multiple_bridge(current, stats, observations, macro)
@@ -920,6 +1091,7 @@ def build_valuation_forensics(
             },
         },
         "current_economics": current,
+        "structural_regime": structural_regime,
         "historical_multiples": stats,
         "historical_observations": observations,
         "multiple_bridge": bridge,
@@ -934,15 +1106,18 @@ def build_valuation_forensics(
             "historical_basis": "POINT_IN_TIME_POST_FILING_ANCHORS",
             "historical_price_provider": preferred_provider(security.id),
             "historical_observation_count": len(observations),
-            "peer_basis": "STORED_NORMALIZED_FINANCIALS_AND_STORED_MARKET_SNAPSHOTS",
+            "historical_observation_count_before_regime_filter": len(all_observations),
+            "structural_regime_filter_applied": bool(structural_regime.get("history_filter_applies")),
+            "structural_regime_start_fiscal_year": structural_regime.get("regime_start_fiscal_year"),
+            "peer_basis": "BUSINESS_VERIFIED_STORED_PEERS + FULL_MARKET_DISCOVERY_ECONOMIC_CANDIDATES",
             "network_calls": False,
             "blind_average_used": False,
             "missing_data_policy": "MISSING_STAYS_MISSING",
             "bridge_policy": BRIDGE_POLICY,
         },
         "limitations": [
-            "Historical multiple samples use post-filing point-in-time anchors, not a daily reconstructed fundamental series.",
-            "Peer coverage is limited to companies with stored normalized fundamentals and stored quotes.",
+            "Historical multiple samples use post-filing point-in-time anchors, not a daily reconstructed fundamental series; high-confidence structural breaks exclude pre-regime anchors.",
+            "Peer relative value uses only business-verified comparable companies; full-market Discovery candidates remain non-valuing until taxonomy is verified.",
             "Multiple-bridge and peer adjustments are bounded explanatory estimates, not causal regressions.",
             "EV/EBITDA remains unavailable until EBITDA is a canonical normalized fact or deterministic derivation.",
             "Catalyst timing uses only stored dated catalysts; no event date is invented.",
