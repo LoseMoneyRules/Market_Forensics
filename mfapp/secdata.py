@@ -1139,6 +1139,8 @@ def _merge_same_period_evidence(
             elif ref:
                 source_map[field] = ref
         for key, value in sibling_quality.items():
+            if str(key).startswith(("period_identity", "superseded_", "canonical_read_", "same_period_")):
+                continue
             if key not in quality or quality.get(key) in (None, "", {}, []):
                 quality[key] = value
 
@@ -1169,6 +1171,12 @@ def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal
     else:
         period.period_type = period_type
         period.fiscal_year = fiscal_year
+        active_normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
+        if active_normalized is not None:
+            active_quality = dict(active_normalized.quality or {})
+            active_quality.pop("period_identity_state", None)
+            active_quality.pop("superseded_period_type", None)
+            active_normalized.quality = active_quality
 
     # Before quarantining duplicate identities, permanently recover any
     # complementary same-end facts onto the canonical row. This keeps downstream
