@@ -372,6 +372,12 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         "sbc_to_revenue_pct": economic_metric(economic, "sbc_to_revenue_pct"),
         "interest_coverage_x": economic_metric(economic, "interest_coverage_x"),
         "fixed_charge_coverage_x": economic_metric(economic, "fixed_charge_coverage_proxy_x"),
+        "assets": n(latest.get("assets")),
+        "liabilities": n(latest.get("liabilities")),
+        "current_assets": economic_metric(economic, "current_assets"),
+        "current_liabilities": economic_metric(economic, "current_liabilities"),
+        "retained_earnings": economic_metric(economic, "retained_earnings"),
+        "goodwill": economic_metric(economic, "goodwill"),
         "net_debt_to_ebitda": net_debt_to_ebitda,
         "ccc_days": current_ccc,
         "ccc_median_5y": ccc_median,
@@ -527,6 +533,49 @@ def _life_cycle(metrics: dict[str, Any], company_type: str) -> str:
     if growth_med is not None and growth_med <= .06 and not reinvestment_high:
         return "MATURE"
     return "STABLE"
+
+
+
+def _altman_z(metrics: dict[str, Any], current_price: Any, company_type: str) -> dict[str, Any]:
+    if company_type == "Financial / REIT":
+        return {
+            "available": False,
+            "zone": "NOT_APPLICABLE",
+            "reason": "Altman Z is not applied to Financial / REIT balance sheets.",
+        }
+    assets = n(metrics.get("assets"))
+    liabilities = n(metrics.get("liabilities"))
+    current_assets = n(metrics.get("current_assets"))
+    current_liabilities = n(metrics.get("current_liabilities"))
+    retained = n(metrics.get("retained_earnings"))
+    ebit = n(metrics.get("operating_income"))
+    revenue = n(metrics.get("revenue"))
+    shares = n(metrics.get("shares"))
+    price = n(current_price)
+    required = (assets, liabilities, current_assets, current_liabilities, retained, ebit, revenue, shares, price)
+    if any(value is None for value in required) or assets <= 0 or liabilities <= 0 or shares <= 0 or price <= 0:
+        return {
+            "available": False,
+            "zone": "UNAVAILABLE",
+            "reason": "Filed current-assets/current-liabilities/retained-earnings inputs or market equity are incomplete.",
+        }
+    working_capital = current_assets - current_liabilities
+    market_equity = shares * price
+    score = (
+        1.2 * working_capital / assets
+        + 1.4 * retained / assets
+        + 3.3 * ebit / assets
+        + 0.6 * market_equity / liabilities
+        + 1.0 * revenue / assets
+    )
+    zone = "DISTRESS" if score < 1.81 else "GREY" if score < 2.99 else "SAFE"
+    return {
+        "available": True,
+        "score": score,
+        "zone": zone,
+        "basis": "ALTMAN_Z_PUBLIC_OPERATING_COMPANY",
+        "goodwill": n(metrics.get("goodwill")),
+    }
 
 
 def _scenario_triplet(metrics: dict[str, Any], key: str, current: float | None, *, floor: float = -.90, ceiling: float = .90) -> tuple[float | None, float | None, float | None]:
@@ -1060,6 +1109,7 @@ def _monte_carlo_distribution(
     cases: dict[str, dict[str, Any]],
     weights: dict[str, Any],
     years: int,
+    current_price: Any = None,
 ) -> dict[str, Any]:
     base = cases.get("BASE") or {}
     if any(n((cases.get(name) or {}).get("manual_override")) not in (None, 0) for name in ("BEAR", "BASE", "BULL")):
@@ -1094,15 +1144,30 @@ def _monte_carlo_distribution(
             values.append(fair)
     if len(values) < max(200, MONTE_CARLO_DRAWS // 4):
         return {"available": False, "reason": "Too few valid simulation outcomes.", "draws": len(values)}
+    p10 = quantile(values, .10)
+    p50 = quantile(values, .50)
+    p90 = quantile(values, .90)
+    solvency = _altman_z(metrics, current_price, str((cases.get("BASE") or {}).get("company_type") or metrics.get("company_type") or "Generic"))
+    tail_factor = 1.0
+    if solvency.get("available"):
+        score = n(solvency.get("score"))
+        if score is not None and score < 1.81:
+            tail_factor = max(.55, min(1.0, score / 1.81 if score > 0 else .55))
+        elif score is not None and score < 2.99:
+            tail_factor = .85 + .15 * max(0.0, min(1.0, (score - 1.81) / (2.99 - 1.81)))
+    if p10 is not None:
+        p10 *= tail_factor
     return {
         "available": True,
         "draws": len(values),
         "requested_draws": MONTE_CARLO_DRAWS,
-        "p10": quantile(values, .10),
-        "p50": quantile(values, .50),
-        "p90": quantile(values, .90),
+        "p10": p10,
+        "p50": p50,
+        "p90": p90,
         "freshness_scale": freshness_scale,
         "market_move_since_filing_pct": move,
+        "solvency": solvency,
+        "solvency_tail_factor": tail_factor,
         "basis": "DETERMINISTIC_SEEDED_TRIANGULAR_INPUTS_FROM_COMPANY_HISTORY",
     }
 
@@ -1144,7 +1209,7 @@ def evaluate(
         row["deterministic_fair_value"] = row.get("fair_value")
         scenarios[name] = row
 
-    distribution = _monte_carlo_distribution(metrics, cases, canonical_weights, years)
+    distribution = _monte_carlo_distribution(metrics, cases, canonical_weights, years, price)
     no_manual = not any(str(row.get("quality")) == "MANUAL_OVERRIDE" for row in scenarios.values())
     if distribution.get("available") and no_manual:
         scenarios["BEAR"]["fair_value"] = distribution.get("p10")
@@ -1209,8 +1274,14 @@ def evaluate(
         warnings.extend(flag for flag in row.get("flags") or [] if str(flag).startswith("DATA WARNING"))
     move = n(metrics.get("market_move_since_filing_pct"))
     if move is not None and abs(move) >= 30.0:
+        scale = n((distribution or {}).get("freshness_scale")) or 1.0
         warnings.append(
-            f"DATA DESYNCHRONIZATION SHIELD: market price moved {move:+.1f}% since the latest filing anchor; simulation ranges were widened 25% because the market may be pricing information not yet visible in filed fundamentals."
+            f"DATA DESYNCHRONIZATION SHIELD: market price moved {move:+.1f}% since the latest filing anchor; simulation dispersion was widened to {scale:.2f}x because the market may be pricing information not yet visible in filed fundamentals."
+        )
+    solvency = dict((distribution or {}).get("solvency") or {})
+    if solvency.get("zone") in {"GREY", "DISTRESS"}:
+        warnings.append(
+            f"SOLVENCY TAIL RISK: Altman Z {n(solvency.get('score')):.2f} ({solvency.get('zone')}); the Monte Carlo Bear tail is widened rather than assigning accounting goodwill a fictitious cash value."
         )
     if order_guard_applied:
         warnings.append("Scenario-order integrity guard prevented an automatic Bear/Base/Bull inversion.")
@@ -1231,6 +1302,7 @@ def evaluate(
         "scenario_order_guard_applied": order_guard_applied,
         "life_cycle": (cases.get("BASE") or {}).get("life_cycle"),
         "solvency_state": (cases.get("BASE") or {}).get("solvency_state"),
+        "altman_z": dict((distribution or {}).get("solvency") or {}),
         "integrity_notes": list((cases.get("BASE") or {}).get("integrity_notes") or []),
     }
 
