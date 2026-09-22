@@ -11,6 +11,7 @@ from .core_models import FinancialFlow, FinancialPeriod, HistoricalPrice, Histor
 from .extensions import db
 from .jobs import enqueue_job
 from .historical_data import preferred_provider
+from .current_financials import canonical_annual_pairs
 from .routes import SECTIONS, _ctx, bp
 from .security import role_required
 from .research_synthesis import valuation_price_history
@@ -342,7 +343,7 @@ def reset_valuation_company(ticker):
 @role_required("CONTROL")
 def financial_flows(ticker):
     require_control_view(); ctx = _ctx(ticker); company = ctx["company"]
-    periods = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY").order_by(FinancialPeriod.fiscal_year.desc()).all()
+    periods = [period for period, _ in canonical_annual_pairs(company.id)]
     requested = int(request.args.get("year") or (periods[0].fiscal_year if periods else 0)); period = next((p for p in periods if p.fiscal_year == requested), None)
     flows = {}
     if period:
