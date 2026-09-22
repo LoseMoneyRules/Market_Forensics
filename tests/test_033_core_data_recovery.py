@@ -1020,6 +1020,71 @@ def test_034_live_read_recovers_rich_superseded_same_period(tmp_path, monkeypatc
         assert current["fcf"] == 5700.0
 
 
+def test_034_same_period_complementary_fields_are_fused_without_cross_period_carry(tmp_path, monkeypatch):
+    from mfapp.current_financials import annual_rows, current_row
+
+    app = make_app(tmp_path, monkeypatch, "034_field_level_fusion")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Complementary Co", display_name="Complementary Co")
+        db.session.add(company); db.session.flush()
+
+        primary = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2026,
+            end_date=date(2026, 5, 31), filed_at=date(2026, 7, 15), currency="USD",
+        )
+        db.session.add(primary); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=primary.id,
+            revenue=Decimal("46398"), gross_profit=Decimal("19911"),
+            operating_income=Decimal("3797"), net_income=Decimal("3108"),
+            cfo=Decimal("3500"), capex=Decimal("900"), fcf=Decimal("2600"),
+            inventory=None,
+            source_map={
+                "revenue": {"provider": "SEC", "tag": "Revenues"},
+                "operating_income": {"provider": "SEC", "tag": "OperatingIncomeLoss"},
+            },
+            quality={},
+        ))
+
+        inventory_sibling = FinancialPeriod(
+            company_id=company.id, period_type="SUPERSEDED_FY", fiscal_year=2026,
+            end_date=date(2026, 5, 31), filed_at=date(2026, 7, 15), currency="USD",
+        )
+        db.session.add(inventory_sibling); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=inventory_sibling.id,
+            inventory=Decimal("7501"),
+            source_map={"inventory": {"provider": "SEC", "tag": "InventoryNet"}},
+            quality={"period_identity_state": "SUPERSEDED"},
+        ))
+
+        prior = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2025,
+            end_date=date(2025, 5, 31), filed_at=date(2025, 7, 15), currency="USD",
+        )
+        db.session.add(prior); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=prior.id, revenue=Decimal("46000"), inventory=Decimal("9999"),
+            source_map={"inventory": {"provider": "SEC"}}, quality={},
+        ))
+        db.session.commit()
+
+        rows = annual_rows(company.id, 5)
+        latest = rows[0]
+        assert latest["period_id"] == primary.id
+        assert latest["inventory"] == 7501.0
+        assert latest["inventory"] != 9999.0
+        assert latest["source_map"]["inventory"]["canonical_read_period_id"] == inventory_sibling.id
+        assert latest["quality"]["canonical_read_fused_fields"]["inventory"] == inventory_sibling.id
+        assert round(latest["metrics"]["operating_margin_pct"], 2) == 8.18
+
+        current = current_row(company.id)
+        assert current["period_end"] == "2026-05-31"
+        assert current["inventory"] == 7501.0
+        assert current["revenue"] == 46398.0
+
+
 def test_034_upsert_reactivates_richest_same_period_identity(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "034_reactivate_rich")
     with app.app_context():
@@ -1054,7 +1119,8 @@ def test_034_upsert_reactivates_richest_same_period_identity(tmp_path, monkeypat
         )
         db.session.add(sparse); db.session.flush()
         db.session.add(NormalizedFinancial(
-            financial_period_id=sparse.id, source_map={}, quality={},
+            financial_period_id=sparse.id, inventory=Decimal("7501"),
+            source_map={"inventory": {"provider": "SEC", "tag": "InventoryNet"}}, quality={},
         ))
         db.session.commit()
 
@@ -1070,5 +1136,8 @@ def test_034_upsert_reactivates_richest_same_period_identity(tmp_path, monkeypat
         assert chosen.fiscal_year == 2026
         assert chosen.normalized.revenue == Decimal("21448")
         assert chosen.normalized.operating_income == Decimal("5884")
+        assert chosen.normalized.inventory == Decimal("7501")
+        assert chosen.normalized.source_map["inventory"]["same_period_recovered_from_period_id"] == sparse.id
+        assert chosen.normalized.quality["same_period_recovered_fields"]["inventory"] == sparse.id
         sparse = db.session.get(FinancialPeriod, sparse.id)
         assert sparse.period_type.startswith(("SUPERSEDED_", "SUP_"))
