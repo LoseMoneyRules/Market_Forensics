@@ -191,7 +191,7 @@ def test_029_old_tape_cache_is_forward_compatible():
     assert upgraded["tape_daily"] == []
 
 
-def test_029_tape_v2_is_wired_to_background_evidence_not_get_navigation():
+def test_029_tape_v2_uses_background_evidence_and_fails_open_to_stored_rows():
     jobs = Path("mfapp/jobs.py").read_text()
     positioning = Path("mfapp/positioning.py").read_text()
     finra = Path("mfapp/finra.py").read_text()
@@ -206,8 +206,13 @@ def test_029_tape_v2_is_wired_to_background_evidence_not_get_navigation():
 
     tape_route = routes.split("elif section == \"tape\":", 1)[1].split("elif section == \"monitoring\":", 1)[0]
     assert "_cached_tape_for_months" in tape_route
-    assert "tape_series(" not in tape_route
+    assert "tape_series(security, months)" in tape_route
+    assert "Display fails open to already-materialized evidence" in tape_route
+    assert "requests." not in tape_route
     assert "tape = tape_series(security, 12)" in cache
+
+    price_history_block = jobs.split('if kind == "PRICE_HISTORY_REFRESH":', 1)[1].split('if kind == "MACRO_REFRESH":', 1)[0]
+    assert "_queue_recalculate_after_evidence(job, security, coverage_id)" in price_history_block
 
 
 
