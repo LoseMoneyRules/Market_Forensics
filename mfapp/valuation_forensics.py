@@ -90,7 +90,7 @@ def _economics_from_row(row: dict[str, Any], *, price: float | None = None) -> d
     economic = dict((row.get("quality") or {}).get("economic_reality") or {})
     depreciation_amortization = _n(economic.get("depreciation_amortization"))
     ebitda = (operating_income + depreciation_amortization) if operating_income is not None and depreciation_amortization is not None else None
-    shares = _n(row.get("shares_outstanding")) or _n(row.get("diluted_shares"))
+    shares = _n(row.get("diluted_shares")) or _n(row.get("shares_outstanding"))
     net_debt = _n(metrics.get("economic_net_debt"))
     if net_debt is None and not bool(metrics.get("economic_reality_unresolved")):
         debt = _n(row.get("debt"))
