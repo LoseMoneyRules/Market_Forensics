@@ -256,6 +256,14 @@ def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any
     for field in FLOW_FIELDS:
         values = [n(row.get(field)) for row in rows]
         out[field] = sum(values) if all(value is not None for value in values) else None
+        if out[field] is not None:
+            out["source_map"][field] = {
+                "method": "FOUR_STORED_QUARTERS",
+                "quarter_period_ids": [row.get("period_id") for row in rows],
+                "quarter_sources": [
+                    (row.get("source_map") or {}).get(field) for row in rows
+                ],
+            }
     # A structurally consecutive quarter set is not automatically a usable TTM.
     # Revenue is the operating anchor for Current Financial Anatomy, Expectations
     # and Financial Flows. Returning an all-empty TTM here would hide a valid FY
@@ -265,8 +273,29 @@ def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any
     latest = rows[-1]
     for field in INSTANT_FIELDS:
         out[field] = n(latest.get(field))
+        if out[field] is not None:
+            source_ref = (latest.get("source_map") or {}).get(field)
+            out["source_map"][field] = (
+                dict(source_ref) if isinstance(source_ref, dict)
+                else {"method": "LATEST_QUARTER_INSTANT", "source": source_ref}
+            )
+            out["source_map"][field].setdefault("method", "LATEST_QUARTER_INSTANT")
+            out["source_map"][field]["quarter_period_id"] = latest.get("period_id")
     shares = [n(row.get("diluted_shares")) for row in rows if n(row.get("diluted_shares")) is not None]
-    out["diluted_shares"] = mean(shares) if shares else n(latest.get("shares_outstanding"))
+    out["diluted_shares"] = mean(shares) if len(shares) == 4 else None
+    if out["diluted_shares"] is not None:
+        out["source_map"]["diluted_shares"] = {
+            "method": "MEAN_OF_FOUR_QUARTER_WEIGHTED_AVERAGES",
+            "quarter_period_ids": [row.get("period_id") for row in rows],
+            "quarter_sources": [(row.get("source_map") or {}).get("diluted_shares") for row in rows],
+        }
+    elif n(latest.get("shares_outstanding")) is not None:
+        out["diluted_shares"] = n(latest.get("shares_outstanding"))
+        out["source_map"]["diluted_shares"] = {
+            "method": "LATEST_SHARES_OUTSTANDING_FALLBACK",
+            "quarter_period_id": latest.get("period_id"),
+            "source": (latest.get("source_map") or {}).get("shares_outstanding"),
+        }
     economic = _ttm_economic_reality(rows, out)
     if economic is not None:
         out["quality"]["economic_reality"] = economic
