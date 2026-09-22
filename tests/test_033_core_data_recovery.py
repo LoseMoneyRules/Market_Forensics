@@ -1084,6 +1084,13 @@ def test_034_same_period_complementary_fields_are_fused_without_cross_period_car
         assert current["inventory"] == 7501.0
         assert current["revenue"] == 46398.0
 
+        # Downstream calculations must consume the same fused basis as the UI.
+        from mfapp.jobs import recalculate_company
+        recalculated = recalculate_company(company.id)
+        latest_metrics = recalculated["metrics"][-1]["metrics"]
+        assert latest_metrics["inventory_to_revenue_pct"] is not None
+        assert round(latest_metrics["inventory_to_revenue_pct"], 2) == round(7501 / 46398 * 100, 2)
+
 
 def test_034_upsert_reactivates_richest_same_period_identity(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "034_reactivate_rich")
@@ -1139,5 +1146,7 @@ def test_034_upsert_reactivates_richest_same_period_identity(tmp_path, monkeypat
         assert chosen.normalized.inventory == Decimal("7501")
         assert chosen.normalized.source_map["inventory"]["same_period_recovered_from_period_id"] == sparse.id
         assert chosen.normalized.quality["same_period_recovered_fields"]["inventory"] == sparse.id
+        assert chosen.normalized.quality.get("period_identity_state") != "SUPERSEDED"
+        assert "superseded_period_type" not in chosen.normalized.quality
         sparse = db.session.get(FinancialPeriod, sparse.id)
         assert sparse.period_type.startswith(("SUPERSEDED_", "SUP_"))
