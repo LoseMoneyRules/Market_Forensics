@@ -110,8 +110,16 @@ def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, a
     )
 
 
+def _normalized_has_annual_statement(normalized: NormalizedFinancial) -> bool:
+    """An FY identity must contain annual duration evidence, not only an instant."""
+    return any(n(getattr(normalized, field, None)) is not None for field in FLOW_FIELDS)
+
+
 def canonical_annual_pairs(company_id: int) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
-    return _canonical_period_pairs(company_id, ("FY",), annual=True)
+    return [
+        pair for pair in _canonical_period_pairs(company_id, ("FY",), annual=True)
+        if _normalized_has_annual_statement(pair[1])
+    ]
 
 
 def canonical_quarter_pairs(company_id: int) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
@@ -248,7 +256,15 @@ def _canonical_period_rows(company_id: int, period_types: tuple[str, ...], *, an
 
 
 def canonical_annual_rows(company_id: int) -> list[dict[str, Any]]:
-    return _canonical_period_rows(company_id, ("FY",), annual=True)
+    # Legacy production data can contain phantom FY shells created from a 10-K
+    # cover-page instant dated after fiscal year-end (for example shares
+    # outstanding as of the filing cover date). Such a row is audit evidence, not
+    # an annual financial statement, and must never become the current basis or a
+    # visible history year.
+    return [
+        row for row in _canonical_period_rows(company_id, ("FY",), annual=True)
+        if any(n(row.get(field)) is not None for field in FLOW_FIELDS)
+    ]
 
 
 def canonical_quarter_rows(company_id: int) -> list[dict[str, Any]]:

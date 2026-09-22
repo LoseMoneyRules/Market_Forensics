@@ -580,7 +580,7 @@ def test_033_refresh_stale_reingests_coverage_with_old_financial_normalizer(tmp_
         ).first()
         assert result["coverage_scanned"] == 1
         assert sec_job is not None
-        assert SEC_NORMALIZER_VERSION == "0.3.3-production-data-truth-r3"
+        assert SEC_NORMALIZER_VERSION == "0.3.6-fiscal-instant-integrity-r3"
 
 
 def test_033_terminal_job_cleanup_preserves_row_and_marks_dismissed(tmp_path, monkeypatch):
