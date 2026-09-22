@@ -16,7 +16,7 @@ FLOW_MAX_PAGES_PER_SESSION = 8
 LARGE_FLOOR = 100_000.0
 VERY_LARGE_FLOOR = 250_000.0
 WHALE_FLOOR = 500_000.0
-FLOW_METHOD_VERSION = "0.3.3-volume-sanity-v2"
+FLOW_METHOD_VERSION = "0.3.4-reconciled-sample-v1"
 MARKET_TZ = ZoneInfo("America/New_York")
 NON_DIRECTIONAL_CONDITIONS = {"B", "C", "G", "H", "I", "M", "N", "P", "Q", "R", "T", "U", "V", "W", "Z", "4", "7", "9"}
 
