@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.4  
+**Current product line:** 0.3.6  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -73,6 +73,12 @@ These rules are product-level invariants.
 The canonical data path is:
 
 SOURCE → RAW/PAYLOAD → NORMALIZED FACT → DERIVED METRIC → ANALYTICAL MODEL → MATERIALIZED RESEARCH CACHE → HUMAN REVIEW → VALIDATE → PORTFOLIO
+
+`RECALCULATE` is the only canonical builder of the materialized Research cache. Evidence jobs may persist SEC, FINRA, Alpaca or HistoricalPrice data and then queue recalculation, but they may not partially rewrite the cache. User-facing GET navigation must not call providers. A page may derive a temporary display-only view from fresher stored database evidence while canonical recalculation is pending, but that display view is not a second cache or decision boundary.
+
+When legacy/audit period identities share the exact same represented end date, live Fundamentals may coalesce complementary normalized fields across those siblings. Every recovered field must retain same-period provenance, including its source period id. Period-level derived evidence such as Economic Reality may be recovered only from the same represented date. This is evidence consolidation, never historical carry-forward.
+
+Tape distinguishes observation validity from decision usability. A reconciled consolidated-SIP observation can remain visible when direction-eligible coverage is low, while still being prohibited from influencing rank/regime. Partial/page-capped samples are context-only. An explicit Tape refresh must also repair the stored HistoricalPrice spine used by Tape charts.
 
 Important automated conclusions should be traceable to sources, transformations and assumptions.
 

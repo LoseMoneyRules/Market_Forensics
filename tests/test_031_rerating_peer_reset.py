@@ -301,7 +301,7 @@ def test_single_canonical_forensics_engine_contract():
 
 def test_031_release_metadata_and_permanent_rules():
     version = Path("VERSION").read_text().strip()
-    assert version in {"0.3.1", "0.3.2", "0.3.3", "0.3.4"}
+    assert tuple(int(part) for part in version.split(".")) >= (0, 3, 1)
     current = Path("docs/CURRENT_STATE.md").read_text()
     how = Path("docs/HOW_MARKET_FORENSICS_WORKS.md").read_text()
     assert f"**State-Version: {version}**" in current
@@ -476,7 +476,8 @@ def test_thesis_version_ui_and_documentation_contract():
     assert "NEW THESIS VERSION" in readiness
     assert "Invalidation is immutable per thesis version" in how
     assert "0.3.1 thesis-invalidation rule" in current
-    assert Path("VERSION").read_text().strip() in {"0.3.1", "0.3.2", "0.3.3", "0.3.4"}
+    version = Path("VERSION").read_text().strip()
+    assert tuple(int(part) for part in version.split(".")) >= (0, 3, 1)
 
 
 def test_quote_api_emits_explicit_utc_and_header_marks_time_for_browser_localization(tmp_path, monkeypatch):
@@ -525,4 +526,5 @@ def test_browser_local_time_contract_uses_explicit_utc_and_browser_timezone():
     assert '"as_of": _utc_iso(snap.as_of) if snap else None' in routes
     assert 'data-local-time' in header
     assert "%Y-%m-%dT%H:%M:%SZ" in header
-    assert Path("VERSION").read_text().strip() in {"0.3.1", "0.3.2", "0.3.3", "0.3.4"}
+    version = Path("VERSION").read_text().strip()
+    assert tuple(int(part) for part in version.split(".")) >= (0, 3, 1)

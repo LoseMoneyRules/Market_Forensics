@@ -16,7 +16,7 @@ FLOW_MAX_PAGES_PER_SESSION = 8
 LARGE_FLOOR = 100_000.0
 VERY_LARGE_FLOOR = 250_000.0
 WHALE_FLOOR = 500_000.0
-FLOW_METHOD_VERSION = "0.3.4-reconciled-sample-v1"
+FLOW_METHOD_VERSION = "0.3.6-reconciled-observation-v2"
 MARKET_TZ = ZoneInfo("America/New_York")
 NON_DIRECTIONAL_CONDITIONS = {"B", "C", "G", "H", "I", "M", "N", "P", "Q", "R", "T", "U", "V", "W", "Z", "4", "7", "9"}
 
@@ -327,14 +327,17 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         integrity_reasons.append("SAMPLE_NOTIONAL_EXCEEDS_REFERENCE")
     if not eligible:
         integrity_reasons.append("NO_DIRECTION_ELIGIBLE_TRADES")
-    elif eligible_volume_pct is not None and eligible_volume_pct < 50.0:
-        integrity_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
 
     sanity_status = "PASS" if not integrity_reasons else "FAIL"
     observation_usable = sanity_status == "PASS"
 
     decision_reasons: list[str] = []
     if observation_usable:
+        # Low direction-eligible coverage is a scoring limitation, not corrupted
+        # evidence. Keep the reconciled SIP observation visible in the Tape
+        # panels/charts while preventing it from influencing rank or regime.
+        if eligible_volume_pct is not None and eligible_volume_pct < 50.0:
+            decision_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
         if not sample.get("complete"):
             # The current bounded Alpaca fetch takes the beginning/end of a
             # session when pagination is truncated. That is useful context but

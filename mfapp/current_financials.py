@@ -163,7 +163,9 @@ def _canonical_period_rows(company_id: int, period_types: tuple[str, ...], *, an
         )
         row = _period_row(anchor_period, anchor_normalized)
         source_map = dict(row.get("source_map") or {})
+        quality = dict(row.get("quality") or {})
         merged_ids: set[int] = {int(anchor_period.id)}
+        recovered_fields: list[str] = []
         for field in NORMALIZED_FIELDS:
             candidates = [
                 pair for pair in family
@@ -177,16 +179,54 @@ def _canonical_period_rows(company_id: int, period_types: tuple[str, ...], *, an
             )
             row[field] = n(getattr(winner_normalized, field, None))
             winner_source = dict(winner_normalized.source_map or {}).get(field)
-            if winner_source:
+            if int(winner_period.id) != int(anchor_period.id):
+                recovered_fields.append(field)
+                if isinstance(winner_source, dict):
+                    recovered_source = dict(winner_source)
+                    recovered_source.setdefault("method", "SAME_PERIOD_EVIDENCE_COALESCE")
+                    recovered_source["recovered_from_period_id"] = int(winner_period.id)
+                elif winner_source:
+                    recovered_source = {
+                        "source": winner_source,
+                        "method": "SAME_PERIOD_EVIDENCE_COALESCE",
+                        "recovered_from_period_id": int(winner_period.id),
+                    }
+                else:
+                    recovered_source = {
+                        "method": "SAME_PERIOD_EVIDENCE_COALESCE",
+                        "recovered_from_period_id": int(winner_period.id),
+                    }
+                source_map[field] = recovered_source
+            elif winner_source:
                 source_map[field] = winner_source
             merged_ids.add(int(winner_period.id))
 
+        # Economic Reality is period-level derived evidence. If the anchor shell
+        # lacks it, reuse the richest sibling's same-period result rather than
+        # making Current Financial Anatomy look incomplete.
+        if not quality.get("economic_reality"):
+            for sibling_period, sibling_normalized in sorted(
+                family,
+                key=lambda pair: _period_anchor_score(pair[0], pair[1], annual=annual),
+                reverse=True,
+            ):
+                sibling_economic = dict((sibling_normalized.quality or {}).get("economic_reality") or {})
+                if not sibling_economic:
+                    continue
+                quality["economic_reality"] = sibling_economic
+                if int(sibling_period.id) != int(anchor_period.id):
+                    quality["economic_reality_recovered_from_period_id"] = int(sibling_period.id)
+                    merged_ids.add(int(sibling_period.id))
+                break
+
         row["source_map"] = source_map
         if len(merged_ids) > 1:
-            quality = dict(row.get("quality") or {})
             quality["canonical_read_coalesced"] = True
             quality["canonical_read_period_ids"] = sorted(merged_ids)
-            row["quality"] = quality
+        if recovered_fields:
+            quality["same_period_recovered_fields"] = sorted(set(recovered_fields))
+            quality["same_period_recovery"] = True
+        row["quality"] = quality
         out.append(row)
 
     return sorted(
