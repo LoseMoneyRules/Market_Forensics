@@ -760,7 +760,12 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "PRICE_HISTORY_REFRESH":
         if not security: raise RuntimeError("Security not found")
         lookback_years = max(2, min(int((job.payload or {}).get("lookback_years") or 10), 20))
-        return refresh_historical_prices(security, job.user_id, lookback_years)
+        result = refresh_historical_prices(security, job.user_id, lookback_years)
+        # HistoricalPrice is direct Tape/Valuation evidence. Rebuild the
+        # materialized research cache after it changes so charts cannot remain
+        # empty/stale until an unrelated refresh happens later.
+        result["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
+        return result
     if kind == "SEC_INGEST":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
