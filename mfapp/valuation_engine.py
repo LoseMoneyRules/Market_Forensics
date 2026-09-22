@@ -845,6 +845,7 @@ def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibr
         "life_cycle": life_cycle,
         "solvency_state": solvency_state,
         "integrity_notes": method_notes,
+        "company_type": company_type,
     }
     return {
         "BEAR": {
@@ -1187,7 +1188,16 @@ def _monte_carlo_distribution(
         return {"available": False, "reason": "Fewer than two independent methods are usable.", "draws": 0}
 
     move = n(metrics.get("market_move_since_filing_pct"))
-    freshness_scale = (min(1.75, 1.25 + max(0.0, abs(move) - 30.0) / 100.0) if move is not None and abs(move) >= 30.0 else 1.0)
+    pb_deviation = n(metrics.get("pb_deviation_from_history_pct"))
+    shock_magnitudes = [
+        abs(value) for value in (move, pb_deviation)
+        if value is not None and abs(value) >= 30.0
+    ]
+    largest_shock = max(shock_magnitudes) if shock_magnitudes else None
+    freshness_scale = (
+        min(1.75, 1.25 + max(0.0, largest_shock - 30.0) / 100.0)
+        if largest_shock is not None else 1.0
+    )
     rng = Random(20260921)
     values: list[float] = []
     assumption_keys = (
