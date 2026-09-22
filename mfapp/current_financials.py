@@ -174,6 +174,10 @@ def _fused_period_row(
     for candidate_period, candidate_normalized in ranked:
         candidate_quality = dict(candidate_normalized.quality or {})
         for key, value in candidate_quality.items():
+            if candidate_period.id != period.id and str(key).startswith(
+                ("period_identity", "superseded_", "canonical_read_", "same_period_")
+            ):
+                continue
             if key not in quality or quality.get(key) in (None, "", {}, []):
                 quality[key] = value
     logical_type = _logical_period_type(period.period_type)
