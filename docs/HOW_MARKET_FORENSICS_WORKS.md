@@ -119,7 +119,9 @@ After fundamentals ingestion, MF performs an applicability-aware field-integrity
 
 This canonical period rule is end-to-end: Fundamentals, Current Financial Anatomy, Current Strip, Expectations inputs, Financial Flows, Research readiness/basis, Valuation/forensics, Reports/Publications and recalculation jobs consume the same canonical FY/Q evidence. A duplicate legacy row may remain visible in Audit, but it may not create or remove a fiscal year, hide Inventory/Operating Income/Revenue, generate duplicate flows, or affect fair value / validation inputs.
 
-0.3.4 strengthens that rule into a **represented-period evidence rule**. Audit-preserved `SUPERSEDED_*` / `SUP_*` identities remain eligible as recovery evidence when they contain richer normalized facts than a newer active shell for the same represented end date. Live reads choose the richest factual member of the period family and normalize its logical FY/Q identity for presentation. On the next SEC ingest, the richest family member is reactivated as the single canonical identity instead of promoting the newest database row. Valid historical facts therefore cannot disappear from Current Financial Anatomy or the Fundamentals current strip because of parser-history bookkeeping.
+0.3.4 strengthens that rule into a **represented-period evidence rule**. Audit-preserved `SUPERSEDED_*` / `SUP_*` identities remain recovery evidence for the same represented end date. One canonical identity remains the durable write/audit target, but live analytical reads coalesce normalized facts **field by field** across the whole same-end family instead of choosing one row globally. If Revenue is valid on one identity and Inventory, Cash or Receivables are valid on another, the current economic row contains all of those sourced facts with coalesced-period provenance. On the next SEC ingest, the best canonical identity is still reactivated for storage hygiene, but parser-history bookkeeping may never hide a valid stored field.
+
+This coalesced represented-period contract is end-to-end. Current Financial Anatomy, the Fundamentals current strip and tables, Financial Flows/recalculation, Research basis/readiness, valuation/forensics, Reports/Publications and other current-row consumers must read the same coalesced FY/Q evidence. Applicability audits such as `MISSING_EXPECTED_INVENTORY` also evaluate the coalesced current basis, so they cannot raise a false missing-field issue when valid same-period evidence is already stored on a sibling identity.
 
 Current FY derived metrics must keep enough history for their comparator. In particular, Revenue Growth and share-count growth are calculated with the prior FY still in the read window; fetching only the newest FY and then recomputing growth is prohibited.
 
@@ -387,6 +389,8 @@ They must not:
 - perform historical backtests;
 - rebuild heavy analytical engines.
 
+A narrow DB-only recovery read is allowed when a materialized surface cache is older than the evidence already stored locally. Tape uses this rule: if its Research-cache payload is absent or predates stored Positioning/FINRA evidence, the page may rebuild the Tape presentation from HistoricalPrice/Event/FINRA rows already in MariaDB. This is not a provider refresh and may not expand into a full Research recalculation during GET navigation.
+
 Heavy work is queued.
 
 ### 3.20 Fail visibly, not silently
@@ -525,6 +529,8 @@ Heavy analytical outputs are materialized into a research cache.
 Normal page navigation uses that cache rather than recalculating everything.
 
 A cache cannot preserve decision-grade valuation state after the underlying Coverage or active valuation model has changed. If a materialized cache is stale, the last Bear / Base / Bull may remain visible for continuity, but valuation quality becomes DATA_WARNING, VALUE / Variant / Research Conclusion fail closed, value-based Discovery qualification is withheld, and a background RECALCULATE is queued. The normal GET does not execute providers or heavy analytical work itself.
+
+Tape evidence has an additional materialization invariant. After a Positioning, FINRA or Price History background job stores new evidence, the system publishes the DB-derived Tape payload into the latest Research cache immediately and still queues the normal full RECALCULATE. A newer stored Tape/FINRA event makes an older Research cache stale. This prevents an otherwise-valid `ALPACA_POSITIONING` or FINRA refresh from existing in the database while Large/Whale cards and Tape charts remain blank.
 
 Lightweight state — especially Process Readiness — is read live.
 
