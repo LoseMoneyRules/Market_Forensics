@@ -58,15 +58,10 @@ def stored_model_base_quality(model: Any | None) -> str:
     )
 
 # Compatibility metadata only. Automatic valuation never uses fixed sector/type multiples.
-TYPE_PRIORS = {
-    "Generic": {"pe": (12.0, 18.0, 24.0), "ev_sales": (0.8, 1.5, 2.4), "fcf_yield": (0.080, 0.055, 0.040)},
-    "Consumer / Brand": {"pe": (15.0, 21.0, 27.0), "ev_sales": (0.9, 1.8, 3.0), "fcf_yield": (0.070, 0.050, 0.035)},
-    "Industrial": {"pe": (13.0, 18.0, 24.0), "ev_sales": (0.7, 1.4, 2.2), "fcf_yield": (0.080, 0.060, 0.042)},
-    "Software": {"pe": (20.0, 30.0, 42.0), "ev_sales": (3.0, 6.0, 9.0), "fcf_yield": (0.055, 0.038, 0.025)},
-    "Semiconductor / AI": {"pe": (16.0, 24.0, 34.0), "ev_sales": (2.0, 4.5, 7.5), "fcf_yield": (0.065, 0.045, 0.030)},
-    "Auto / EV": {"pe": (8.0, 14.0, 22.0), "ev_sales": (0.35, 0.80, 1.50), "fcf_yield": (0.110, 0.075, 0.045)},
-    "Financial / REIT": {"pe": (8.0, 12.0, 16.0), "ev_sales": (0.7, 1.0, 1.4), "fcf_yield": (0.090, 0.070, 0.050)},
-}
+# Compatibility export only. 0.3.2 integrity forbids fixed sector/type
+# valuation-multiple proxies in automatic valuation.
+TYPE_PRIORS: dict[str, Any] = {}
+
 
 
 def n(value: Any) -> float | None:
@@ -852,8 +847,6 @@ def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibr
     quality_risk = (n(policy.get("risk_premium_bps")) or 0.0) / 10000.0
     quality_growth_haircut = (n(policy.get("growth_haircut_bps")) or 0.0) / 10000.0
     terminal_haircut = (n(policy.get("terminal_growth_haircut_bps")) or 0.0) / 10000.0
-    for name, value in (("bear", growth_bear), ("base", growth_base), ("bull", growth_bull)):
-        pass
     growth_bear = (growth_bear - quality_growth_haircut) if growth_bear is not None else None
     growth_base = (growth_base - quality_growth_haircut) if growth_base is not None else None
     growth_bull = (growth_bull - quality_growth_haircut) if growth_bull is not None else None
