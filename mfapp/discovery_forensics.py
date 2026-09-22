@@ -14,7 +14,7 @@ from .secdata import (
     _annual_duration, _annual_instant, _as_decimal,
     _quarter_duration_values, _quarter_instants,
 )
-from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
+from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, calibrate_multiples, default_cases, detect_structural_regime, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
 from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality, economic_from_row, has_suppression, metric as economic_metric
 from .historical_data import fetch_point_in_time_history
 
@@ -510,7 +510,8 @@ def _external_calibration(
                 else None
             ),
         })
-    result = calibrate_multiples(observations, company_type)
+    structural_regime = detect_structural_regime(annual)
+    result = calibrate_multiples(observations, company_type, structural_regime)
     result["observation_count"] = len(observations)
     return result
 

@@ -213,7 +213,7 @@ Peer selection is multi-dimensional. Same sector alone is not enough.
 
 Stored peers are classified as **CLOSE PEER**, **PARTIAL PEER**, **REFERENCE ONLY** or **NOT COMPARABLE** using available evidence for business classification, industry/SIC, size, geography, growth, operating/FCF margins, ROIC, leverage and capital intensity. Missing qualitative facts such as recurring-revenue mix or customer concentration are limitations; they do not receive fabricated scores.
 
-Only CLOSE/PARTIAL peers set peer medians. Relative value must explain the adjustment from peer median to a justified company multiple. The peer estimate never automatically alters intrinsic Bear/Base/Bull.
+Only business-verified CLOSE/PARTIAL peers set peer medians. Coverage membership is never a peer criterion. The latest full-market Discovery screen materializes an independent economic peer-candidate universe, but an outside-Coverage name cannot affect the peer median until business taxonomy such as SIC/industry is verified. Relative value must explain the adjustment from peer median to a justified company multiple. The peer estimate never automatically alters intrinsic Bear/Base/Bull.
 
 Triangulation keeps three worlds independent:
 
@@ -1105,6 +1105,8 @@ The automatic engine derives operating ranges from the company's own filed histo
 
 Automatic valuation multiples do **not** fall back to fixed company-type or sector proxies. Each method must have the company's own comparable point-in-time filing/price history: use 5Y P10 / median / P90 when at least four comparable anchors exist, otherwise the company's own 10Y history. If that evidence is insufficient, the method remains unavailable.
 
+Historical self-comparison is also **regime-aware**. A multi-dimensional structural-break detector compares persistent changes in growth, gross/operating/FCF margins, capital intensity, leverage, R&D intensity and ROIC. A single volatile year does not erase history. Only a **HIGH_CONFIDENCE_BREAK** automatically excludes pre-regime years from operating distributions and multiple calibration; a **POSSIBLE_BREAK** is shown for analyst review without changing the numbers. TTM is allowed to inform current value but is not counted as a separate fiscal year when detecting a structural break.
+
 ### 12.4 Bear / Base / Bull distribution policy
 
 Default probabilities remain Bear 25%, Base 50%, Bull 25% for expected-value presentation; default explicit horizon remains 5 years.
@@ -1246,13 +1248,12 @@ Macro is contextual and cannot override company evidence.
 
 ### 13.2 Automatic peer triangulation
 
-0.3.1 peer selection is multi-dimensional rather than SIC-only.
+Peer selection is multi-dimensional rather than SIC-only, but business comparability is a hard eligibility requirement rather than a cosmetic score.
 
 Available evidence can contribute to comparability through:
 
 - exact SIC and SIC division;
-- stored industry and sector;
-- geography;
+- verified stored industry and sector;
 - market-cap / size similarity;
 - revenue growth;
 - operating and FCF margins;
@@ -1260,13 +1261,18 @@ Available evidence can contribute to comparability through:
 - leverage;
 - capital intensity.
 
-Peers are classified as **CLOSE PEER**, **PARTIAL PEER**, **REFERENCE ONLY** or **NOT COMPARABLE**. Only CLOSE/PARTIAL peers establish comparable medians and peer-adjusted relative-value ranges.
+The latest successful full-market Discovery screen also materializes a broad **economic peer-candidate universe** independently from Coverage. This prevents the stocks the analyst already studies from becoming the implicit peer universe.
 
-Important limitation:
+Peer roles are separated:
 
-The peer universe is still constrained by companies already represented in the database with usable normalized fundamentals and a stored market snapshot. Sparse stored-company coverage can therefore create sparse or biased peer evidence.
+- **CLOSE PEER / PARTIAL PEER** — business taxonomy is verified and economics are sufficiently comparable; only these names may establish peer medians and peer-adjusted relative-value ranges;
+- **REFERENCE ONLY** — useful context but cannot set the fair multiple;
+- **ECONOMIC CANDIDATE · TAXONOMY UNVERIFIED** — found from the full-market universe by size/operating similarity but explicitly excluded from valuation until SIC/industry business fit is verified;
+- **NOT COMPARABLE** — excluded.
 
-The engine must expose peer count, comparability tier, similarity evidence, missing metrics and limitations rather than treating sector membership as proof of comparability.
+Numerical similarity alone can never make a software company a valid footwear peer, or otherwise substitute economic resemblance for business-model comparability. If fewer than two verified usable peers exist for a multiple, peer-adjusted relative value remains unavailable rather than manufacturing a comparison.
+
+The engine must expose peer count, comparability tier, similarity evidence, full-market candidate scope, missing metrics and limitations. Coverage membership is never evidence of peer comparability.
 
 ---
 
@@ -1588,11 +1594,18 @@ It must avoid look-ahead leakage.
 For each historical filing anchor:
 
 - only filings available by that date are included;
-- contemporaneous raw price is used for calibration;
+- the **same canonical automatic valuation engine** used by current Valuation is replayed, including method applicability, independent valuation-family requirements, lifecycle/cyclical logic and structural-regime calibration;
+- the filing that defines the anchor may enter calibration because it is known at that cutoff; no later filing may enter;
+- contemporaneous raw price is used for intrinsic/multiple calibration;
 - split-adjusted price is used for outcome comparison;
-- future filings are excluded;
+- EV/EBITDA, P/B freshness context and other methods receive the same point-in-time accounting fields as live Valuation when those fields were available;
 - current saved assumptions are not injected into the historical model;
+- structural-break detection uses only annual evidence known by that cutoff, never future company history;
+- reference-price fallback is disabled;
+- only historical samples with decision-grade INTRINSIC Base and at least two independent valuation families may contribute to reliability; weaker samples remain LIMITED_EVIDENCE;
 - future prices enter scoring only after the historical model snapshot is frozen.
+
+Validate therefore tests the valuation process the system actually uses, not a simplified historical proxy of it.
 
 ### 19.2 Validation dimensions
 
@@ -1984,11 +1997,13 @@ The remaining limitation is **fundamental field coverage**, not universe rotatio
 
 **Improvement:** add a licensed whole-market fundamental dataset or a broader audited IFRS/extension mapping layer while preserving source provenance, full-market coverage diagnostics and the rule that market activity alone cannot allocate Stage-2 budget.
 
-### 24.4 Peer triangulation is database-limited
+### 24.4 Full-market peer candidates still need business-taxonomy verification
 
-Sparse stored-company coverage creates sparse peers.
+Peer discovery is no longer restricted to companies already in Coverage: the full-market Discovery screen materializes independent economic candidates by size and operating characteristics.
 
-**Improvement:** build a provider-backed peer universe by SIC/industry first, then enrich a bounded peer set without requiring those names to already be in Coverage.
+The remaining limitation is verification depth. Broad SEC-frame candidates do not automatically carry enough stored business taxonomy, segment mix, customer concentration or competitive-position evidence to become valuation peers. They therefore remain candidate-only until business comparability is verified, and relative value fails closed when fewer than two verified peers are available.
+
+**Improvement:** enrich a bounded set of top economic candidates with audited SIC/industry and structured business-model evidence, without allowing unverified candidates to affect valuation.
 
 ### 24.5 Expectations lack licensed consensus
 

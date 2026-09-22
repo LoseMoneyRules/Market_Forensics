@@ -9,7 +9,7 @@ from typing import Any
 from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 from .company_quality import build_company_quality
 
-ENGINE_VERSION = "0.3.2-integrity-v1"
+ENGINE_VERSION = "0.3.2-integrity-v2"
 MONTE_CARLO_DRAWS = 10000
 
 DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
@@ -183,12 +183,208 @@ def _ccc_days(row: dict[str, Any]) -> float | None:
     return dso + dio - dpo
 
 
+
+def _feature_median(rows: list[dict[str, Any]], key: str) -> float | None:
+    values = [n((row.get("_regime_features") or {}).get(key)) for row in rows]
+    values = [value for value in values if value is not None]
+    return median(values) if values else None
+
+
+def _regime_feature_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [dict(row) for row in history if n(row.get("revenue")) is not None]
+    annual = [
+        row for row in rows
+        if str(row.get("period_type") or "").upper() in {"", "FY"}
+    ]
+    # Structural breaks are annual-regime questions. TTM can drive current value,
+    # but it must not masquerade as an additional fiscal year.
+    if len(annual) >= 5:
+        rows = annual
+    rows.sort(key=lambda row: (int(row.get("fiscal_year") or 0), str(row.get("period_end") or "")))
+    previous_revenue: float | None = None
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        revenue = n(row.get("revenue"))
+        gross = n(row.get("gross_profit"))
+        operating = n(row.get("operating_income"))
+        fcf = n(row.get("fcf"))
+        capex = n(row.get("capex"))
+        economic = economic_from_row(row)
+        net_debt = economic_metric(economic, "economic_net_debt")
+        rd_pct = economic_metric(economic, "rd_to_revenue_pct")
+        roic_pct = economic_metric(economic, "economic_roic_pct")
+        features = {
+            "revenue_growth": (
+                revenue / previous_revenue - 1.0
+                if revenue is not None and previous_revenue not in (None, 0) else None
+            ),
+            "gross_margin": gross / revenue if gross is not None and revenue not in (None, 0) else None,
+            "operating_margin": operating / revenue if operating is not None and revenue not in (None, 0) else None,
+            "fcf_margin": fcf / revenue if fcf is not None and revenue not in (None, 0) else None,
+            "capex_to_revenue": abs(capex) / revenue if capex is not None and revenue not in (None, 0) else None,
+            "net_debt_to_revenue": net_debt / revenue if net_debt is not None and revenue not in (None, 0) else None,
+            "rd_to_revenue": rd_pct / 100.0 if rd_pct is not None else None,
+            "economic_roic": roic_pct / 100.0 if roic_pct is not None else None,
+        }
+        item = dict(row)
+        item["_regime_features"] = features
+        out.append(item)
+        if revenue not in (None, 0):
+            previous_revenue = revenue
+    return out
+
+
+def detect_structural_regime(history: list[dict[str, Any]]) -> dict[str, Any]:
+    """Detect a persistent economic regime break without using future information.
+
+    The detector is deliberately conservative. A single margin swing is not enough:
+    automatic history truncation requires a multi-dimensional, persistent break
+    across at least two recent fiscal years with either a structural balance/capital
+    signal or several simultaneous operating shifts.
+    """
+    rows = _regime_feature_rows(history)
+    if len(rows) < 5:
+        return {
+            "detected": False,
+            "state": "INSUFFICIENT_HISTORY",
+            "confidence": "LOW",
+            "regime_start_fiscal_year": None,
+            "score": 0.0,
+            "evidence": [],
+            "pre_years": 0,
+            "current_regime_years": len(rows),
+            "history_filter_applies": False,
+        }
+
+    specs = (
+        ("revenue_growth", .12, 1.5, "Revenue-growth regime"),
+        ("gross_margin", .08, 2.0, "Gross-margin structure"),
+        ("operating_margin", .06, 2.0, "Operating-margin structure"),
+        ("fcf_margin", .08, 1.5, "FCF-margin structure"),
+        ("capex_to_revenue", .04, 1.5, "Capital-intensity structure"),
+        ("net_debt_to_revenue", .20, 1.5, "Capital-structure / leverage"),
+        ("rd_to_revenue", .05, 1.5, "R&D intensity"),
+        ("economic_roic", .08, 1.0, "ROIC regime"),
+    )
+    structural_keys = {"gross_margin", "capex_to_revenue", "net_debt_to_revenue", "rd_to_revenue"}
+    best: dict[str, Any] | None = None
+
+    # Need at least three pre-break years and two post-break years.
+    for split in range(3, len(rows) - 1):
+        before, after = rows[:split], rows[split:]
+        score = 0.0
+        evidence: list[dict[str, Any]] = []
+        structural_count = 0
+        for key, threshold, points, label in specs:
+            pre = _feature_median(before, key)
+            post = _feature_median(after, key)
+            if pre is None or post is None:
+                continue
+            delta = post - pre
+            if abs(delta) >= threshold:
+                score += points
+                if key in structural_keys:
+                    structural_count += 1
+                evidence.append({
+                    "metric": key,
+                    "label": label,
+                    "before_median": pre,
+                    "after_median": post,
+                    "delta": delta,
+                    "threshold": threshold,
+                })
+
+        prior_revenue = n(rows[split - 1].get("revenue"))
+        first_new_revenue = n(rows[split].get("revenue"))
+        revenue_step = (
+            first_new_revenue / prior_revenue - 1.0
+            if first_new_revenue is not None and prior_revenue not in (None, 0) else None
+        )
+        level_shift = revenue_step is not None and (revenue_step >= .35 or revenue_step <= -.25)
+        if level_shift:
+            score += 1.0
+            evidence.append({
+                "metric": "revenue_level_step",
+                "label": "Revenue level step",
+                "before_median": prior_revenue,
+                "after_median": first_new_revenue,
+                "delta": revenue_step,
+                "threshold": .35 if revenue_step >= 0 else -.25,
+            })
+
+        high = (
+            score >= 5.0
+            and len(evidence) >= 3
+            and (
+                structural_count >= 1
+                or (len(evidence) >= 4 and level_shift)
+            )
+        )
+        medium = score >= 4.0 and len(evidence) >= 3
+        state = "HIGH_CONFIDENCE_BREAK" if high else ("POSSIBLE_BREAK" if medium else "NO_BREAK")
+        candidate = {
+            "detected": high or medium,
+            "state": state,
+            "confidence": "HIGH" if high else ("MEDIUM" if medium else "LOW"),
+            "regime_start_fiscal_year": int(rows[split].get("fiscal_year") or 0) or None,
+            "score": round(score, 2),
+            "evidence": evidence,
+            "pre_years": len(before),
+            "current_regime_years": len(after),
+            "history_filter_applies": bool(high),
+            "revenue_level_step": revenue_step,
+        }
+        if best is None:
+            best = candidate
+            continue
+        rank = {"NO_BREAK": 0, "POSSIBLE_BREAK": 1, "HIGH_CONFIDENCE_BREAK": 2}
+        current_rank, best_rank = rank[state], rank[str(best.get("state"))]
+        # Prefer higher-confidence/high-score evidence; on ties prefer the more recent regime.
+        if (
+            current_rank > best_rank
+            or (current_rank == best_rank and score > float(best.get("score") or 0.0))
+            or (
+                current_rank == best_rank
+                and abs(score - float(best.get("score") or 0.0)) < 1e-9
+                and int(candidate.get("regime_start_fiscal_year") or 0) > int(best.get("regime_start_fiscal_year") or 0)
+            )
+        ):
+            best = candidate
+
+    if not best or best.get("state") == "NO_BREAK":
+        return {
+            "detected": False,
+            "state": "NO_BREAK",
+            "confidence": "LOW",
+            "regime_start_fiscal_year": None,
+            "score": float((best or {}).get("score") or 0.0),
+            "evidence": list((best or {}).get("evidence") or []),
+            "pre_years": 0,
+            "current_regime_years": len(rows),
+            "history_filter_applies": False,
+        }
+    return best
+
+
+def current_regime_rows(history: list[dict[str, Any]], structural_regime: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    rows = [dict(row) for row in history if n(row.get("revenue")) is not None]
+    rows.sort(key=lambda row: (str(row.get("period_end") or ""), int(row.get("fiscal_year") or 0)))
+    regime = structural_regime or detect_structural_regime(rows)
+    start = int(regime.get("regime_start_fiscal_year") or 0)
+    if not regime.get("history_filter_applies") or not start:
+        return rows
+    filtered = [row for row in rows if int(row.get("fiscal_year") or 0) >= start]
+    return filtered if filtered else rows
+
+
 def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = None, share_source: str = "", company_type: str = "Generic") -> dict[str, Any]:
     rows = [dict(row) for row in history if n(row.get("revenue")) is not None]
     rows.sort(key=lambda row: (str(row.get("period_end") or ""), int(row.get("fiscal_year") or 0)))
     if not rows:
         return _empty_metrics("No annual filing-derived fundamentals are available.")
 
+    structural_regime = detect_structural_regime(rows)
+    valuation_rows = current_regime_rows(rows, structural_regime)
     latest = rows[-1]
     revenue = n(latest.get("revenue"))
     net_income = n(latest.get("net_income"))
@@ -211,7 +407,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         net_debt = None
         net_debt_basis = "ECONOMIC_NET_DEBT_UNRESOLVED"
 
-    revenues = [n(row.get("revenue")) for row in rows]
+    revenues = [n(row.get("revenue")) for row in valuation_rows]
     revenue_growths: list[float] = []
     for previous, current in zip(revenues, revenues[1:]):
         if current is None or previous in (None, 0):
@@ -231,7 +427,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
     earnings_normalization_review = False
     sbc_material = False
 
-    for row in rows:
+    for row in valuation_rows:
         row_revenue = n(row.get("revenue"))
         row_net_income = n(row.get("net_income"))
         row_fcf = n(row.get("fcf"))
@@ -343,6 +539,14 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         warnings.append("Economic Reality is not materialized on this filing basis yet; enterprise-value methods are excluded and a fresh SEC ingest is required.")
     elif economic_unresolved:
         warnings.append("Economic debt classification is materially unresolved; enterprise-value methods are excluded until the financing bridge is classified.")
+    if structural_regime.get("state") == "HIGH_CONFIDENCE_BREAK":
+        warnings.append(
+            f"STRUCTURAL REGIME BREAK: valuation history before FY{structural_regime.get('regime_start_fiscal_year')} is excluded from automatic operating and multiple calibration."
+        )
+    elif structural_regime.get("state") == "POSSIBLE_BREAK":
+        warnings.append(
+            "POSSIBLE STRUCTURAL REGIME BREAK: evidence is surfaced for review, but history is not automatically truncated without high-confidence multi-dimensional confirmation."
+        )
 
     company_quality = build_company_quality(rows, company_type)
     valuation_policy = dict(company_quality.get("valuation_policy") or {})
@@ -364,6 +568,14 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         "company_quality": company_quality,
         "company_quality_state": company_quality.get("state"),
         "valuation_policy": valuation_policy,
+        "structural_regime": structural_regime,
+        "valuation_history_start_fiscal_year": (
+            structural_regime.get("regime_start_fiscal_year")
+            if structural_regime.get("history_filter_applies")
+            else (valuation_rows[0].get("fiscal_year") if valuation_rows else None)
+        ),
+        "valuation_history_years": len(valuation_rows),
+        "full_history_years": len(rows),
         "revenue_growth": _cagr(revenues, 3) or _median_growth(revenues),
         "gross_margin": gross_margin,
         "net_margin": median([x for x in net_margins[-3:] if x is not None]) if any(x is not None for x in net_margins[-3:]) else None,
@@ -439,13 +651,23 @@ def _calibration_series(observations: list[dict[str, Any]], key: str) -> tuple[l
     return [], "INSUFFICIENT"
 
 
-def calibrate_multiples(observations: list[dict[str, Any]], company_type: str = "Generic") -> dict[str, Any]:
+def calibrate_multiples(observations: list[dict[str, Any]], company_type: str = "Generic", structural_regime: dict[str, Any] | None = None) -> dict[str, Any]:
     """Company-specific point-in-time multiple calibration.
 
     No sector/type multiple proxy is used. Each method must earn its own 5Y
     history (minimum four filing anchors) or fall back to the company's 10Y
     history. If neither is available, that method stays unavailable.
     """
+    regime = dict(structural_regime or {})
+    source_observations = list(observations)
+    regime_start = int(regime.get("regime_start_fiscal_year") or 0)
+    if regime.get("history_filter_applies") and regime_start:
+        observations = [
+            row for row in source_observations
+            if int(row.get("fiscal_year") or 0) >= regime_start
+        ]
+    else:
+        observations = source_observations
     computed: list[dict[str, Any]] = []
     for row in observations:
         price = n(row.get("price"))
@@ -504,11 +726,21 @@ def calibrate_multiples(observations: list[dict[str, Any]], company_type: str = 
 
     max_sample = max((item["sample_size"] for item in stats.values()), default=0)
     result.update({
-        "source": "COMPANY_POINT_IN_TIME_5Y_10Y" if max_sample >= 4 else "COMPANY_HISTORY_INSUFFICIENT",
+        "source": (
+            "COMPANY_CURRENT_REGIME_POINT_IN_TIME_5Y_10Y"
+            if regime.get("history_filter_applies") and max_sample >= 4
+            else ("COMPANY_POINT_IN_TIME_5Y_10Y" if max_sample >= 4 else "COMPANY_HISTORY_INSUFFICIENT")
+        ),
         "sample_size": max_sample,
         "method_stats": stats,
         "uses_fixed_type_proxy": False,
         "company_type_context": company_type,
+        "structural_regime": regime,
+        "regime_filter_applied": bool(regime.get("history_filter_applies") and regime_start),
+        "regime_start_fiscal_year": regime_start or None,
+        "observation_count_before_regime_filter": len(source_observations),
+        "observation_count_after_regime_filter": len(observations),
+        "discarded_pre_regime_count": max(0, len(source_observations) - len(observations)),
     })
     return result
 
@@ -1378,6 +1610,6 @@ def evaluate(
 __all__ = [
     "ENGINE_VERSION", "TYPE_PRIORS", "DECISION_GRADE_QUALITIES", "canonical_valuation_quality",
     "valuation_base_quality", "valuation_is_decision_grade", "stored_model_base_quality", "infer_company_type", "metrics_from_history", "calibrate_multiples",
-    "default_cases", "pe_value", "p_sales_value", "ev_ebitda_value", "ev_sales_value", "fcf_yield_value", "dcf_value", "robust_blend",
+    "default_cases", "detect_structural_regime", "current_regime_rows", "pe_value", "p_sales_value", "ev_ebitda_value", "ev_sales_value", "fcf_yield_value", "dcf_value", "robust_blend",
     "scenario_value", "evaluate", "n", "clamp", "quantile",
 ]

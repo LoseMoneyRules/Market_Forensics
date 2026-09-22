@@ -15,7 +15,7 @@ from .finra import stored_summary as finra_stored_summary
 from .formatting import format_number
 from .historical_data import preferred_provider, price_on_or_after
 from .decision_engine import build_research_intelligence
-from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, n
+from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, detect_structural_regime, evaluate, infer_company_type, metrics_from_history, n
 from .economic_reality import economic_from_row, metric as economic_metric
 
 # Kept as a public import for compatibility. 0.2.0 never renders/stores a visible autofill marker.
@@ -125,7 +125,8 @@ def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], 
             if latest_anchor_date is None or market.trade_date.isoformat() > latest_anchor_date:
                 latest_anchor_date = market.trade_date.isoformat()
                 latest_anchor_price = n(market.close_raw)
-    result = calibrate_multiples(observations, company_type)
+    structural_regime = detect_structural_regime(annual)
+    result = calibrate_multiples(observations, company_type, structural_regime)
     result["latest_filing_anchor_price"] = latest_anchor_price
     result["latest_filing_anchor_date"] = latest_anchor_date
     result["observation_count"] = len(observations)
