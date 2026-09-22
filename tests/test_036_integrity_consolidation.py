@@ -86,6 +86,94 @@ def test_036_current_row_coalesces_split_same_period_evidence_with_provenance(tm
         assert current["quality"]["economic_reality"]["facts"]["inventory"] == 7501.0
 
 
+
+def test_036_sparse_newer_ttm_cannot_hide_complete_fy_current_basis(tmp_path, monkeypatch):
+    from mfapp.current_financials import current_row
+
+    app = make_app(tmp_path, monkeypatch, "sparse_newer_ttm")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="July Software Co", display_name="July Software Co")
+        db.session.add(company)
+        db.session.flush()
+
+        prior = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2024,
+            end_date=date(2024, 7, 31), currency="USD",
+        )
+        current_fy = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2025,
+            end_date=date(2025, 7, 31), currency="USD",
+        )
+        db.session.add_all([prior, current_fy])
+        db.session.flush()
+        db.session.add_all([
+            NormalizedFinancial(
+                financial_period_id=prior.id,
+                revenue=Decimal("16000"), gross_profit=Decimal("12600"),
+                operating_income=Decimal("3600"), pretax_income=Decimal("3400"),
+                income_tax=Decimal("700"), net_income=Decimal("2700"),
+                cfo=Decimal("4200"), capex=Decimal("500"), fcf=Decimal("3700"),
+                cash=Decimal("3000"), debt=Decimal("6500"),
+                receivables=Decimal("1200"), assets=Decimal("30000"),
+                liabilities=Decimal("19000"), equity=Decimal("11000"),
+                shares_outstanding=Decimal("280"), diluted_shares=Decimal("285"),
+                source_map={"revenue": {"provider": "SEC"}}, quality={},
+            ),
+            NormalizedFinancial(
+                financial_period_id=current_fy.id,
+                revenue=Decimal("18800"), gross_profit=Decimal("14900"),
+                operating_income=Decimal("4700"), pretax_income=Decimal("4450"),
+                income_tax=Decimal("900"), net_income=Decimal("3550"),
+                cfo=Decimal("5400"), capex=Decimal("650"), fcf=Decimal("4750"),
+                cash=Decimal("4100"), debt=Decimal("7200"),
+                receivables=Decimal("1450"), assets=Decimal("34000"),
+                liabilities=Decimal("21000"), equity=Decimal("13000"),
+                shares_outstanding=Decimal("282"), diluted_shares=Decimal("287"),
+                source_map={"revenue": {"provider": "SEC"}}, quality={},
+            ),
+        ])
+
+        # Reproduce the INTU-like failure mode: four consecutive quarters are
+        # sufficient to synthesize a newer TTM because Revenue exists, but the
+        # quarterly normalization is too sparse to support the rest of the
+        # current decision surface. The complete FY must remain canonical.
+        for period_type, fiscal_year, end_date, revenue in (
+            ("Q4", 2025, date(2025, 7, 31), "4800"),
+            ("Q1", 2026, date(2025, 10, 31), "5000"),
+            ("Q2", 2026, date(2026, 1, 31), "5200"),
+            ("Q3", 2026, date(2026, 4, 30), "5400"),
+        ):
+            period = FinancialPeriod(
+                company_id=company.id, period_type=period_type, fiscal_year=fiscal_year,
+                end_date=end_date, currency="USD",
+            )
+            db.session.add(period)
+            db.session.flush()
+            db.session.add(NormalizedFinancial(
+                financial_period_id=period.id,
+                revenue=Decimal(revenue),
+                source_map={"revenue": {"provider": "SEC"}},
+                quality={},
+            ))
+        db.session.commit()
+
+        current = current_row(company.id)
+        assert current is not None
+        assert current["period_type"] == "FY"
+        assert current["period_end"] == "2025-07-31"
+        assert current["comparison_basis"] == "LATEST_COMPLETE_FY_TTM_WITHHELD"
+        assert current["revenue"] == 18800.0
+        assert current["gross_profit"] == 14900.0
+        assert current["operating_income"] == 4700.0
+        assert current["fcf"] == 4750.0
+        assert current["assets"] == 34000.0
+        assert current["metrics"]["revenue_growth_pct"] == 17.5
+        assert current["quality"]["newer_ttm_withheld"] is True
+        assert current["quality"]["withheld_ttm_period_end"] == "2026-04-30"
+        assert "gross_profit" in current["quality"]["withheld_ttm_missing_fields"]
+        assert "cfo" in current["quality"]["withheld_ttm_missing_fields"]
+
 def test_036_low_direction_coverage_is_visible_but_not_scorable():
     rows = [
         {"p": 100.00, "s": 10, "c": [], "t": "2026-09-21T14:00:00Z", "x": "N"},
