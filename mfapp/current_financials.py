@@ -304,17 +304,36 @@ def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any
 
 def current_row(company_id: int) -> dict[str, Any] | None:
     quarters = quarterly_rows(company_id, 8)
-    current = _aggregate_quarters(quarters[:4], f"TTM · {quarters[0]['period_end']}" if quarters else "TTM")
-    if current:
-        prior = _aggregate_quarters(quarters[4:8], "Prior TTM") if len(quarters) >= 8 else None
-        current["metrics"] = financial_metrics(current, prior or {})
-        current["comparison_basis"] = "PRIOR_TTM" if prior else "NO_PRIOR_TTM"
-        return current
+    ttm = _aggregate_quarters(quarters[:4], f"TTM · {quarters[0]['period_end']}" if quarters else "TTM")
     annual = annual_rows(company_id, 1)
-    if annual:
-        row = dict(annual[0])
-        row["comparison_basis"] = "FY_FALLBACK"
-        return row
+    latest_fy = dict(annual[0]) if annual else None
+
+    # "Current" means the freshest filed economic basis, not "TTM at any cost".
+    # A newly filed 10-K can be newer than the latest reconstructable TTM when Q4
+    # quarter synthesis is incomplete. On the same end date, FY is also preferred:
+    # its duration totals are equivalent to the fiscal-year TTM while its audited
+    # balance-sheet instants are usually richer and more authoritative.
+    if latest_fy:
+        try:
+            fy_end = date.fromisoformat(str(latest_fy.get("period_end") or "")[:10])
+        except (TypeError, ValueError):
+            fy_end = None
+        try:
+            ttm_end = date.fromisoformat(str((ttm or {}).get("period_end") or "")[:10]) if ttm else None
+        except (TypeError, ValueError):
+            ttm_end = None
+        if ttm is None or (fy_end is not None and (ttm_end is None or fy_end >= ttm_end)):
+            latest_fy["comparison_basis"] = "LATEST_FILED_FY"
+            return latest_fy
+
+    if ttm:
+        prior = _aggregate_quarters(quarters[4:8], "Prior TTM") if len(quarters) >= 8 else None
+        ttm["metrics"] = financial_metrics(ttm, prior or {})
+        ttm["comparison_basis"] = "PRIOR_TTM" if prior else "NO_PRIOR_TTM"
+        return ttm
+    if latest_fy:
+        latest_fy["comparison_basis"] = "FY_FALLBACK"
+        return latest_fy
     return None
 
 
