@@ -70,3 +70,24 @@ def test_0322_engine_version_invalidates_pre_regime_cache():
     assert 'ENGINE_VERSION = "0.3.2-integrity-v2"' in engine
     assert 'ENGINE_VERSION = "0.3.2-integrity-v2"' in forensics
     assert "saved_engine != VALUATION_ENGINE_VERSION" in cache
+
+
+
+def test_0322_old_validate_engine_cannot_remain_validated():
+    from types import SimpleNamespace
+    from mfapp.validation_policy import state_for_run
+    stale = SimpleNamespace(
+        engine_version="0.3.2-integrity-v1",
+        status="VALIDATED",
+        sample_size=20,
+        reliability_score=95.0,
+    )
+    assert state_for_run(stale) == "REVIEW"
+
+
+def test_0322_validate_ui_exposes_engine_staleness():
+    route = Path("mfapp/research_routes.py").read_text()
+    template = Path("mfapp/templates/validate.html").read_text()
+    assert "latest_validation_engine_current" in route
+    assert "VALIDATE ENGINE OUTDATED" in template
+    assert "cannot support current Model Confidence" in template
