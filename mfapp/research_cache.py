@@ -27,6 +27,7 @@ from .positioning import FLOW_METHOD_VERSION
 
 
 CACHE_PREFIX = "RESEARCH_CACHE_"
+CACHE_SCHEMA_VERSION = "0.3.4-integrity-r2"
 
 
 def utcnow() -> datetime:
@@ -170,6 +171,7 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     discovery_labels = classify_coverage(intelligence, readiness)
 
     payload = _jsonable({
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
         "coverage_id": coverage.id,
         "user_id": coverage.user_id,
         "security_id": security.id,
@@ -311,12 +313,14 @@ def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: Valu
     cached_engine = str(((cache.get("valuation") or {}).get("engine_version") or ""))
     if cached_engine and cached_engine != VALUATION_ENGINE_VERSION:
         return True
+    if str(cache.get("cache_schema_version") or "") != CACHE_SCHEMA_VERSION:
+        return True
     if str(cache.get("tape_flow_method_version") or "") != FLOW_METHOD_VERSION:
         return True
     return False
 
 
 __all__ = [
-    "cache_event_type", "latest_research_cache", "latest_cache_map",
+    "cache_event_type", "latest_research_cache", "latest_cache_map", "CACHE_SCHEMA_VERSION",
     "refresh_research_cache", "patch_research_cache_readiness", "cache_is_stale",
 ]
