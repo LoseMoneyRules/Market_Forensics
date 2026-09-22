@@ -160,6 +160,75 @@ def test_033_weighted_average_shares_are_reconstructed_by_quarter_not_ytd_proxy(
 
 
 
+
+def test_033_sec_inline_extension_parser_recovers_custom_whole_entity_facts(monkeypatch):
+    from mfapp import sec_inline_facts
+
+    html = """
+    <html><body>
+      <xbrli:context id="D2026"><xbrli:entity><xbrli:identifier>1</xbrli:identifier></xbrli:entity>
+        <xbrli:period><xbrli:startDate>2025-06-01</xbrli:startDate><xbrli:endDate>2026-05-31</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:context id="I2026"><xbrli:entity><xbrli:identifier>1</xbrli:identifier></xbrli:entity>
+        <xbrli:period><xbrli:instant>2026-05-31</xbrli:instant></xbrli:period>
+      </xbrli:context>
+      <xbrli:context id="SEG"><xbrli:entity><xbrli:identifier>1</xbrli:identifier>
+        <xbrli:segment><xbrldi:explicitMember dimension="acme:RegionAxis">acme:USMember</xbrldi:explicitMember></xbrli:segment>
+        </xbrli:entity><xbrli:period><xbrli:instant>2026-05-31</xbrli:instant></xbrli:period>
+      </xbrli:context>
+      <ix:nonFraction name="acme:CustomRevenue" contextRef="D2026" unitRef="USD" scale="6">46,398</ix:nonFraction>
+      <ix:nonFraction name="acme:CustomInventory" contextRef="I2026" unitRef="USD" scale="6">7,501</ix:nonFraction>
+      <ix:nonFraction name="acme:CustomInventory" contextRef="SEG" unitRef="USD" scale="6">99</ix:nonFraction>
+    </body></html>
+    """
+    labels = """<?xml version="1.0"?>
+    <link:linkbase xmlns:link="http://www.xbrl.org/2003/linkbase" xmlns:xlink="http://www.w3.org/1999/xlink">
+      <link:labelLink xlink:type="extended">
+        <link:loc xlink:type="locator" xlink:href="acme.xsd#acme_CustomRevenue" xlink:label="loc_rev"/>
+        <link:loc xlink:type="locator" xlink:href="acme.xsd#acme_CustomInventory" xlink:label="loc_inv"/>
+        <link:label xlink:type="resource" xlink:label="lab_rev" xlink:role="http://www.xbrl.org/2003/role/label">Total revenues</link:label>
+        <link:label xlink:type="resource" xlink:label="lab_inv" xlink:role="http://www.xbrl.org/2003/role/label">Inventories</link:label>
+        <link:labelArc xlink:type="arc" xlink:from="loc_rev" xlink:to="lab_rev"/>
+        <link:labelArc xlink:type="arc" xlink:from="loc_inv" xlink:to="lab_inv"/>
+      </link:labelLink>
+    </link:linkbase>"""
+
+    class FakeResponse:
+        def __init__(self, *, text="", payload=None):
+            self.text = text
+            self._payload = payload or {}
+        def json(self):
+            return self._payload
+
+    def fake_get(url, user_agent, timeout=15):
+        if url.endswith("/index.json"):
+            return FakeResponse(payload={"directory": {"item": [{"name": "acme_lab.xml"}]}})
+        if url.endswith("/acme_lab.xml"):
+            return FakeResponse(text=labels)
+        if url.endswith("/acme.htm"):
+            return FakeResponse(text=html)
+        return None
+
+    monkeypatch.setattr(sec_inline_facts, "_get", fake_get)
+    concepts = sec_inline_facts.extract_extension_concepts(
+        cik="1",
+        accession="0000000001-26-000001",
+        primary_document="acme.htm",
+        form="10-K",
+        filed="2026-07-24",
+        user_agent="Test test@example.com",
+        label_aliases={"revenue": {"total revenues"}, "inventory": {"inventories"}},
+    )
+
+    revenue = concepts["CustomRevenue"]["units"]["USD"]
+    inventory = concepts["CustomInventory"]["units"]["USD"]
+    assert len(revenue) == 1
+    assert len(inventory) == 1  # dimensional/segment fact is rejected
+    assert revenue[0]["val"] == Decimal("46398000000")
+    assert inventory[0]["val"] == Decimal("7501000000")
+    assert revenue[0]["_mf_filing_extension"] is True
+
+
 def test_033_nike_like_companyfacts_flow_resolves_operating_income_and_inventory_end_to_end(tmp_path, monkeypatch):
     from mfapp.secdata import refresh_company_fundamentals
 
