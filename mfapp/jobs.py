@@ -760,13 +760,16 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "PRICE_HISTORY_REFRESH":
         if not security: raise RuntimeError("Security not found")
         lookback_years = max(2, min(int((job.payload or {}).get("lookback_years") or 10), 20))
-        return refresh_historical_prices(security, job.user_id, lookback_years)
+        result = refresh_historical_prices(security, job.user_id, lookback_years)
+        result["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
+        return result
     if kind == "SEC_INGEST":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
         result = refresh_company_fundamentals(company, security, job.user_id); result["recalculation"] = recalculate_company(company.id, coverage_id)
         if coverage_id:
             result["autofill"] = (result.get("recalculation") or {}).get("autofill")
+        result["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         management_job = enqueue_job(
             "MANAGEMENT_SCAN",
             user_id=job.user_id,
