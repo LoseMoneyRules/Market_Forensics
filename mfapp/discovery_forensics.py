@@ -14,7 +14,7 @@ from .secdata import (
     _annual_duration, _annual_instant, _as_decimal,
     _quarter_duration_values, _quarter_instants,
 )
-from .valuation_engine import calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
+from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
 from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality, economic_from_row, has_suppression, metric as economic_metric
 from .historical_data import fetch_point_in_time_history
 
@@ -366,8 +366,8 @@ def _basis_review_flags(
     current = current or {}
     prior = prior or {}
     flags: list[str] = []
-    current_shares = _num(current.get("shares_outstanding")) or _num(current.get("diluted_shares"))
-    prior_shares = _num(prior.get("shares_outstanding")) or _num(prior.get("diluted_shares"))
+    current_shares = _num(current.get("diluted_shares")) or _num(current.get("shares_outstanding"))
+    prior_shares = _num(prior.get("diluted_shares")) or _num(prior.get("shares_outstanding"))
     if current_shares not in (None, 0) and prior_shares not in (None, 0):
         ratio = current_shares / prior_shares
         if ratio >= 1.5 or ratio <= (2.0 / 3.0):
@@ -483,7 +483,7 @@ def _external_calibration(
         if filing_date is None:
             continue
         market = _price_on_or_after_rows(historical_prices, filing_date)
-        shares = _num(row.get("shares_outstanding")) or _num(row.get("diluted_shares"))
+        shares = _num(row.get("diluted_shares")) or _num(row.get("shares_outstanding"))
         if market is None or shares in (None, 0):
             continue
         economic = economic_from_row(row)
@@ -534,7 +534,7 @@ def _valuation_from_history(
         economic_net_debt = economic_metric(economic, "economic_net_debt")
         economic_ready = bool(economic) and not bool(economic.get("material_unresolved")) and economic_net_debt is not None
         current_net_debt = economic_net_debt if economic_ready else None
-        shares = _num(current_ttm.get("shares_outstanding")) or _num(current_ttm.get("diluted_shares")) or _num(metrics.get("shares"))
+        shares = _num(current_ttm.get("diluted_shares")) or _num(current_ttm.get("shares_outstanding")) or _num(metrics.get("shares"))
         operating_income = _num(current_ttm.get("operating_income"))
         depreciation_amortization = economic_metric(economic, "depreciation_amortization")
         ebitda = (
@@ -615,7 +615,7 @@ def _valuation_from_history(
         metrics["current_p_b"] = current_pb
         if historical_pb_median not in (None, 0):
             metrics["pb_deviation_from_history_pct"] = (current_pb / historical_pb_median - 1.0) * 100.0
-    defaults = default_cases(metrics, company_type)
+    defaults = default_cases(metrics, company_type, calibration)
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
     result = evaluate(
         metrics, cases, defaults["weights"], defaults["horizon_years"],
@@ -667,7 +667,7 @@ def _local_forensics(
     signals, long_score, short_score = _signals(snapshot, day_move)
     stored_valuation = dict(context.get("valuation") or {})
     engine_version = str(stored_valuation.get("engine_version") or "")
-    if not engine_version.startswith("0.3.2-integrity"):
+    if engine_version != VALUATION_ENGINE_VERSION:
         return None, "VALUATION ENGINE STALE / RECALCULATE"
     stored_base = _num(stored_valuation.get("base"))
     base_gap = _num(context.get("base_gap_pct"))
