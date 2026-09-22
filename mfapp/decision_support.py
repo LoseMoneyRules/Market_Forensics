@@ -480,6 +480,20 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     short_5 = mean(sv[-5:]) if sv else None
     short_20 = mean(sv[-20:]) if sv else None
     latest_flow = flow_rows[-1] if flow_rows else {}
+    display_flow_signal = None
+    if latest_flow:
+        display_flow_signal = score_tape_day(
+            return_pct=0.0,
+            volume_ratio=1.0,
+            close_location=50.0,
+            net_large_ratio=latest_flow.get("net_large_ratio"),
+            net_whale_ratio=latest_flow.get("net_whale_ratio"),
+            flow_confidence=latest_flow.get("flow_confidence_pct"),
+            has_market=False,
+            has_short_volume=False,
+            has_flow=True,
+            has_positioning=False,
+        ).get("institutional_flow")
 
     confidence_score = n(latest_score.get("data_confidence")) or 0.0
     confidence = "HIGH" if confidence_score >= 75 else "MEDIUM" if confidence_score >= 55 else "LOW"
