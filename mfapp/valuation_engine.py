@@ -1016,6 +1016,24 @@ def _reference_factor(name: str, cases: dict[str, dict[str, Any]]) -> float:
     return clamp(factor, 1.05, 1.80)
 
 
+METHOD_FAMILIES = {
+    "pe": "EARNINGS",
+    "p_sales": "SALES",
+    "ev_sales": "SALES",
+    "ev_ebitda": "EBITDA",
+    "fcf_yield": "CASH_FLOW",
+    "dcf": "CASH_FLOW",
+}
+
+
+def _independent_method_families(effective_weights: dict[str, Any]) -> list[str]:
+    return sorted({
+        METHOD_FAMILIES[key]
+        for key, weight in (effective_weights or {}).items()
+        if key in METHOD_FAMILIES and (n(weight) or 0.0) > 0
+    })
+
+
 def scenario_value(
     metrics: dict[str, Any],
     assumptions: dict[str, Any],
@@ -1065,9 +1083,11 @@ def scenario_value(
         flags.extend(blend_flags)
 
     method_count = len(effective)
+    independent_families = _independent_method_families(effective)
+    independent_method_count = len(independent_families)
     fallback_source = None
     if fair is not None:
-        quality = "INTRINSIC" if method_count >= 2 else "INTRINSIC_SINGLE_METHOD"
+        quality = "INTRINSIC" if independent_method_count >= 2 else "INTRINSIC_SINGLE_METHOD"
         multiplier = n(assumptions.get("scenario_multiplier")) or 1.0
         fair *= clamp(multiplier, .40, 1.20)
         floor_value = n(assumptions.get("liquidation_floor"))
@@ -1110,6 +1130,8 @@ def scenario_value(
         "range_high": quantile(valid, .75) if valid else fair,
         "effective_weights": effective,
         "method_count": method_count,
+        "independent_method_count": independent_method_count,
+        "independent_method_families": independent_families,
         "applicable_methods": sorted(effective),
         "flags": flags,
         "quality": quality,
@@ -1146,8 +1168,8 @@ def _monte_carlo_distribution(
     if any(n((cases.get(name) or {}).get("manual_override")) not in (None, 0) for name in ("BEAR", "BASE", "BULL")):
         return {"available": False, "reason": "Manual override active.", "draws": 0}
     base_check = scenario_value(metrics, base, weights, years, allow_reference_fallback=False)
-    if int(base_check.get("method_count") or 0) < 2:
-        return {"available": False, "reason": "Fewer than two independent methods are usable.", "draws": 0}
+    if int(base_check.get("independent_method_count") or 0) < 2:
+        return {"available": False, "reason": "Fewer than two independent valuation families are usable.", "draws": 0}
 
     move = n(metrics.get("market_move_since_filing_pct"))
     pb_deviation = n(metrics.get("pb_deviation_from_history_pct"))
