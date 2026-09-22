@@ -7,6 +7,7 @@ import hashlib
 from typing import Any, Iterable
 
 import requests
+from sqlalchemy import or_
 
 from .extensions import db
 from .data_providers import get_secret
