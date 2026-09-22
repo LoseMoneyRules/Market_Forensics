@@ -538,7 +538,7 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "shortable": borrow.get("shortable"),
             "locate_price": n(locate.get("price")),
             "locate_available_qty": n(locate.get("available_qty")),
-            "institutional_flow": latest_score.get("institutional_flow"),
+            "institutional_flow": latest_score.get("institutional_flow") if latest_score.get("institutional_flow") is not None else display_flow_signal,
             "absorption": latest_score.get("absorption"),
             "price_resilience": latest_score.get("price_resilience"),
             "long_demand": latest_score.get("long_demand"),
