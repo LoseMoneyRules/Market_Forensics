@@ -472,6 +472,7 @@ def _external_calibration(
     annual: list[dict[str, Any]],
     historical_prices: list[dict[str, Any]],
     company_type: str,
+    regime_start_fiscal_year: int | None = None,
 ) -> dict[str, Any]:
     observations: list[dict[str, Any]] = []
     for row in annual:
@@ -510,7 +511,7 @@ def _external_calibration(
                 else None
             ),
         })
-    result = calibrate_multiples(observations, company_type)
+    result = calibrate_multiples(observations, company_type, regime_start_fiscal_year)
     result["observation_count"] = len(observations)
     return result
 
@@ -590,7 +591,13 @@ def _valuation_from_history(
         })
 
     historical_prices = list(historical_prices or [])
-    calibration = _external_calibration(annual, historical_prices, company_type) if historical_prices else calibrate_multiples([], company_type)
+    calibration = (
+        _external_calibration(
+            annual, historical_prices, company_type, metrics.get("regime_start_fiscal_year")
+        )
+        if historical_prices
+        else calibrate_multiples([], company_type, metrics.get("regime_start_fiscal_year"))
+    )
     if current_ttm and historical_prices:
         filed = current_ttm.get("filed_at")
         try:
