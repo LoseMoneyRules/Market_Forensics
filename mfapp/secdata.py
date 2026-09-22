@@ -1329,6 +1329,81 @@ def _bridge_fy_end_instants_to_q4(company: Company) -> int:
     return bridged
 
 
+def _reconcile_financial_field_issues(company: Company) -> dict[str, Any]:
+    """Turn silent current-basis holes into explicit, applicability-aware issues."""
+    pairs = (
+        db.session.query(FinancialPeriod, NormalizedFinancial)
+        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+        .filter(FinancialPeriod.company_id == company.id)
+        .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
+        .limit(40)
+        .all()
+    )
+    if not pairs:
+        return {"basis_period_id": None, "missing_expected_fields": [], "issue_count": 0}
+
+    # Prefer the newest quarter when it is newer than FY; on the same date Q4 is
+    # the current quarter basis because FY-end instant bridges have already run.
+    current_period, current = pairs[0]
+    annual = [(period, row) for period, row in pairs if period.period_type == "FY"][:3]
+    historical_operating_income = any(row.operating_income is not None for _, row in annual)
+    historical_presence = {
+        field: any(getattr(row, field, None) is not None for _, row in annual)
+        for field in ("cash", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "shares_outstanding")
+    }
+
+    expected_missing: list[str] = []
+    if (
+        current.operating_income is None
+        and (
+            current.gross_profit is not None
+            or current.operating_expenses is not None
+            or historical_operating_income
+        )
+    ):
+        expected_missing.append("operating_income")
+    for field, expected in historical_presence.items():
+        if expected and getattr(current, field, None) is None:
+            expected_missing.append(field)
+
+    active_codes = {f"MISSING_EXPECTED_{field.upper()}" for field in expected_missing}
+    existing = DataQualityIssue.query.filter(
+        DataQualityIssue.company_id == company.id,
+        DataQualityIssue.object_type == "financial_basis",
+        DataQualityIssue.status == "OPEN",
+        DataQualityIssue.code.like("MISSING_EXPECTED_%"),
+    ).all()
+    for issue in existing:
+        if issue.code not in active_codes or issue.object_id != str(current_period.id):
+            issue.status = "RESOLVED"
+            issue.resolved_at = utcnow()
+
+    existing_keys = {(issue.code, issue.object_id) for issue in existing if issue.status == "OPEN"}
+    for field in expected_missing:
+        code = f"MISSING_EXPECTED_{field.upper()}"
+        key = (code, str(current_period.id))
+        if key in existing_keys:
+            continue
+        db.session.add(DataQualityIssue(
+            company_id=company.id,
+            object_type="financial_basis",
+            object_id=str(current_period.id),
+            code=code,
+            severity="REVIEW",
+            message=(
+                f"{current_period.period_type} FY{current_period.fiscal_year}: {field.replace('_', ' ')} "
+                "is missing even though issuer evidence indicates this field is applicable. "
+                "The current basis remains in data review until provider/normalization evidence resolves it."
+            ),
+        ))
+    return {
+        "basis_period_id": current_period.id,
+        "basis": f"{current_period.period_type} FY{current_period.fiscal_year}",
+        "missing_expected_fields": sorted(expected_missing),
+        "issue_count": len(expected_missing),
+    }
+
+
 def _reconcile_annual_history_issues(company: Company, target_years: int = 10) -> dict[str, Any]:
     """Persist visible quality issues for annual depth and holes between stored FYs."""
     rows = (
@@ -1699,6 +1774,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
 
     fallback = _alpha_vantage_fill_missing(company, security, user_id)
     fy_end_instant_bridges = _bridge_fy_end_instants_to_q4(company)
+    field_integrity = _reconcile_financial_field_issues(company)
     annual_history = _reconcile_annual_history_issues(company, target_years=10)
 
     company.legal_name = meta["name"] or company.legal_name
@@ -1716,6 +1792,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "source_id": source.id,
         "normalizer_version": SEC_NORMALIZER_VERSION,
         "fy_end_instant_bridges": fy_end_instant_bridges,
+        "field_integrity": field_integrity,
         "fundamental_fallback": fallback,
         "annual_history": annual_history,
     }
