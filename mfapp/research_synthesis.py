@@ -53,21 +53,28 @@ def _iso(value: Any) -> str | None:
 
 
 def business_update_status(company_id: int, readiness: dict[str, Any]) -> dict[str, Any]:
-    latest_period = FinancialPeriod.query.filter_by(company_id=company_id).order_by(
-        FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()
-    ).first()
+    basis = dict(readiness.get("financial_basis") or {})
     latest_source = Source.query.filter_by(company_id=company_id).order_by(Source.retrieved_at.desc()).first()
     latest_refresh = RefreshRun.query.filter_by(company_id=company_id).order_by(RefreshRun.started_at.desc()).first()
     next_estimate = None
-    if latest_period and latest_period.filed_at:
-        next_estimate = latest_period.filed_at + timedelta(days=91)
+    filed_text = str(basis.get("filed_at") or "")
+    filed_date = None
+    try:
+        filed_date = date.fromisoformat(filed_text[:10]) if filed_text else None
+    except ValueError:
+        filed_date = None
+    if filed_date:
+        next_estimate = filed_date + timedelta(days=91)
         while next_estimate < date.today():
             next_estimate += timedelta(days=91)
     outstanding = [gate["label"] for gate in readiness.get("gates", []) if not gate.get("approved")]
+    period_text = None
+    if basis.get("available"):
+        period_text = f"{basis.get('period_type')} FY{basis.get('fiscal_year')} · {basis.get('period_end')}"
     return {
         "fundamentals_cadence": "SEC fundamentals refresh on each 10-Q/10-K; quote refresh is independent and runs on the market freshness policy.",
-        "latest_period": f"{latest_period.period_type} FY{latest_period.fiscal_year} · {latest_period.end_date}" if latest_period else None,
-        "latest_filing_date": _iso(latest_period.filed_at) if latest_period else None,
+        "latest_period": period_text,
+        "latest_filing_date": basis.get("filed_at"),
         "latest_source_retrieved": _iso(latest_source.retrieved_at) if latest_source else None,
         "latest_refresh": {
             "type": latest_refresh.refresh_type,

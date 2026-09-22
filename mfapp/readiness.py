@@ -14,6 +14,7 @@ from .extensions import db
 from .services import valuation_result
 from .validation_policy import validation_payload
 from .research_basis import FINANCIAL_REVIEW_GATES, latest_financial_basis
+from .current_financials import annual_rows, canonical_annual_pairs, quarterly_rows
 
 
 def _hash(value: Any) -> str:
@@ -53,18 +54,15 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     model = ValuationModel.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(ValuationModel.id.desc()).first()
     scenario_rows = {row.name.upper(): row for row in model.scenarios} if model else {}
 
-    annual_years: list[int] = []
-    if company:
-        annual_years = sorted({
-            int(row[0]) for row in (
-                db.session.query(FinancialPeriod.fiscal_year)
-                .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
-                .filter(FinancialPeriod.company_id == company.id, FinancialPeriod.period_type == "FY")
-                .distinct()
-                .all()
-            )
-            if row[0] is not None
-        }, reverse=True)
+    # Readiness must use the same canonical period view as Fundamentals and
+    # Valuation. Legacy duplicate/mislabeled rows are audit evidence, not extra
+    # fiscal years or quarters.
+    annual_data = annual_rows(company.id, 32) if company else []
+    annual_years = sorted({
+        int(row.get("fiscal_year"))
+        for row in annual_data
+        if row.get("fiscal_year") is not None
+    }, reverse=True)
     annual_count = len(annual_years)
     annual_target_window = (
         list(range(annual_years[0], annual_years[0] - 10, -1))
@@ -72,7 +70,7 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     )
     annual_missing_years = [year for year in annual_target_window if year not in set(annual_years)]
     annual_history_complete = bool(annual_target_window) and not annual_missing_years
-    quarter_count = FinancialPeriod.query.filter(FinancialPeriod.company_id == company.id, FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"])).count() if company else 0
+    quarter_count = len(quarterly_rows(company.id, 64)) if company else 0
     expectation_count = Expectation.query.filter_by(coverage_id=coverage.id).count()
     bear_count = BearCaseItem.query.filter_by(coverage_id=coverage.id).count()
     catalyst_count = Catalyst.query.filter_by(coverage_id=coverage.id).count()
@@ -93,7 +91,9 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     source_count = Source.query.filter_by(company_id=company.id).count() if company else 0
     flow_count = 0
     if company:
-        flow_count = FinancialFlow.query.join(FinancialPeriod, FinancialFlow.financial_period_id == FinancialPeriod.id).filter(FinancialPeriod.company_id == company.id).count()
+        canonical_ids = [period.id for period, _ in canonical_annual_pairs(company.id)]
+        if canonical_ids:
+            flow_count = FinancialFlow.query.filter(FinancialFlow.financial_period_id.in_(canonical_ids)).count()
     hist = HistoricalTestRun.query.filter_by(coverage_id=coverage.id).order_by(HistoricalTestRun.created_at.desc()).first()
     financial_basis = latest_financial_basis(company.id if company else None)
 

@@ -12,7 +12,7 @@ from typing import Any
 
 from .autofill import prefill_coverage
 from .calculations import CALCULATION_VERSION, build_cash_flow, build_income_statement_flow, calculate_valuation, financial_metrics
-from .current_financials import current_row
+from .current_financials import canonical_annual_pairs, current_row
 from .core_models import (
     Alert, CalculationRun, Company, Coverage, DataQualityIssue, Event, FinancialFlow,
     FinancialPeriod, HistoricalPrice, Job, NormalizedFinancial, RefreshRun, Security, Source,
@@ -234,12 +234,11 @@ def _flow_row(period: FinancialPeriod, row: NormalizedFinancial) -> dict[str, An
 
 
 def recalculate_company(company_id: int, coverage_id: int | None = None) -> dict[str, Any]:
-    periods = FinancialPeriod.query.filter_by(company_id=company_id, period_type="FY").order_by(FinancialPeriod.fiscal_year.asc()).all()
+    # Recalculate only canonical FY identities. Superseded/legacy duplicates stay
+    # auditable but must never generate flows, metrics or valuation inputs.
+    pairs = list(reversed(canonical_annual_pairs(company_id)))
     previous = None; metrics_out = []; calculated = 0
-    for period in periods:
-        row = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
-        if not row:
-            continue
+    for period, row in pairs:
         flow_row = _flow_row(period, row)
         enriched = flow_row | {"receivables": row.receivables, "inventory": row.inventory, "payables": row.payables, "cash": row.cash, "debt": row.debt}
         metrics_out.append({"fiscal_year": period.fiscal_year, "metrics": financial_metrics(enriched, previous)}); previous = enriched

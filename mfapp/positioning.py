@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from math import isfinite
 from typing import Any
 
@@ -15,6 +16,9 @@ FLOW_MAX_PAGES_PER_SESSION = 8
 LARGE_FLOOR = 100_000.0
 VERY_LARGE_FLOOR = 250_000.0
 WHALE_FLOOR = 500_000.0
+FLOW_METHOD_VERSION = "0.3.3-volume-sanity-v2"
+MARKET_TZ = ZoneInfo("America/New_York")
+NON_DIRECTIONAL_CONDITIONS = {"B", "C", "G", "H", "I", "M", "N", "P", "Q", "R", "T", "U", "V", "W", "Z", "4", "7", "9"}
 
 
 def _headers(user_id: int) -> dict[str, str] | None:
@@ -48,7 +52,7 @@ def _quantile(values: list[float], q: float) -> float | None:
 
 def _session_days(count: int = FLOW_SESSION_COUNT) -> list[date]:
     out: list[date] = []
-    cursor = date.today()
+    cursor = datetime.now(MARKET_TZ).date()
     while len(out) < max(1, count):
         if cursor.weekday() < 5:
             out.append(cursor)
@@ -57,14 +61,22 @@ def _session_days(count: int = FLOW_SESSION_COUNT) -> list[date]:
 
 
 def _trade_window(day: date) -> tuple[str, str] | None:
-    now = datetime.now(timezone.utc)
-    start = datetime.combine(day, time.min, tzinfo=timezone.utc)
-    if day == now.date():
-        end = now - timedelta(minutes=20)
-        if end <= start:
+    """Regular US equity session only.
+
+    Extended-hours and overnight prints are not comparable with the regular
+    daily-volume bar and can badly distort a tick-rule flow proxy.
+    """
+    now_market = datetime.now(MARKET_TZ)
+    start_market = datetime.combine(day, time(9, 30), tzinfo=MARKET_TZ)
+    close_market = datetime.combine(day, time(16, 0), tzinfo=MARKET_TZ)
+    if day == now_market.date():
+        end_market = min(close_market, now_market - timedelta(minutes=20))
+        if end_market <= start_market:
             return None
     else:
-        end = datetime.combine(day, time.max, tzinfo=timezone.utc)
+        end_market = close_market
+    start = start_market.astimezone(timezone.utc)
+    end = end_market.astimezone(timezone.utc)
     return start.isoformat().replace("+00:00", "Z"), end.isoformat().replace("+00:00", "Z")
 
 
@@ -111,22 +123,60 @@ def _fetch_pages(symbol: str, headers: dict[str, str], day: date, *, feed: str, 
     return rows, complete, errors
 
 
+def _fetch_reference_bar(symbol: str, headers: dict[str, str], day: date, feed: str) -> dict[str, Any]:
+    start = datetime.combine(day, time.min, tzinfo=timezone.utc)
+    end = start + timedelta(days=1)
+    try:
+        response = requests.get(
+            f"{ALPACA_DATA}/v2/stocks/{symbol}/bars",
+            headers=headers,
+            params={
+                "timeframe": "1Day",
+                "start": start.isoformat().replace("+00:00", "Z"),
+                "end": end.isoformat().replace("+00:00", "Z"),
+                "feed": feed,
+                "adjustment": "raw",
+                "limit": 10,
+            },
+            timeout=(5, 20),
+        )
+        if response.status_code != 200:
+            return {"available": False, "error": f"Alpaca daily bar HTTP {response.status_code}"}
+        bars = list((response.json() or {}).get("bars") or [])
+        row = next((item for item in bars if str(item.get("t") or "")[:10] == day.isoformat()), bars[0] if bars else None)
+        if not row:
+            return {"available": False, "error": "Daily reference bar unavailable"}
+        volume = _n(row.get("v"))
+        close = _n(row.get("c"))
+        vwap = _n(row.get("vw"))
+        return {
+            "available": bool(volume and volume > 0),
+            "volume": volume,
+            "close": close,
+            "vwap": vwap,
+            "reference_price": vwap or close,
+            "feed": feed,
+        }
+    except Exception as exc:
+        return {"available": False, "error": f"Daily reference bar: {type(exc).__name__}"}
+
+
 def _fetch_trade_sample(symbol: str, headers: dict[str, str], day: date) -> dict[str, Any]:
     errors: list[str] = []
     feeds = ("sip", "iex")
     for feed in feeds:
         try:
             asc_pages = max(1, FLOW_MAX_PAGES_PER_SESSION // 2)
-            asc, complete, first_errors = _fetch_pages(symbol, headers, day, feed=feed, sort="asc", max_pages=asc_pages)
+            asc, asc_complete, first_errors = _fetch_pages(symbol, headers, day, feed=feed, sort="asc", max_pages=asc_pages)
             errors.extend(first_errors)
             rows = list(asc)
-            sampled = not complete
-            if not complete:
+            desc_complete = False
+            if not asc_complete:
                 desc_pages = max(1, FLOW_MAX_PAGES_PER_SESSION - asc_pages)
                 desc, desc_complete, second_errors = _fetch_pages(symbol, headers, day, feed=feed, sort="desc", max_pages=desc_pages)
                 errors.extend(second_errors)
                 rows.extend(desc)
-                sampled = not (complete or desc_complete)
+            complete = bool(asc_complete or desc_complete)
             dedup: dict[tuple[Any, ...], dict[str, Any]] = {}
             for row in rows:
                 key = (
@@ -138,12 +188,16 @@ def _fetch_trade_sample(symbol: str, headers: dict[str, str], day: date) -> dict
                 )
                 dedup[key] = row
             ordered = sorted(dedup.values(), key=lambda row: str(row.get("t") or ""))
+            reference = _fetch_reference_bar(symbol, headers, day, feed)
+            if reference.get("error"):
+                errors.append(str(reference["error"]))
             return {
                 "rows": ordered,
                 "feed": feed,
                 "feed_scope": "CONSOLIDATED_SIP" if feed == "sip" else "IEX_PARTIAL_MARKET",
-                "complete": bool(complete),
-                "sampled": bool(sampled),
+                "complete": complete,
+                "sampled": not complete,
+                "reference_bar": reference,
                 "errors": errors,
             }
         except PermissionError as exc:
@@ -152,21 +206,39 @@ def _fetch_trade_sample(symbol: str, headers: dict[str, str], day: date) -> dict
         except Exception as exc:
             errors.append(f"Alpaca trades {feed}: {type(exc).__name__}")
             continue
-    return {"rows": [], "feed": "", "feed_scope": "UNAVAILABLE", "complete": False, "sampled": False, "errors": errors}
+    return {
+        "rows": [], "feed": "", "feed_scope": "UNAVAILABLE",
+        "complete": False, "sampled": False, "reference_bar": {},
+        "errors": errors,
+    }
+
+
+def _direction_eligible(row: dict[str, Any]) -> bool:
+    conditions = {str(value or "").strip().upper() for value in (row.get("c") or [])}
+    return not bool(conditions & NON_DIRECTIONAL_CONDITIONS)
 
 
 def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
     trades = list(sample.get("rows") or [])
-    notionals = []
-    prepared = []
+    all_prepared: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
+    excluded_condition_rows = 0
+
     for row in trades:
         price, size = _n(row.get("p")), _n(row.get("s"))
         if price is None or size is None or price <= 0 or size <= 0:
             continue
-        notional = price * size
-        notionals.append(notional)
-        prepared.append({"price": price, "size": size, "notional": notional, "t": row.get("t"), "x": row.get("x"), "c": row.get("c") or []})
+        item = {
+            "price": price, "size": size, "notional": price * size,
+            "t": row.get("t"), "x": row.get("x"), "c": row.get("c") or [],
+        }
+        all_prepared.append(item)
+        if _direction_eligible(row):
+            eligible.append(item)
+        else:
+            excluded_condition_rows += 1
 
+    notionals = [row["notional"] for row in eligible]
     p75 = _quantile(notionals, .75) or 0.0
     p90 = _quantile(notionals, .90) or 0.0
     p99 = _quantile(notionals, .99) or 0.0
@@ -181,11 +253,14 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
     }
     directional_notional = 0.0
     total_notional = sum(notionals)
+    sample_total_notional = sum(row["notional"] for row in all_prepared)
+    sample_share_volume = sum(row["size"] for row in all_prepared)
+    eligible_share_volume = sum(row["size"] for row in eligible)
     large_notional = very_large_notional = whale_notional = 0.0
     prior_price = None
     last_direction = 0
 
-    for row in prepared:
+    for row in eligible:
         price, notional = row["price"], row["notional"]
         if prior_price is None:
             direction = 0
@@ -215,13 +290,66 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
     very_large_net = buckets["very_large_buy"] - buckets["very_large_sell"]
     whale_net = buckets["whale_buy"] - buckets["whale_sell"]
     directional_share = (directional_notional / total_notional * 100.0) if total_notional else None
-    feed_factor = 1.0 if sample.get("feed") == "sip" else .40
-    completeness_factor = 1.0 if sample.get("complete") else .65 if sample.get("sampled") else .50
+
+    reference = dict(sample.get("reference_bar") or {})
+    reference_volume = _n(reference.get("volume"))
+    reference_price = _n(reference.get("reference_price"))
+    reference_notional = (
+        reference_volume * reference_price
+        if reference_volume not in (None, 0) and reference_price not in (None, 0)
+        else None
+    )
+    sample_volume_pct = (
+        sample_share_volume / reference_volume * 100.0
+        if reference_volume not in (None, 0)
+        else None
+    )
+    eligible_volume_pct = (
+        eligible_share_volume / sample_share_volume * 100.0
+        if sample_share_volume > 0
+        else None
+    )
+
+    sanity_reasons: list[str] = []
+    if sample.get("feed") != "sip":
+        sanity_reasons.append("CONSOLIDATED_SIP_REQUIRED")
+    if not sample.get("complete"):
+        sanity_reasons.append("INCOMPLETE_TRADE_WINDOW")
+    if reference_volume in (None, 0):
+        sanity_reasons.append("REFERENCE_VOLUME_MISSING")
+    else:
+        if sample_share_volume > reference_volume * 1.05:
+            sanity_reasons.append("SAMPLE_VOLUME_EXCEEDS_REFERENCE")
+        if sample.get("complete") and sample_share_volume < reference_volume * 0.70:
+            sanity_reasons.append("COMPLETE_SAMPLE_COVERS_TOO_LITTLE_VOLUME")
+    if reference_notional not in (None, 0) and sample_total_notional > reference_notional * 1.15:
+        sanity_reasons.append("SAMPLE_NOTIONAL_EXCEEDS_REFERENCE")
+    if not eligible:
+        sanity_reasons.append("NO_DIRECTION_ELIGIBLE_TRADES")
+    elif eligible_volume_pct is not None and eligible_volume_pct < 50.0:
+        sanity_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
+
+    sanity_status = "PASS" if not sanity_reasons else "FAIL"
+    decision_usable = sanity_status == "PASS"
+    feed_factor = 1.0 if sample.get("feed") == "sip" else .0
+    completeness_factor = 1.0 if sample.get("complete") else 0.0
     flow_confidence = (directional_share or 0.0) * feed_factor * completeness_factor
+    if not decision_usable:
+        flow_confidence = 0.0
 
     return {
         "date": day.isoformat(),
-        "trade_rows": len(prepared),
+        "method_version": FLOW_METHOD_VERSION,
+        "trade_rows": len(all_prepared),
+        "direction_eligible_rows": len(eligible),
+        "excluded_condition_rows": excluded_condition_rows,
+        "sample_share_volume": sample_share_volume,
+        "eligible_share_volume": eligible_share_volume,
+        "eligible_volume_pct": eligible_volume_pct,
+        "reference_volume": reference_volume,
+        "sample_volume_pct": sample_volume_pct,
+        "sample_total_notional": sample_total_notional,
+        "reference_notional": reference_notional,
         "total_notional": total_notional,
         "large_threshold": large_threshold,
         "very_large_threshold": very_large_threshold,
@@ -239,9 +367,12 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         "flow_confidence_pct": min(100.0, flow_confidence),
         "feed": sample.get("feed"),
         "feed_scope": sample.get("feed_scope"),
-        "classification_method": "TICK_RULE_PROXY",
+        "classification_method": "REGULAR_SESSION_FILTERED_TICK_RULE_PROXY",
         "source_quality": "T2",
         "source_status": "COMPLETE" if sample.get("complete") else "PARTIAL_SAMPLED" if sample.get("sampled") else "NO_DATA",
+        "sanity_status": sanity_status,
+        "sanity_reasons": sanity_reasons,
+        "decision_usable": decision_usable,
         "errors": list(sample.get("errors") or []),
     }
 
@@ -266,13 +397,14 @@ def refresh_institutional_flow(ticker: str, user_id: int) -> dict[str, Any]:
         "ticker": symbol,
         "rows": rows,
         "errors": list(dict.fromkeys(errors)),
-        "method": "ADAPTIVE_NOTIONAL_PERCENTILES_PLUS_TICK_RULE",
+        "method": "REGULAR_SESSION_VOLUME_SANITY_TICK_RULE_PROXY",
+        "method_version": FLOW_METHOD_VERSION,
         "threshold_policy": {
             "large": "max(P75, $100k)",
             "very_large": "max(P90, $250k)",
             "whale": "max(P99, $500k)",
         },
-        "interpretation": "Large/Whale is a trade-size proxy, not buyer/seller identity.",
+        "interpretation": "Large/Whale values are dollar notionals from direction-eligible trade-size proxies, not share counts or buyer/seller identity. Only complete sanity-checked consolidated SIP sessions are decision-usable.",
     }
 
 

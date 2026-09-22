@@ -23,6 +23,7 @@ from .extensions import db
 from .readiness import research_readiness
 from .services import valuation_result
 from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION, infer_company_type, stored_model_base_quality, valuation_is_decision_grade
+from .positioning import FLOW_METHOD_VERSION
 
 
 CACHE_PREFIX = "RESEARCH_CACHE_"
@@ -209,6 +210,7 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
         } for row in management_promises],
         "tape": tape,
         "tape_metrics": (tape.get("metrics") or {}),
+        "tape_flow_method_version": FLOW_METHOD_VERSION,
         "triangulation": triangulation,
         "valuation_forensics": valuation_forensics,
         "research_basis": readiness.get("financial_basis") or valuation_forensics.get("financial_basis") or {},
@@ -308,6 +310,8 @@ def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: Valu
             return True
     cached_engine = str(((cache.get("valuation") or {}).get("engine_version") or ""))
     if cached_engine and cached_engine != VALUATION_ENGINE_VERSION:
+        return True
+    if str(cache.get("tape_flow_method_version") or "") != FLOW_METHOD_VERSION:
         return True
     return False
 

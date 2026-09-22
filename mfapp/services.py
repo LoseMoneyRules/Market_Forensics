@@ -6,6 +6,7 @@ from typing import Any
 from .extensions import db
 from .calculations import CALCULATION_VERSION, bias_flags, calculate_valuation, financial_metrics
 from .valuation_engine import canonical_valuation_quality, valuation_is_decision_grade
+from .current_financials import annual_rows as canonical_annual_rows, canonical_annual_pairs
 from .core_models import (
     BearCaseItem,
     Catalyst,
@@ -167,40 +168,13 @@ def valuation_result(coverage: Coverage) -> dict[str, Any]:
 
 
 def financial_rows(company_id: int, limit: int = 10) -> list[dict[str, Any]]:
-    periods = FinancialPeriod.query.filter_by(company_id=company_id, period_type="FY").order_by(FinancialPeriod.fiscal_year.desc()).limit(limit).all()
-    out = []
-    prior_map = {}
-    for period in reversed(periods):
-        normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
-        if not normalized:
-            continue
-        row = {
-            "period_id": period.id,
-            "fiscal_year": period.fiscal_year,
-            "period_end": period.end_date.isoformat(),
-            "filed_at": period.filed_at.isoformat() if period.filed_at else None,
-            "revenue": normalized.revenue,
-            "cogs": normalized.cogs,
-            "gross_profit": normalized.gross_profit,
-            "operating_income": normalized.operating_income,
-            "net_income": normalized.net_income,
-            "cfo": normalized.cfo,
-            "capex": normalized.capex,
-            "fcf": normalized.fcf,
-            "receivables": normalized.receivables,
-            "inventory": normalized.inventory,
-            "payables": normalized.payables,
-            "cash": normalized.cash,
-            "debt": normalized.debt,
-            "diluted_shares": normalized.diluted_shares,
-            "shares_outstanding": normalized.shares_outstanding,
-            "source_map": normalized.source_map,
-            "quality": normalized.quality,
-        }
-        row["metrics"] = financial_metrics(row, prior_map)
-        prior_map = row
-        out.append(row)
-    return list(reversed(out))
+    """Compatibility read backed by the canonical annual financial view.
+
+    Publications/reports must not resurrect legacy duplicate FinancialPeriod rows
+    after live Research has already rejected them.
+    """
+    return [dict(row) for row in canonical_annual_rows(company_id, limit)]
+
 
 
 def readiness(coverage: Coverage) -> dict[str, Any]:
@@ -223,7 +197,8 @@ def readiness(coverage: Coverage) -> dict[str, Any]:
     }
     expectation_count = Expectation.query.filter_by(coverage_id=coverage.id).count()
     company = db.session.get(Company, db.session.get(Security, coverage.security_id).company_id)
-    flow_count = (FinancialFlow.query.join(FinancialPeriod, FinancialFlow.financial_period_id == FinancialPeriod.id).filter(FinancialPeriod.company_id == company.id).count() if company else 0)
+    canonical_ids = [period.id for period, _ in canonical_annual_pairs(company.id)] if company else []
+    flow_count = FinancialFlow.query.filter(FinancialFlow.financial_period_id.in_(canonical_ids)).count() if canonical_ids else 0
     source_count = Source.query.filter_by(company_id=company.id).count() if company else 0
     gates = [
         ("Business", bool(research and research.business.strip())),

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ security.ticker }} · {{ section|replace('-', ' ')|title }} · Market Forensics{% endblock %}
 {% macro money(v) %}{% if v is not none %}${{ '{:,.2f}'.format(v|float) }}{% else %}—{% endif %}{% endmacro %}
+{% macro notional(v) %}{% if v is none %}—{% elif v|float < 0 %}-${{ ((v|float) * -1)|mf_num(0) }}{% else %}${{ v|mf_num(0) }}{% endif %}{% endmacro %}
 {% macro num(v) %}{{ v|mf_num(1) }}{% endmacro %}
 {% macro pct(v) %}{% if v is not none %}{{ '%+.1f'|format(v|float) }}%{% else %}—{% endif %}{% endmacro %}
 {% block content %}
@@ -655,11 +656,15 @@
       <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">OTC / ATS</p><h2>FINRA ATS share of reported OTC activity</h2></div></div><canvas data-mf-chart="tape-ats" data-series='{{ tape_series.ats|tojson|forceescape }}'></canvas>{% if not tape_series.ats %}<p class="muted">FINRA API credential + Refresh FINRA required. Weekly data is delayed.</p>{% endif %}</div>
     </div>
 
+    {% if tape_series.flow_rejections %}
+    <div class="notice amber"><strong>FLOW EVIDENCE WITHHELD.</strong> {{ tape_series.flow_rejections|length }} stored Large/Whale observation(s) are legacy, partial, non-SIP, or failed the daily-volume sanity check. They are excluded from Tape rank/regime until a fresh complete consolidated SIP observation passes validation.</div>
+    {% endif %}
+
     {% if tape_series.institutional_flow %}
     <div class="table-card scroll tape-flow-table">
       <table class="data-table numeric">
-        <thead><tr><th>Date</th><th>Feed</th><th>Large Buy</th><th>Large Sell</th><th>Net Large</th><th>Net Whale</th><th>5D</th><th>20D</th><th>Confidence</th></tr></thead>
-        <tbody>{% for r in tape_series.institutional_flow|reverse %}<tr><td>{{ r.date }}</td><td>{{ r.feed|upper }}</td><td>{{ r.large_buy|mf_num(0) }}</td><td>{{ r.large_sell|mf_num(0) }}</td><td>{{ r.net_large|mf_num(0) }}</td><td>{{ r.net_whale|mf_num(0) }}</td><td>{{ r.cumulative_5d|mf_num(0) }}</td><td>{{ r.cumulative_20d|mf_num(0) }}</td><td>{{ '%.0f'|format(r.flow_confidence_pct) if r.flow_confidence_pct is not none else '—' }}%</td></tr>{% endfor %}</tbody>
+        <thead><tr><th>Date</th><th>Feed</th><th>Large Buy $</th><th>Large Sell $</th><th>Net Large $</th><th>Net Whale $</th><th>5D $</th><th>20D $</th><th>Confidence</th></tr></thead>
+        <tbody>{% for r in tape_series.institutional_flow|reverse %}<tr><td>{{ r.date }}</td><td>{{ r.feed|upper }}</td><td>{{ notional(r.large_buy) }}</td><td>{{ notional(r.large_sell) }}</td><td>{{ notional(r.net_large) }}</td><td>{{ notional(r.net_whale) }}</td><td>{{ notional(r.cumulative_5d) }}</td><td>{{ notional(r.cumulative_20d) }}</td><td>{{ '%.0f'|format(r.flow_confidence_pct) if r.flow_confidence_pct is not none else '—' }}%</td></tr>{% endfor %}</tbody>
       </table>
     </div>
     {% endif %}
