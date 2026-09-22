@@ -655,10 +655,14 @@
       <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">OTC / ATS</p><h2>FINRA ATS share of reported OTC activity</h2></div></div><canvas data-mf-chart="tape-ats" data-series='{{ tape_series.ats|tojson|forceescape }}'></canvas>{% if not tape_series.ats %}<p class="muted">FINRA API credential + Refresh FINRA required. Weekly data is delayed.</p>{% endif %}</div>
     </div>
 
+    {% if tape_series.flow_rejections %}
+    <div class="notice amber"><strong>FLOW EVIDENCE WITHHELD.</strong> {{ tape_series.flow_rejections|length }} stored Large/Whale observation(s) are legacy, partial, non-SIP, or failed the daily-volume sanity check. They are excluded from Tape rank/regime until a fresh complete consolidated SIP observation passes validation.</div>
+    {% endif %}
+
     {% if tape_series.institutional_flow %}
     <div class="table-card scroll tape-flow-table">
       <table class="data-table numeric">
-        <thead><tr><th>Date</th><th>Feed</th><th>Large Buy</th><th>Large Sell</th><th>Net Large</th><th>Net Whale</th><th>5D</th><th>20D</th><th>Confidence</th></tr></thead>
+        <thead><tr><th>Date</th><th>Feed</th><th>Large Buy $</th><th>Large Sell $</th><th>Net Large $</th><th>Net Whale $</th><th>5D $</th><th>20D $</th><th>Confidence</th></tr></thead>
         <tbody>{% for r in tape_series.institutional_flow|reverse %}<tr><td>{{ r.date }}</td><td>{{ r.feed|upper }}</td><td>{{ r.large_buy|mf_num(0) }}</td><td>{{ r.large_sell|mf_num(0) }}</td><td>{{ r.net_large|mf_num(0) }}</td><td>{{ r.net_whale|mf_num(0) }}</td><td>{{ r.cumulative_5d|mf_num(0) }}</td><td>{{ r.cumulative_20d|mf_num(0) }}</td><td>{{ '%.0f'|format(r.flow_confidence_pct) if r.flow_confidence_pct is not none else '—' }}%</td></tr>{% endfor %}</tbody>
       </table>
     </div>
