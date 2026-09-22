@@ -9,7 +9,7 @@ from typing import Any
 from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 from .company_quality import build_company_quality
 
-ENGINE_VERSION = "0.3.2"
+ENGINE_VERSION = "0.3.2-integrity-v1"
 MONTE_CARLO_DRAWS = 10000
 
 DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
@@ -631,7 +631,7 @@ def _method_policy(metrics: dict[str, Any], calibration: dict[str, Any], company
 
 
 def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibration: dict[str, Any] | None = None) -> dict[str, Any]:
-    calibration = calibration or {
+    calibration = calibration or dict(metrics.get("historical_calibration") or {}) or {
         "source": "COMPANY_HISTORY_INSUFFICIENT",
         "sample_size": 0,
         "pe": (None, None, None),
