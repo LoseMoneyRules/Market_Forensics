@@ -96,6 +96,91 @@ def canonical_quarter_pairs(company_id: int) -> list[tuple[FinancialPeriod, Norm
     return _canonical_period_pairs(company_id, ("Q1", "Q2", "Q3", "Q4"), annual=False)
 
 
+def _recover_same_period_fields(
+    company_id: int,
+    rows: list[dict[str, Any]],
+    period_types: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Recover split evidence from sibling identities of the same represented date.
+
+    Production history can contain a rich legacy/superseded row and a newer row
+    carrying different fields for the same filing period. Selecting one whole row
+    hides valid facts in Current Financial Anatomy even though those facts remain
+    visible in history/audit surfaces. Live reads therefore use one canonical
+    identity for metadata, but merge only *missing* normalized fields from sibling
+    identities with the exact same end date. No value is carried across dates.
+    """
+    if not rows:
+        return rows
+    ends = {str(row.get("period_end") or "")[:10] for row in rows if row.get("period_end")}
+    if not ends:
+        return rows
+    pairs = (
+        db.session.query(FinancialPeriod, NormalizedFinancial)
+        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+        .filter(
+            FinancialPeriod.company_id == company_id,
+            _period_family_filter(period_types),
+            FinancialPeriod.end_date.in_([date.fromisoformat(x) for x in ends]),
+        )
+        .all()
+    )
+    families: dict[str, list[tuple[FinancialPeriod, NormalizedFinancial]]] = {}
+    for period, normalized in pairs:
+        families.setdefault(period.end_date.isoformat(), []).append((period, normalized))
+
+    for row in rows:
+        siblings = families.get(str(row.get("period_end") or "")[:10], [])
+        if not siblings:
+            continue
+        annual = str(row.get("period_type") or "").upper() == "FY"
+        siblings = sorted(
+            siblings,
+            key=lambda pair: _period_candidate_score(pair[0], pair[1], annual=annual),
+            reverse=True,
+        )
+        source_map = dict(row.get("source_map") or {})
+        quality = dict(row.get("quality") or {})
+        recovered: list[str] = []
+        for period, normalized in siblings:
+            sibling_sources = dict(normalized.source_map or {})
+            for field in NORMALIZED_FIELDS:
+                if n(row.get(field)) is not None:
+                    continue
+                value = n(getattr(normalized, field, None))
+                if value is None:
+                    continue
+                row[field] = value
+                ref = sibling_sources.get(field)
+                if isinstance(ref, dict):
+                    ref = dict(ref)
+                    ref.setdefault("method", "SAME_PERIOD_EVIDENCE_RECOVERY")
+                    ref["recovered_from_period_id"] = period.id
+                elif ref:
+                    ref = {
+                        "source": ref,
+                        "method": "SAME_PERIOD_EVIDENCE_RECOVERY",
+                        "recovered_from_period_id": period.id,
+                    }
+                else:
+                    ref = {
+                        "method": "SAME_PERIOD_EVIDENCE_RECOVERY",
+                        "recovered_from_period_id": period.id,
+                    }
+                source_map[field] = ref
+                recovered.append(field)
+            sibling_quality = dict(normalized.quality or {})
+            if not quality.get("economic_reality") and sibling_quality.get("economic_reality"):
+                quality["economic_reality"] = sibling_quality["economic_reality"]
+                quality["economic_reality_recovered_from_period_id"] = period.id
+        if recovered:
+            quality["same_period_recovered_fields"] = sorted(set(recovered))
+            quality["same_period_recovery"] = True
+        row["source_map"] = source_map
+        row["quality"] = quality
+    return rows
+
+
 def n(value: Any) -> float | None:
     if value in (None, ""):
         return None
@@ -129,6 +214,7 @@ def _period_row(period: FinancialPeriod, normalized: NormalizedFinancial) -> dic
 def annual_rows(company_id: int, limit: int = 15) -> list[dict[str, Any]]:
     pairs = canonical_annual_pairs(company_id)[:max(1, limit)]
     rows = [_period_row(period, normalized) for period, normalized in pairs]
+    rows = _recover_same_period_fields(company_id, rows, ("FY",))
     chronological = list(reversed(rows))
     previous: dict[str, Any] = {}
     for row in chronological:
@@ -240,6 +326,7 @@ def annual_history_grid(
 def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
     pairs = canonical_quarter_pairs(company_id)[:max(8, limit)]
     rows = [_period_row(period, normalized) for period, normalized in pairs]
+    rows = _recover_same_period_fields(company_id, rows, ("Q1", "Q2", "Q3", "Q4"))
 
     lookup = {(row.get("fiscal_year"), row.get("period_type")): row for row in rows}
     for row in rows:
