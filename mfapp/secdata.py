@@ -1032,8 +1032,40 @@ def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) ->
 def _period_family_query(company_id: int, end_date: date, period_type: str):
     query = FinancialPeriod.query.filter_by(company_id=company_id, end_date=end_date)
     if period_type == "FY":
-        return query.filter(FinancialPeriod.period_type == "FY")
-    return query.filter(FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"]))
+        family_types = ("FY",)
+    else:
+        family_types = ("Q1", "Q2", "Q3", "Q4")
+    clauses = []
+    for family_type in family_types:
+        clauses.extend((
+            FinancialPeriod.period_type == family_type,
+            FinancialPeriod.period_type == f"SUPERSEDED_{family_type}",
+            FinancialPeriod.period_type.like(f"SUP_{family_type}_%"),
+        ))
+    return query.filter(or_(*clauses))
+
+
+_PERIOD_RECOVERY_FIELDS = (
+    "revenue", "cogs", "gross_profit", "operating_expenses", "operating_income",
+    "pretax_income", "income_tax", "net_income", "cfo", "capex", "fcf",
+    "cash", "debt", "receivables", "inventory", "payables", "assets",
+    "liabilities", "equity", "shares_outstanding", "diluted_shares",
+    "buybacks", "dividends",
+)
+
+
+def _period_evidence_score(period: FinancialPeriod, *, period_type: str, fiscal_year: int) -> tuple:
+    normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
+    populated = 0
+    sourced = 0
+    if normalized is not None:
+        populated = sum(1 for field in _PERIOD_RECOVERY_FIELDS if getattr(normalized, field, None) is not None)
+        source_map = dict(normalized.source_map or {})
+        sourced = sum(1 for field in _PERIOD_RECOVERY_FIELDS if source_map.get(field))
+    exact_identity = int(str(period.period_type or "") == period_type and int(period.fiscal_year or 0) == int(fiscal_year))
+    active = int(not str(period.period_type or "").startswith(("SUPERSEDED_", "SUP_")))
+    filed = period.filed_at.toordinal() if period.filed_at else 0
+    return (populated, sourced, exact_identity, active, filed, int(period.id or 0))
 
 
 def _supersede_period_identity(period: FinancialPeriod) -> None:
