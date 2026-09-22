@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.4  
+**Current product line:** 0.3.5  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -73,6 +73,10 @@ These rules are product-level invariants.
 The canonical data path is:
 
 SOURCE → RAW/PAYLOAD → NORMALIZED FACT → DERIVED METRIC → ANALYTICAL MODEL → MATERIALIZED RESEARCH CACHE → HUMAN REVIEW → VALIDATE → PORTFOLIO
+
+Materialization is transactional at the workflow level: whenever a background `RECALCULATE` updates derived company evidence, it must also rebuild the canonical Research cache before the job is considered complete. A database row that is newer than the cache is not a valid finished state for user-facing analytical surfaces.
+
+When legacy/audit period identities share the exact same represented end date, live Fundamentals may recover a missing normalized field from a sibling identity with explicit provenance. This is same-period evidence consolidation, not historical carry-forward; no value may cross into a different represented date.
 
 Important automated conclusions should be traceable to sources, transformations and assumptions.
 
