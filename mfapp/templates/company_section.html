@@ -574,6 +574,10 @@
       </div>
     </div>
 
+    {% if cache_pending and not tape_series.daily_market and not tape_series.institutional_flow and not tape_series.short_interest and not tape_series.short_volume and not tape_series.ats %}
+    <div class="notice neutral"><strong>TAPE CACHE UPDATING.</strong> Stored market, FINRA and positioning evidence is being rematerialized in the background. Navigation stays fast; this page refreshes after the job queue completes.</div>
+    {% endif %}
+
     <div class="panel tape-v2 tape-regime-panel">
       <div class="panel-head">
         <div>
