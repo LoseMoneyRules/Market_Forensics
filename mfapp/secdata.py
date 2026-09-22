@@ -1252,15 +1252,15 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
             "years_backfilled": [], "sources": [],
         }
 
+    from .current_financials import canonical_annual_pairs, canonical_quarter_pairs
+
     def load_pairs() -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
-        return (
-            db.session.query(FinancialPeriod, NormalizedFinancial)
-            .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
-            .filter(FinancialPeriod.company_id == company.id)
-            .order_by(FinancialPeriod.end_date.desc())
-            .limit(80)
-            .all()
-        )
+        pairs = canonical_annual_pairs(company.id) + canonical_quarter_pairs(company.id)
+        return sorted(
+            pairs,
+            key=lambda pair: (pair[0].end_date, pair[0].filed_at or date.min, pair[0].id),
+            reverse=True,
+        )[:80]
 
     pairs = load_pairs()
     annual_years = sorted({
@@ -1317,12 +1317,7 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
                 continue
             annual_reports_by_end[end_date][function] = report
 
-    existing_periods = (
-        FinancialPeriod.query
-        .filter_by(company_id=company.id, period_type="FY")
-        .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
-        .all()
-    )
+    existing_periods = [period for period, _ in canonical_annual_pairs(company.id)]
     existing_by_end = {period.end_date: period for period in existing_periods}
     existing_by_year: dict[int, list[FinancialPeriod]] = defaultdict(list)
     for period in existing_periods:
@@ -1575,22 +1570,19 @@ def _bridge_fy_end_instants_to_q4(company: Company) -> int:
 
 
 def _reconcile_financial_field_issues(company: Company) -> dict[str, Any]:
-    """Turn silent current-basis holes into explicit, applicability-aware issues."""
-    pairs = (
-        db.session.query(FinancialPeriod, NormalizedFinancial)
-        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
-        .filter(FinancialPeriod.company_id == company.id)
-        .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
-        .limit(40)
-        .all()
-    )
-    if not pairs:
+    """Turn silent current-basis holes into explicit issues on the canonical basis."""
+    from .current_financials import canonical_annual_pairs, current_row
+
+    current_view = current_row(company.id)
+    if not current_view or not current_view.get("period_id"):
         return {"basis_period_id": None, "missing_expected_fields": [], "issue_count": 0}
 
-    # Prefer the newest quarter when it is newer than FY; on the same date Q4 is
-    # the current quarter basis because FY-end instant bridges have already run.
-    current_period, current = pairs[0]
-    annual = [(period, row) for period, row in pairs if period.period_type == "FY"][:3]
+    current_period = db.session.get(FinancialPeriod, int(current_view["period_id"]))
+    current = NormalizedFinancial.query.filter_by(financial_period_id=current_period.id).first() if current_period else None
+    if current_period is None or current is None:
+        return {"basis_period_id": None, "missing_expected_fields": [], "issue_count": 0}
+
+    annual = canonical_annual_pairs(company.id)[:3]
     historical_operating_income = any(row.operating_income is not None for _, row in annual)
     historical_presence = {
         field: any(getattr(row, field, None) is not None for _, row in annual)
@@ -1649,15 +1641,12 @@ def _reconcile_financial_field_issues(company: Company) -> dict[str, Any]:
     }
 
 
+
 def _reconcile_annual_history_issues(company: Company, target_years: int = 10) -> dict[str, Any]:
-    """Persist visible quality issues for annual depth and holes between stored FYs."""
-    rows = (
-        FinancialPeriod.query
-        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
-        .filter(FinancialPeriod.company_id == company.id, FinancialPeriod.period_type == "FY")
-        .order_by(FinancialPeriod.fiscal_year.desc(), FinancialPeriod.end_date.desc())
-        .all()
-    )
+    """Persist quality issues from canonical annual history, never legacy duplicates."""
+    from .current_financials import canonical_annual_pairs
+
+    rows = [period for period, _ in canonical_annual_pairs(company.id)]
     years = sorted({int(row.fiscal_year) for row in rows if row.fiscal_year is not None}, reverse=True)
     if years:
         latest, oldest = years[0], years[-1]
