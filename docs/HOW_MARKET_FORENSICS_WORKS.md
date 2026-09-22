@@ -163,20 +163,49 @@ Business, Tape, Journal and Audit do not reopen merely because a quarter arrived
 
 The audit trail must preserve old approval hash/basis → new financial basis → re-reviewed gates → review completed.
 
-### 3.6 Re-rating, historical regimes and implied expectations
+### 3.6 Canonical intrinsic valuation and historical regimes
 
-Valuation must answer why the market assigns today's multiple, not merely compare current P/E with an old median.
+The automatic intrinsic engine must adapt to the economics and history of the individual company rather than impose a fixed multiple for a generic company type.
 
-The canonical 0.3.1 `valuation_forensics` output uses stored evidence only and materializes:
+Permanent 0.3.2 valuation-integrity rules:
 
-- current P/E, EV/EBIT, EV/Sales, P/FCF and FCF Yield; EV/EBITDA stays missing until EBITDA is a canonical fact or deterministic derivation;
-- 3Y / 5Y / 10Y point-in-time post-filing anchors, medians, ranges and percentile/regime;
+- fixed sector/company-type multiple proxies are forbidden in automatic fair value;
+- P/E, P/S, EV/Sales, EV/EBITDA and FCF Yield can be used only when the company has its own point-in-time historical evidence for that method;
+- each method uses the company's 5Y P10 / median / P90 when at least four comparable filing-price anchors exist, otherwise the company's own 10Y history; unsupported methods remain unavailable;
+- FCF Yield is economically inverted across scenarios: Bear requires the higher historical yield and Bull the lower yield;
+- DCF is a real valuation method in the canonical blend when cash-flow evidence is usable, not merely a decorative cross-check;
+- a single valid method is explicitly non-decision-grade;
+- thin-margin/high-revenue companies disable P/S and EV/Sales so revenue scale cannot manufacture value;
+- high-leverage companies suppress equity-only shortcuts and require enterprise-value/cash-flow evidence with a bounded discount-rate penalty;
+- cyclicals use their longer operating distributions and de-emphasize spot P/E rather than extrapolating a peak/trough TTM;
+- asset-light/high-margin businesses may place more evidence weight on DCF and shareholder cash flow when the filed capital-efficiency evidence supports it;
+- banks/insurers/REITs do not inherit an industrial model. The generic engine fails closed until sector-specific P/B-ROE, AFFO/NAV or equivalent evidence is implemented.
+
+Automatic scenarios are distributional. A deterministic seeded 10,000-draw simulation varies only explicit Bear/Base/Bull evidence ranges. Bear is the P10 outcome, Base P50 and Bull P90. Recalculating the same evidence must reproduce the same answer. A final integrity guard forbids automatic scenario inversion even if an individual method becomes unavailable inside a scenario.
+
+SBC is an owner cost but must not be double counted. The canonical 0.3.2 automatic path keeps reported FCF and projects observed diluted-share growth in the per-share denominator. Economic Reality continues to surface SBC intensity and capital-allocation consequences separately.
+
+Other bounded integrity controls include:
+
+- company life-cycle classification from growth volatility, reinvestment/retention and ROIC evidence;
+- Cash Conversion Cycle change as a bounded discount-rate risk adjustment;
+- net-debt/EBITDA and fixed-charge/interest coverage as leverage/tail-risk controls;
+- a conservative net-cash liquidation floor after current cash burn and a liquidation haircut when applicable;
+- classic public-company Altman Z only when its required inputs and sector applicability are valid; it is a tail-risk guard, not a fair-value method;
+- a data-desynchronization shield when price since the filing anchor or current P/B versus the company's own history moves by at least 30%, widening the simulation range rather than pretending stale fundamentals explain the move.
+
+Goodwill is not mechanically subtracted from DCF in distress because goodwill is not an additive DCF asset. Distress affects cash-flow assumptions, discount rate, scenario weighting/floor logic and review state instead.
+
+The separate `valuation_forensics` layer still explains why today's market multiple differs from history and materializes:
+
+- current P/E, EV/EBIT, EV/EBITDA, EV/Sales, P/FCF and FCF Yield when their accounting bridges are usable;
+- 3Y / 5Y / 10Y point-in-time post-filing anchors, medians, P10/P90 context and percentile/regime;
 - a transparent Historical Multiple Bridge using bounded directional translations of observed growth, margins, ROIC, cash conversion, leverage, dilution, working capital and available stored macro context;
 - Re-rating Conditions with MET / PARTIALLY MET / NOT MET / DETERIORATING;
 - an explicit old-multiple defensibility read rather than assuming mean reversion;
 - reverse-engineered Market-Implied Expectations, explicitly not sell-side consensus.
 
-The bridge is explanatory, not a causal regression. Its coefficients, inputs and uncertainty must be visible. If a variable cannot be supported, it is qualitative/missing rather than invented.
+The forensic bridge is explanatory, not a second intrinsic valuation engine or a causal regression. Its coefficients, inputs and uncertainty must be visible. If a variable cannot be supported, it is qualitative/missing rather than invented.
 
 ### 3.7 True peer triangulation
 
@@ -210,9 +239,11 @@ No event date may be invented. Urgency cannot be derived from price movement alo
 
 ### 3.9 Canonical reuse
 
-`mfapp/valuation_forensics.py` is the single canonical engine for historical regimes, multiple bridge, implied expectations, peer triangulation, re-rating conditions and decision-window intelligence. It runs in RECALCULATE/background materialization.
+`mfapp/valuation_engine.py` is the single canonical intrinsic Bear/Base/Bull engine. Research/Valuation and Discovery Stage 2 must call that same logic; Discovery may not maintain a second fair-value formula.
 
-Valuation Web, Reports and Discovery Stage 2 read the same materialized output. Compatibility adapters may reshape the payload for older views but must not calculate a second answer.
+`mfapp/valuation_forensics.py` is the canonical stored interpretation layer for historical regimes, the multiple bridge, implied expectations, peer triangulation, re-rating conditions and decision-window intelligence. It may triangulate and challenge intrinsic value, but it does not create a second automatic intrinsic answer.
+
+Heavy historical/provider work stays outside normal GET navigation. Covered companies use stored point-in-time price history during recalculation. Unknown Discovery names may fetch bounded historical price data only after evidence-based Stage-1.5 selection and within the Stage-2 deep budget. Reports consume the resulting materialized data only.
 
 ### 3.10 Fundamentals is the accounting evidence room
 
