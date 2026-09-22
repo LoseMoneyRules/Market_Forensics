@@ -19,6 +19,7 @@ from mfapp.secdata import (
     _fiscal_year_from_end,
     _quarter_duration_values,
     _reconcile_financial_field_issues,
+    _upsert_period,
     _validated_sga_operating_bridge,
 )
 
@@ -747,3 +748,39 @@ def test_033_user_facing_templates_never_hardcode_release_versions():
             if re.search(r"\b0\.\d+\.\d+\b", line):
                 offenders.append(f"{template.name}:{line_no}:{line.strip()}")
     assert offenders == [], "User-facing templates must not hardcode product/release versions: " + " | ".join(offenders)
+
+
+def test_033_parser_revision_repairs_same_end_date_fiscal_label_in_place(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "period_relabel_in_place")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Week Calendar Co", display_name="Week Calendar Co")
+        db.session.add(company); db.session.flush()
+        source = Source(
+            company_id=company.id, provider="SEC", source_type="COMPANYFACTS",
+            title="test", url="https://example.test", retrieved_at=datetime.utcnow(),
+            content_hash="test-period-relabel", meta={},
+        )
+        db.session.add(source); db.session.flush()
+
+        # Simulate the old bug: Sep 30, 2023 was incorrectly labeled FY2024.
+        stale = FinancialPeriod(
+            company_id=company.id, source_id=source.id, period_type="FY",
+            fiscal_year=2024, end_date=date(2023, 9, 30), currency="USD",
+        )
+        db.session.add(stale); db.session.flush()
+        stale_id = stale.id
+        db.session.commit()
+
+        repaired = _upsert_period(
+            company, source, period_type="FY", fiscal_year=2023,
+            end_date=date(2023, 9, 30),
+            anchor={"end": "2023-09-30", "filed": "2023-11-03", "accn": "TEST-AAPL-2023"},
+        )
+        db.session.flush()
+
+        assert repaired.id == stale_id
+        assert repaired.fiscal_year == 2023
+        assert FinancialPeriod.query.filter_by(
+            company_id=company.id, period_type="FY", end_date=date(2023, 9, 30)
+        ).count() == 1
