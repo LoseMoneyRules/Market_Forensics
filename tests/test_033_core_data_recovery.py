@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from cryptography.fernet import Fernet
@@ -502,7 +502,7 @@ def test_033_refresh_stale_reingests_coverage_with_old_financial_normalizer(tmp_
         db.session.add(RefreshRun(
             company_id=company.id, security_id=security.id,
             refresh_type="SEC_INGEST", status="DONE",
-            started_at=date.today(), finished_at=date.today(),
+            started_at=datetime.now(), finished_at=datetime.now(),
         ))
         db.session.commit()
 
