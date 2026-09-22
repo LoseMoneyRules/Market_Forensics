@@ -56,7 +56,6 @@ def stored_model_base_quality(model: Any | None) -> str:
         or latest.get("quality")
     )
 
-# Compatibility metadata only. Automatic valuation never uses fixed sector/type multiples.
 # Compatibility export only. 0.3.2 integrity forbids fixed sector/type
 # valuation-multiple proxies in automatic valuation.
 TYPE_PRIORS: dict[str, Any] = {}
@@ -386,11 +385,6 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         "sbc_to_revenue_pct": economic_metric(economic, "sbc_to_revenue_pct"),
         "interest_coverage_x": economic_metric(economic, "interest_coverage_x"),
         "fixed_charge_coverage_x": economic_metric(economic, "fixed_charge_coverage_proxy_x"),
-        "assets": n(latest.get("assets")),
-        "liabilities": n(latest.get("liabilities")),
-        "current_assets": economic_metric(economic, "current_assets"),
-        "current_liabilities": economic_metric(economic, "current_liabilities"),
-        "retained_earnings": economic_metric(economic, "retained_earnings"),
         "goodwill": economic_metric(economic, "goodwill"),
         "net_debt_to_ebitda": net_debt_to_ebitda,
         "ccc_days": current_ccc,
@@ -565,48 +559,6 @@ def _life_cycle(metrics: dict[str, Any], company_type: str) -> str:
 
 
 
-def _altman_z(metrics: dict[str, Any], current_price: Any, company_type: str) -> dict[str, Any]:
-    if company_type == "Financial / REIT":
-        return {
-            "available": False,
-            "zone": "NOT_APPLICABLE",
-            "reason": "Altman Z is not applied to Financial / REIT balance sheets.",
-        }
-    assets = n(metrics.get("assets"))
-    liabilities = n(metrics.get("liabilities"))
-    current_assets = n(metrics.get("current_assets"))
-    current_liabilities = n(metrics.get("current_liabilities"))
-    retained = n(metrics.get("retained_earnings"))
-    ebit = n(metrics.get("operating_income"))
-    revenue = n(metrics.get("revenue"))
-    shares = n(metrics.get("shares"))
-    price = n(current_price)
-    required = (assets, liabilities, current_assets, current_liabilities, retained, ebit, revenue, shares, price)
-    if any(value is None for value in required) or assets <= 0 or liabilities <= 0 or shares <= 0 or price <= 0:
-        return {
-            "available": False,
-            "zone": "UNAVAILABLE",
-            "reason": "Filed current-assets/current-liabilities/retained-earnings inputs or market equity are incomplete.",
-        }
-    working_capital = current_assets - current_liabilities
-    market_equity = shares * price
-    score = (
-        1.2 * working_capital / assets
-        + 1.4 * retained / assets
-        + 3.3 * ebit / assets
-        + 0.6 * market_equity / liabilities
-        + 1.0 * revenue / assets
-    )
-    zone = "DISTRESS" if score < 1.81 else "GREY" if score < 2.99 else "SAFE"
-    return {
-        "available": True,
-        "score": score,
-        "zone": zone,
-        "basis": "ALTMAN_Z_PUBLIC_OPERATING_COMPANY",
-        "goodwill": n(metrics.get("goodwill")),
-    }
-
-
 def _scenario_triplet(metrics: dict[str, Any], key: str, current: float | None, *, floor: float = -.90, ceiling: float = .90) -> tuple[float | None, float | None, float | None]:
     stats = (metrics.get("history_stats") or {}).get(key) or {}
     if int(stats.get("sample_size") or 0) >= 4:
@@ -712,12 +664,15 @@ def _method_policy(metrics: dict[str, Any], calibration: dict[str, Any], company
 def _altman_z_score(metrics: dict[str, Any], company_type: str) -> dict[str, Any]:
     """Classic public-company Altman Z where the required filed inputs exist.
 
-    This is a tail-risk cross-check, not a valuation method. Financial/REIT and
-    high-intangible software models are excluded because the classic formula is
-    not economically comparable for those balance sheets.
+    Tail-risk cross-check only. Financial/REIT and high-intangible Software
+    models are excluded because the classic formula is not economically
+    comparable for those balance sheets.
     """
     if company_type in {"Financial / REIT", "Software"}:
-        return {"available": False, "state": "NOT_APPLICABLE", "score": None}
+        return {
+            "available": False, "state": "NOT_APPLICABLE", "zone": "NOT_APPLICABLE",
+            "score": None, "reason": "Classic Altman Z is not applied to this business model.",
+        }
     assets = n(metrics.get("assets"))
     liabilities = n(metrics.get("liabilities"))
     current_assets = n(metrics.get("current_assets"))
@@ -729,7 +684,10 @@ def _altman_z_score(metrics: dict[str, Any], company_type: str) -> dict[str, Any
     price = n(metrics.get("current_price"))
     required = (assets, liabilities, current_assets, current_liabilities, retained_earnings, ebit, revenue, shares, price)
     if any(value is None for value in required) or assets <= 0 or liabilities <= 0 or shares <= 0 or price <= 0:
-        return {"available": False, "state": "INSUFFICIENT", "score": None}
+        return {
+            "available": False, "state": "INSUFFICIENT", "zone": "UNAVAILABLE",
+            "score": None, "reason": "Required filed working-capital/retained-earnings inputs or market equity are incomplete.",
+        }
     working_capital = current_assets - current_liabilities
     market_equity = shares * price
     score = (
@@ -740,7 +698,11 @@ def _altman_z_score(metrics: dict[str, Any], company_type: str) -> dict[str, Any
         + 1.0 * revenue / assets
     )
     state = "DISTRESS" if score < 1.81 else "GREY" if score < 2.99 else "SAFE"
-    return {"available": True, "state": state, "score": score, "basis": "CLASSIC_PUBLIC_COMPANY_ALTMAN_Z"}
+    return {
+        "available": True, "state": state, "zone": state, "score": score,
+        "basis": "CLASSIC_PUBLIC_COMPANY_ALTMAN_Z",
+        "goodwill": n(metrics.get("goodwill")),
+    }
 
 
 def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibration: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1225,7 +1187,13 @@ def _monte_carlo_distribution(
     p10 = quantile(values, .10)
     p50 = quantile(values, .50)
     p90 = quantile(values, .90)
-    solvency = _altman_z(metrics, current_price, str((cases.get("BASE") or {}).get("company_type") or metrics.get("company_type") or "Generic"))
+    solvency_metrics = dict(metrics)
+    if n(solvency_metrics.get("current_price")) is None:
+        solvency_metrics["current_price"] = n(current_price)
+    solvency = _altman_z_score(
+        solvency_metrics,
+        str((cases.get("BASE") or {}).get("company_type") or metrics.get("company_type") or "Generic"),
+    )
     tail_factor = 1.0
     if solvency.get("available"):
         score = n(solvency.get("score"))
