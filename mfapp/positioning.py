@@ -335,11 +335,14 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
 
     decision_reasons: list[str] = []
     if observation_usable:
-        if sample.get("complete"):
-            if sample_volume_pct is None or sample_volume_pct < 70.0:
-                decision_reasons.append("COMPLETE_SAMPLE_COVERS_TOO_LITTLE_VOLUME")
-        elif sample_volume_pct is None or sample_volume_pct < 10.0:
-            decision_reasons.append("SAMPLED_VOLUME_COVERAGE_TOO_LOW")
+        if not sample.get("complete"):
+            # The current bounded Alpaca fetch takes the beginning/end of a
+            # session when pagination is truncated. That is useful context but
+            # not a statistically representative whole-day sample, so it may
+            # never move Tape rank/regime regardless of apparent coverage.
+            decision_reasons.append("PARTIAL_SAMPLE_CONTEXT_ONLY")
+        elif sample_volume_pct is None or sample_volume_pct < 70.0:
+            decision_reasons.append("COMPLETE_SAMPLE_COVERS_TOO_LITTLE_VOLUME")
     else:
         decision_reasons.extend(integrity_reasons)
 
