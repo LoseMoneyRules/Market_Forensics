@@ -38,7 +38,7 @@ from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_met
 from .valuation_engine import valuation_base_quality
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
-TERMINAL_JOB_STATUSES = ("DONE", "FAILED", "CANCELLED", "SUPERSEDED")
+TERMINAL_JOB_STATUSES = ("DONE", "FAILED", "CANCELLED", "SUPERSEDED", "DISMISSED")
 DEFAULT_JOB_LEASE_SECONDS = 30 * 60
 JOB_LEASE_SECONDS = {"DISCOVERY_SCAN": 10 * 60}
 
@@ -136,6 +136,27 @@ def cancel_job(job: Job, *, reason: str = "Cancelled by CONTROL") -> int | None:
     job.locked_at = None
     _finish_open_attempt_records(job, "CANCELLED", reason)
     return pid
+
+
+def dismiss_terminal_jobs(user_id: int, statuses: tuple[str, ...] = ("FAILED", "CANCELLED")) -> int:
+    """Clear terminal failures from the operational queue without deleting audit history."""
+    allowed = tuple(sorted({str(status).upper() for status in statuses} & {"FAILED", "CANCELLED"}))
+    if not allowed:
+        return 0
+    rows = Job.query.filter(Job.user_id == user_id, Job.status.in_(allowed)).all()
+    now = utcnow()
+    for job in rows:
+        previous = str(job.status or "").upper()
+        result = dict(job.result or {})
+        result["dismissed"] = {"at": now.isoformat(), "previous_status": previous}
+        job.result = result
+        job.status = "DISMISSED"
+        job.locked_at = None
+        if job.finished_at is None:
+            job.finished_at = now
+    if rows:
+        db.session.commit()
+    return len(rows)
 
 
 def terminate_job_executor(pid: int | None) -> bool:
@@ -867,6 +888,7 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
         calc = CalculationRun(coverage_id=calc_coverage, calculation_type=job.job_type, calculation_version=CALCULATION_VERSION,
                               inputs={"job_id": job.id, "payload": job.payload or {}}, status="RUNNING", started_at=job.started_at)
         db.session.add_all([refresh, calc]); db.session.commit(); started = time.perf_counter()
+        job_id, refresh_id, calc_id = job.id, refresh.id, calc.id
         try:
             payload = _execute_with_deadline(job)
             db.session.refresh(job)
@@ -878,7 +900,15 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
                 job.status = "DONE"; job.result = payload; job.error_message = ""; job.finished_at = finished; job.locked_at = None
                 refresh.status = "DONE"; refresh.summary = payload; refresh.finished_at = finished; calc.status = "DONE"; calc.outputs = payload; calc.finished_at = finished
         except Exception as exc:
-            db.session.refresh(job)
+            # Never let a failed job commit a half-applied unit of work. Jobs may
+            # contain many ORM writes before the final commit; rollback first,
+            # then reload the durable job/audit rows created before execution.
+            db.session.rollback()
+            job = db.session.get(Job, job_id)
+            refresh = db.session.get(RefreshRun, refresh_id)
+            calc = db.session.get(CalculationRun, calc_id)
+            if job is None or refresh is None or calc is None:
+                raise
             error_id = uuid.uuid4().hex[:12]; finished = utcnow()
             if job.status == "CANCELLED":
                 refresh.status = "CANCELLED"; refresh.summary = {"reason": job.error_message or "Cancelled"}; refresh.finished_at = finished
@@ -900,5 +930,6 @@ def run_jobs(limit: int = 5, user_id: int | None = None) -> list[dict[str, Any]]
 
 __all__ = [
     "enqueue_job", "run_jobs", "cancel_job", "terminate_job_executor",
-    "recover_stale_running_jobs", "compact_queue", "ACTIVE_JOB_STATUSES",
+    "recover_stale_running_jobs", "compact_queue", "dismiss_terminal_jobs",
+    "ACTIVE_JOB_STATUSES",
 ]
