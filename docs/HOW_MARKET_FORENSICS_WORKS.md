@@ -1962,13 +1962,11 @@ After a successful production health check, the deploy workflow synchronizes the
 
 This section is deliberately candid. A tool becomes stronger when the limits are explicit.
 
-### 24.1 Model priors can hide weak source coverage
+### 24.1 Sparse company history can reduce valuation coverage
 
-When growth or margins are unavailable, the valuation policy may use default priors.
+Automatic fixed type/sector multiple priors are no longer allowed. When the company lacks at least four comparable point-in-time anchors in both the 5Y and 10Y windows, that valuation method remains unavailable. This is safer than inventing a proxy, but newer listings and companies with discontinuous accounting history can therefore have fewer usable valuation families.
 
-That is acceptable only as an explicit model assumption.
-
-**Improvement:** surface assumption provenance per driver: FILED / HISTORICAL CALIBRATION / TYPE PRIOR / MANUAL.
+**Improvement:** surface assumption provenance per driver and method: FILED / COMPANY HISTORICAL CALIBRATION / DYNAMIC POLICY / MANUAL, together with the sample size and horizon that support each historical range.
 
 ### 24.2 Readiness approval is monotonic even if evidence deteriorates
 
