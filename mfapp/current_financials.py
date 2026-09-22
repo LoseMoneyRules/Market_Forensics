@@ -107,15 +107,19 @@ def n(value: Any) -> float | None:
 
 
 def _period_row(period: FinancialPeriod, normalized: NormalizedFinancial) -> dict[str, Any]:
+    logical_type = _logical_period_type(period.period_type)
+    quality = dict(normalized.quality or {})
+    if logical_type != str(period.period_type or ""):
+        quality.setdefault("canonical_read_recovered_identity", str(period.period_type or ""))
     row = {
         "period_id": period.id,
-        "period_type": period.period_type,
+        "period_type": logical_type,
         "fiscal_year": period.fiscal_year,
         "period_end": period.end_date.isoformat(),
         "filed_at": period.filed_at.isoformat() if period.filed_at else None,
-        "period_label": f"FY{period.fiscal_year}" if period.period_type == "FY" else f"{period.period_type} FY{period.fiscal_year}",
+        "period_label": f"FY{period.fiscal_year}" if logical_type == "FY" else f"{logical_type} FY{period.fiscal_year}",
         "source_map": normalized.source_map or {},
-        "quality": normalized.quality or {},
+        "quality": quality,
     }
     for field in FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",):
         row[field] = n(getattr(normalized, field, None))
