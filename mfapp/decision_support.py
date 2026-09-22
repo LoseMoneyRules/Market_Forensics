@@ -320,31 +320,51 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         event_type="ALPACA_POSITIONING",
     ).order_by(Event.event_date.desc(), Event.id.desc()).limit(120).all()
     positioning = dict((positioning_events[0].payload or {}) if positioning_events else {})
-    flow_by_date: dict[str, dict[str, Any]] = {}
-    flow_rejections: list[dict[str, Any]] = []
+
+    # Keep the newest observation for each session, then distinguish what may be
+    # displayed from what may influence Tape scoring. Valid reconciled SIP samples
+    # stay visible even when coverage is too small for the rank; legacy or factual
+    # integrity failures remain withheld.
+    raw_flow_by_date: dict[str, dict[str, Any]] = {}
     for event in reversed(positioning_events):
         payload = dict(event.payload or {})
         for row in ((payload.get("flow") or {}).get("rows") or []):
             day = str(row.get("date") or "")[:10]
-            if not day or day < cutoff.isoformat():
-                continue
-            usable = (
-                str(row.get("method_version") or "") == FLOW_METHOD_VERSION
-                and str(row.get("sanity_status") or "") == "PASS"
-                and bool(row.get("decision_usable"))
-            )
-            if usable:
-                flow_by_date[day] = dict(row)
-            else:
-                flow_rejections.append({
-                    "date": day,
-                    "method_version": row.get("method_version") or "LEGACY",
-                    "sanity_status": row.get("sanity_status") or "LEGACY_UNVERIFIED",
-                    "sanity_reasons": list(row.get("sanity_reasons") or ["LEGACY_OR_UNVERIFIED_FLOW"]),
-                    "source_status": row.get("source_status") or "",
-                    "feed": row.get("feed") or "",
-                })
-    flow_rows = [flow_by_date[key] for key in sorted(flow_by_date)]
+            if day and day >= cutoff.isoformat():
+                raw_flow_by_date[day] = dict(row)
+
+    flow_display_by_date: dict[str, dict[str, Any]] = {}
+    flow_score_by_date: dict[str, dict[str, Any]] = {}
+    flow_rejections: list[dict[str, Any]] = []
+    for day in sorted(raw_flow_by_date):
+        row = raw_flow_by_date[day]
+        current_method = str(row.get("method_version") or "") == FLOW_METHOD_VERSION
+        observable = (
+            current_method
+            and str(row.get("sanity_status") or "") == "PASS"
+            and bool(row.get("observation_usable"))
+        )
+        scorable = observable and bool(row.get("decision_usable"))
+        if observable:
+            flow_display_by_date[day] = row
+        if scorable:
+            flow_score_by_date[day] = row
+        if not scorable:
+            flow_rejections.append({
+                "date": day,
+                "method_version": row.get("method_version") or "LEGACY",
+                "sanity_status": row.get("sanity_status") or "LEGACY_UNVERIFIED",
+                "sanity_reasons": list(
+                    row.get("decision_reasons")
+                    or row.get("sanity_reasons")
+                    or ["LEGACY_OR_UNVERIFIED_FLOW"]
+                ),
+                "source_status": row.get("source_status") or "",
+                "feed": row.get("feed") or "",
+                "displayed": observable,
+            })
+
+    flow_rows = [flow_display_by_date[key] for key in sorted(flow_display_by_date)]
 
     for idx, row in enumerate(flow_rows):
         recent5 = flow_rows[max(0, idx - 4):idx + 1]
