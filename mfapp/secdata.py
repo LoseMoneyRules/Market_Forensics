@@ -18,7 +18,7 @@ from .sec_inline_facts import extract_extension_concepts
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.3-production-data-truth-r3"
+SEC_NORMALIZER_VERSION = "0.3.4-data-surface-integrity-r1"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
