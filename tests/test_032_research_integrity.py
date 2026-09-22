@@ -651,3 +651,60 @@ def test_032_tape_display_recovers_from_stored_evidence_without_provider_call(tm
         assert tape["metrics"]["large_buy"] == 2000000.0
         assert tape["metrics"]["net_whale"] == 500000.0
         assert tape["metrics"]["flow_observation_usable"] is True
+
+    client = app.test_client(); login(client, uid)
+    response = client.get("/company/TST/tape")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "CONSOLIDATED_SIP" in html
+    assert "No stored trade-flow observations yet." not in html
+    assert "2026-09-18" in html
+
+
+
+def test_032_fundamentals_page_uses_coalesced_current_basis(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "fundamentals_page_coalesced")
+    uid, coverage_id = seed_full_research(app)
+
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        security = db.session.get(Security, coverage.security_id)
+        active = FinancialPeriod.query.filter_by(
+            company_id=security.company_id, period_type="FY", fiscal_year=2025
+        ).first()
+        assert active is not None
+        active_row = NormalizedFinancial.query.filter_by(financial_period_id=active.id).first()
+        assert active_row is not None
+        active_row.inventory = None
+        active_sources = dict(active_row.source_map or {})
+        active_sources.pop("inventory", None)
+        active_row.source_map = active_sources
+
+        sibling = FinancialPeriod(
+            company_id=security.company_id,
+            period_type="SUPERSEDED_FY",
+            fiscal_year=active.fiscal_year,
+            start_date=active.start_date,
+            end_date=active.end_date,
+            filed_at=active.filed_at,
+            accession_no="TEST-2025-INVENTORY-SIBLING",
+            currency=active.currency,
+        )
+        db.session.add(sibling); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=sibling.id,
+            inventory=Decimal("777"),
+            source_map={"inventory": "TEST-SIBLING-INVENTORY"},
+            quality={},
+            calculation_version="0.3.4-test",
+        ))
+        db.session.commit()
+
+    client = app.test_client(); login(client, uid)
+    response = client.get("/company/TST/fundamentals")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert '<span>Inventory</span><strong>—</strong>' not in html
+    assert "TEST-SIBLING-INVENTORY" in html
+    assert "CURRENT FINANCIAL ANATOMY" in html
+    assert "fundamentals-current-strip" in html
