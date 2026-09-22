@@ -8,6 +8,10 @@
   {% include "_company_header.html" %}
   {% set section=section %}{% include "_research_tabs.html" %}
 
+  {% if core_financial_recovery_pending %}
+  <div class="notice teal"><strong>CORE FINANCIAL RECOVERY</strong> · This company is being re-ingested with financial normalizer {{ config.VERSION }}. Stored evidence remains visible while the background job rebuilds the current basis, Financial Flows and dependent Expectations.</div>
+  {% endif %}
+
   {% if section == 'overview' %}
     <div class="panel decision-map">
       <div class="panel-head"><div><p class="eyebrow">DECISION MAP</p><h2>From evidence to validation</h2></div><span class="status-chip">{{ decision_lenses.research_conclusion }}</span></div>
