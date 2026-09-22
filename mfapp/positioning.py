@@ -304,6 +304,11 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         if reference_volume not in (None, 0)
         else None
     )
+    eligible_volume_pct = (
+        eligible_share_volume / sample_share_volume * 100.0
+        if sample_share_volume > 0
+        else None
+    )
 
     sanity_reasons: list[str] = []
     if sample.get("feed") != "sip":
@@ -321,6 +326,8 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         sanity_reasons.append("SAMPLE_NOTIONAL_EXCEEDS_REFERENCE")
     if not eligible:
         sanity_reasons.append("NO_DIRECTION_ELIGIBLE_TRADES")
+    elif eligible_volume_pct is not None and eligible_volume_pct < 50.0:
+        sanity_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
 
     sanity_status = "PASS" if not sanity_reasons else "FAIL"
     decision_usable = sanity_status == "PASS"
@@ -338,6 +345,7 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         "excluded_condition_rows": excluded_condition_rows,
         "sample_share_volume": sample_share_volume,
         "eligible_share_volume": eligible_share_volume,
+        "eligible_volume_pct": eligible_volume_pct,
         "reference_volume": reference_volume,
         "sample_volume_pct": sample_volume_pct,
         "sample_total_notional": sample_total_notional,
