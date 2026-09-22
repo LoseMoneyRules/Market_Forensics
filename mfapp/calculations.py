@@ -99,10 +99,14 @@ def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None =
     # inputs themselves are insufficient.
     if gross_profit is None and revenue is not None and cogs is not None:
         gross_profit = revenue - cogs
+    operating_income = number(current.get("operating_income"))
+    operating_expenses = number(current.get("operating_expenses"))
+    if operating_income is None and gross_profit is not None and operating_expenses is not None:
+        operating_income = gross_profit - operating_expenses
     metrics = {
         "revenue_growth_pct": pct_change(current.get("revenue"), previous.get("revenue")),
         "gross_margin_pct": ratio(gross_profit, revenue, 100.0),
-        "operating_margin_pct": ratio(current.get("operating_income"), revenue, 100.0),
+        "operating_margin_pct": ratio(operating_income, revenue, 100.0),
         "net_margin_pct": ratio(current.get("net_income"), revenue, 100.0),
         "fcf_margin_pct": ratio(current.get("fcf"), revenue, 100.0),
         "cfo_margin_pct": ratio(current.get("cfo"), revenue, 100.0),
@@ -175,7 +179,6 @@ def financial_metrics(current: dict[str, Any], previous: dict[str, Any] | None =
     # Local V3.1.12 exposed ROIC. The web version keeps that signal only when
     # every required filing fact is actually present; unlike the Local fallback,
     # it does not invent a default tax rate when pretax/tax are missing.
-    operating_income = number(current.get("operating_income"))
     pretax_income = number(current.get("pretax_income"))
     income_tax = number(current.get("income_tax"))
     equity = number(current.get("equity"))

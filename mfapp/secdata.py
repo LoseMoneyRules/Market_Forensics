@@ -12,16 +12,18 @@ from .extensions import db
 from .data_providers import get_secret
 from .core_models import Company, DataQualityIssue, FinancialPeriod, NormalizedFinancial, Provenance, RawFinancialFact, Security, Source
 from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality
+from .sec_inline_facts import extract_extension_concepts
 
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.3"
+SEC_NORMALIZER_VERSION = "0.3.3-financial-completeness"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
     "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfProductsSold", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"],
     "gross_profit": ["GrossProfit"],
+    "operating_expenses": ["OperatingExpenses"],
     "operating_income": ["OperatingIncomeLoss"],
     "pretax_income": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
     "income_tax": ["IncomeTaxExpenseBenefit"],
@@ -48,12 +50,16 @@ SEMANTIC_LABEL_ALIASES = {
     "revenue": {"revenue", "revenues", "net revenue", "net revenues", "net sales", "sales", "total revenue", "total revenues", "operating revenue", "operating revenues"},
     "cogs": {"cost of sales", "cost of revenue", "cost of revenues", "cost of goods sold", "cost of goods and services sold"},
     "gross_profit": {"gross profit"},
+    "operating_expenses": {"operating expenses", "total operating expenses", "operating costs and expenses", "total operating costs and expenses"},
     "operating_income": {"operating income", "income from operations", "operating income loss"},
     "pretax_income": {"income before income taxes", "income before taxes", "earnings before income taxes"},
     "income_tax": {"income tax expense", "provision for income taxes", "income taxes"},
     "net_income": {"net income", "net income loss"},
     "cfo": {"net cash provided by operating activities", "cash provided by operations", "net cash provided by used in operating activities"},
     "capex": {"capital expenditures", "additions to property plant and equipment", "purchases of property plant and equipment"},
+    "buybacks": {"repurchases of common stock", "payments for repurchase of common stock", "share repurchases"},
+    "dividends": {"dividends paid", "payments of dividends", "common stock dividends paid"},
+    "diluted_shares": {"weighted average diluted shares outstanding", "weighted average number of diluted shares outstanding"},
     "cash": {"cash and cash equivalents", "cash and equivalents"},
     "receivables": {"accounts receivable net", "accounts receivable"},
     "inventory": {"inventories", "inventory", "inventories net", "total inventories"},
@@ -61,6 +67,7 @@ SEMANTIC_LABEL_ALIASES = {
     "assets": {"total assets"},
     "liabilities": {"total liabilities"},
     "equity": {"total shareholders equity", "total stockholders equity", "shareholders equity", "stockholders equity"},
+    "shares_outstanding": {"common shares outstanding", "common stock shares outstanding", "shares outstanding"},
 }
 
 DEBT_CURRENT_TAGS = [
@@ -72,6 +79,21 @@ DEBT_NONCURRENT_TAGS = [
 ]
 DEBT_SHORT_TERM_TAGS = ["ShortTermBorrowings", "ShortTermDebt", "CommercialPaper"]
 DEBT_COMBINED_TAGS = {"DebtLongtermAndShorttermCombinedAmount", "LongTermDebtAndFinanceLeaseObligations"}
+
+SGA_CANDIDATE_TAGS = ("SellingGeneralAndAdministrativeExpense",)
+SGA_LABEL_ALIASES = {
+    "selling general and administrative expense",
+    "selling general administrative expense",
+    "total selling and administrative expense",
+    "total selling general and administrative expense",
+}
+NONOPERATING_TOTAL_TAGS = ("NonoperatingIncomeExpense",)
+NONOPERATING_COMPONENT_TAGS = (
+    "InterestIncomeExpenseNonoperatingNet",
+    "InterestExpenseNonOperating",
+    "OtherNonoperatingIncomeExpense",
+)
+
 
 
 def _economic_maps_annual(companyfacts: dict, fiscal_year_end: str) -> tuple[dict, dict]:
@@ -147,6 +169,18 @@ def _normalize_label(value: Any) -> str:
     return " ".join(text.split())
 
 
+def _semantic_tag_groups_for_aliases(companyfacts: dict, aliases: Iterable[str]) -> dict[str, list[str]]:
+    normalized = {_normalize_label(x) for x in aliases}
+    out: dict[str, list[str]] = defaultdict(list)
+    if not normalized:
+        return out
+    for namespace, concepts in (companyfacts.get("facts") or {}).items():
+        for tag, node in (concepts or {}).items():
+            if _normalize_label((node or {}).get("label")) in normalized:
+                out[str(namespace)].append(str(tag))
+    return out
+
+
 def _semantic_tag_groups(companyfacts: dict, field: str) -> dict[str, list[str]]:
     """Find exact statement-label concepts across standard and filer taxonomies.
 
@@ -154,15 +188,7 @@ def _semantic_tag_groups(companyfacts: dict, field: str) -> dict[str, list[str]]
     after punctuation/whitespace normalization so a segment or similarly named
     disclosure is not silently treated as a consolidated statement fact.
     """
-    aliases = {_normalize_label(x) for x in SEMANTIC_LABEL_ALIASES.get(field, set())}
-    out: dict[str, list[str]] = defaultdict(list)
-    if not aliases:
-        return out
-    for namespace, concepts in (companyfacts.get("facts") or {}).items():
-        for tag, node in (concepts or {}).items():
-            if _normalize_label((node or {}).get("label")) in aliases:
-                out[str(namespace)].append(str(tag))
-    return out
+    return _semantic_tag_groups_for_aliases(companyfacts, SEMANTIC_LABEL_ALIASES.get(field, set()))
 
 
 def _merge_missing(target: dict, fallback: dict) -> None:
@@ -257,6 +283,172 @@ def _ticker_meta(ticker: str, user_agent: str) -> dict[str, str]:
             "fiscal_year_end": str(submission.get("fiscalYearEnd") or ""),
         }
     raise SECRefreshError(f"{target} not found in SEC ticker mapping.")
+
+
+def _filing_extension_source(
+    company: Company,
+    *,
+    cik: str,
+    accession: str,
+    form: str,
+    filed: str,
+    primary_document: str,
+) -> Source:
+    base = f"https://www.sec.gov/Archives/edgar/data/{int(str(cik))}/{str(accession).replace('-', '')}"
+    url = f"{base}/{primary_document}" if primary_document else base
+    source = Source.query.filter_by(
+        company_id=company.id,
+        provider="SEC",
+        source_type="FILING_XBRL_EXTENSION",
+        accession_no=str(accession or ""),
+    ).first()
+    if source is None:
+        source = Source(
+            company_id=company.id,
+            provider="SEC",
+            source_type="FILING_XBRL_EXTENSION",
+            title=f"{form} filing-level XBRL extension fallback",
+            url=url,
+            accession_no=str(accession or ""),
+            published_at=datetime.fromisoformat(str(filed)[:10]) if filed else None,
+            retrieved_at=utcnow(),
+            meta={"form": form, "cik": cik, "fallback_only": True},
+        )
+        db.session.add(source)
+        db.session.flush()
+    else:
+        source.url = source.url or url
+        source.retrieved_at = utcnow()
+    return source
+
+
+def _extension_fallback_needed(
+    duration: dict[str, dict],
+    instant: dict[str, dict],
+    companyfacts: dict,
+    fiscal_year_end: str,
+) -> bool:
+    years = sorted(set().union(*(set(rows) for rows in duration.values()), *(set(rows) for rows in instant.values())))
+    if not years:
+        return True
+    latest = years[-1]
+    operating_company_evidence = (
+        duration.get("gross_profit", {}).get(latest) is not None
+        or duration.get("cogs", {}).get(latest) is not None
+    )
+    if duration.get("revenue", {}).get(latest) is None:
+        return True
+    if operating_company_evidence and duration.get("operating_income", {}).get(latest) is None:
+        return True
+    if operating_company_evidence and instant.get("inventory", {}).get(latest) is None:
+        return True
+
+    # If Inventory is applicable annually but absent from the most recent stored
+    # quarter, a custom filing extension may be the missing current fact.
+    if any(instant.get("inventory", {}).values()):
+        quarter_inventory = _quarter_instants(
+            companyfacts, INSTANT_TAGS["inventory"], fiscal_year_end=fiscal_year_end
+        )
+        quarter_revenue_direct, quarter_revenue_ytd = _quarter_duration_sources(
+            companyfacts, DURATION_TAGS["revenue"], fiscal_year_end
+        )
+        if (quarter_revenue_direct or quarter_revenue_ytd) and not quarter_inventory:
+            return True
+    return False
+
+
+def _augment_companyfacts_with_recent_filing_extensions(
+    company: Company,
+    companyfacts: dict,
+    meta: dict[str, str],
+    user_agent: str,
+    *,
+    max_filings: int = 5,
+) -> dict[str, Any]:
+    """Add exact-label custom filing facts only when standard Companyfacts is thin."""
+    try:
+        submissions = _json(f"{SEC_DATA}/submissions/CIK{meta['cik']}.json", user_agent)
+    except Exception:
+        return {"attempted": True, "filings_scanned": 0, "concepts_added": 0, "facts_added": 0}
+
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    accns = recent.get("accessionNumber") or []
+    filed = recent.get("filingDate") or []
+    docs = recent.get("primaryDocument") or []
+
+    selected: list[int] = []
+    k_count = 0
+    q_count = 0
+    for idx, form in enumerate(forms):
+        upper = str(form or "").upper()
+        if upper in {"10-K", "10-K/A"} and k_count < 1:
+            selected.append(idx); k_count += 1
+        elif upper in {"10-Q", "10-Q/A"} and q_count < 4:
+            selected.append(idx); q_count += 1
+        if len(selected) >= max_filings:
+            break
+
+    label_aliases = {field: set(aliases) for field, aliases in SEMANTIC_LABEL_ALIASES.items()}
+    label_aliases["_sga_candidate"] = set(SGA_LABEL_ALIASES)
+    extension_namespace = (companyfacts.setdefault("facts", {})).setdefault("filing-extension", {})
+    filings_scanned = concepts_added = facts_added = 0
+
+    for idx in selected:
+        form = str(forms[idx] if idx < len(forms) else "")
+        accession = str(accns[idx] if idx < len(accns) else "")
+        primary = str(docs[idx] if idx < len(docs) else "")
+        filed_at = str(filed[idx] if idx < len(filed) else "")
+        if not accession:
+            continue
+        concepts = extract_extension_concepts(
+            cik=str(meta["cik"]),
+            accession=accession,
+            primary_document=primary,
+            form=form,
+            filed=filed_at,
+            user_agent=user_agent,
+            label_aliases=label_aliases,
+        )
+        filings_scanned += 1
+        if not concepts:
+            continue
+        filing_source = _filing_extension_source(
+            company,
+            cik=str(meta["cik"]),
+            accession=accession,
+            form=form,
+            filed=filed_at,
+            primary_document=primary,
+        )
+        for tag, node in concepts.items():
+            target = extension_namespace.setdefault(
+                tag,
+                {"label": node.get("label") or tag, "units": defaultdict(list)},
+            )
+            if not isinstance(target.get("units"), defaultdict):
+                target["units"] = defaultdict(list, target.get("units") or {})
+            before = sum(len(rows) for rows in target["units"].values())
+            for unit, rows in (node.get("units") or {}).items():
+                for raw in rows:
+                    record = dict(raw)
+                    record["_mf_source_id"] = filing_source.id
+                    record["_mf_derived_method"] = "FILING_EXTENSION_LABEL_FALLBACK"
+                    target["units"][unit].append(record)
+            after = sum(len(rows) for rows in target["units"].values())
+            if before == 0 and after > 0:
+                concepts_added += 1
+            facts_added += max(0, after - before)
+
+    for node in extension_namespace.values():
+        if isinstance(node.get("units"), defaultdict):
+            node["units"] = dict(node["units"])
+    return {
+        "attempted": True,
+        "filings_scanned": filings_scanned,
+        "concepts_added": concepts_added,
+        "facts_added": facts_added,
+    }
 
 
 def _facts(companyfacts: dict, namespace: str, tag: str) -> list[dict[str, Any]]:
@@ -362,6 +554,246 @@ def _mark_last_good_retained(source_map: dict[str, Any], field: str) -> None:
     source_map[field] = prior
 
 
+def _fact_value(record: dict[str, Any] | None) -> Decimal | None:
+    return _as_decimal((record or {}).get("val"))
+
+
+def _synthetic_record(
+    anchor: dict[str, Any] | None,
+    value: Decimal,
+    method: str,
+    derived_from: Iterable[dict[str, Any] | None] = (),
+) -> dict[str, Any]:
+    record = dict(anchor or {})
+    record["val"] = value
+    record["tag"] = "DERIVED"
+    record["namespace"] = "derived"
+    record["_mf_derived_method"] = method
+    record["_mf_derived_from_tags"] = [
+        str(item.get("tag") or "") for item in derived_from if item and item.get("tag")
+    ]
+    return record
+
+
+def _reconciles(a: Decimal | None, b: Decimal | None, tolerance: Decimal = Decimal("0.015")) -> bool:
+    if a is None or b is None:
+        return False
+    scale = max(Decimal("1"), abs(a), abs(b))
+    return abs(a - b) <= scale * tolerance
+
+
+def _nonoperating_magnitudes(
+    total: dict[str, Any] | None,
+    components: Iterable[dict[str, Any] | None],
+) -> list[Decimal]:
+    candidates: set[Decimal] = set()
+    total_value = _fact_value(total)
+    if total_value is not None:
+        candidates.add(abs(total_value))
+    values = [_fact_value(row) for row in components]
+    values = [value for value in values if value is not None]
+    if values:
+        candidates.add(abs(sum(values, Decimal("0"))))
+        candidates.add(sum((abs(value) for value in values), Decimal("0")))
+    return [value for value in candidates if value >= 0]
+
+
+def _validated_sga_operating_bridge(
+    gross_profit: dict[str, Any] | None,
+    sga: dict[str, Any] | None,
+    pretax: dict[str, Any] | None,
+    nonoperating_total: dict[str, Any] | None,
+    nonoperating_components: Iterable[dict[str, Any] | None],
+) -> tuple[Decimal | None, Decimal | None]:
+    """Resolve Nike-like statements without assuming SGA is always total OpEx.
+
+    SellingGeneralAndAdministrativeExpense is accepted as the complete operating
+    expense layer only when the resulting operating income reconciles to pre-tax
+    income through independently reported non-operating evidence (or the gap is
+    immaterial). This prevents a software company with separate R&D from having
+    SGA silently misclassified as total operating expenses.
+    """
+    gp, sga_value, pretax_value = _fact_value(gross_profit), _fact_value(sga), _fact_value(pretax)
+    if gp is None or sga_value is None or pretax_value is None:
+        return None, None
+    candidate = gp - sga_value
+    gap = abs(pretax_value - candidate)
+    scale = max(Decimal("1"), abs(pretax_value), abs(candidate), abs(gp))
+    if gap <= scale * Decimal("0.015"):
+        return sga_value, candidate
+    # SGA is a candidate component, not a license to manufacture a subtotal.
+    # If the missing bridge is large relative to the operating statement, leave
+    # it unresolved even when an unrelated non-operating amount happens to match.
+    if gap > max(Decimal("1"), abs(gp), abs(candidate)) * Decimal("0.12"):
+        return None, None
+    for magnitude in _nonoperating_magnitudes(nonoperating_total, nonoperating_components):
+        if _reconciles(gap, magnitude):
+            return sga_value, candidate
+    return None, None
+
+
+def _apply_annual_statement_bridges(
+    duration: dict[str, dict[int, dict[str, Any]]],
+    *,
+    sga: dict[int, dict[str, Any]],
+    nonoperating_total: dict[int, dict[str, Any]],
+    nonoperating_components: dict[str, dict[int, dict[str, Any]]],
+) -> None:
+    years = set().union(*(set(rows) for rows in duration.values()), set(sga), set(nonoperating_total))
+    for fy in years:
+        gp = duration.get("gross_profit", {}).get(fy)
+        op_exp = duration.get("operating_expenses", {}).get(fy)
+        op_income = duration.get("operating_income", {}).get(fy)
+        if op_income is None and gp is not None and op_exp is not None:
+            gp_value, op_exp_value = _fact_value(gp), _fact_value(op_exp)
+            if gp_value is not None and op_exp_value is not None:
+                duration["operating_income"][fy] = _synthetic_record(
+                    gp, gp_value - op_exp_value, "GROSS_PROFIT_MINUS_OPERATING_EXPENSES", (gp, op_exp)
+                )
+                op_income = duration["operating_income"][fy]
+        if op_exp is None and gp is not None and op_income is not None:
+            gp_value, op_income_value = _fact_value(gp), _fact_value(op_income)
+            if gp_value is not None and op_income_value is not None:
+                duration["operating_expenses"][fy] = _synthetic_record(
+                    gp, gp_value - op_income_value, "GROSS_PROFIT_MINUS_OPERATING_INCOME", (gp, op_income)
+                )
+                op_exp = duration["operating_expenses"][fy]
+        if op_income is not None or op_exp is not None:
+            continue
+        sga_row = sga.get(fy)
+        pretax = duration.get("pretax_income", {}).get(fy)
+        validated_expense, validated_income = _validated_sga_operating_bridge(
+            gp, sga_row, pretax, nonoperating_total.get(fy),
+            [rows.get(fy) for rows in nonoperating_components.values()],
+        )
+        if validated_expense is None or validated_income is None:
+            continue
+        expense_record = dict(sga_row or {})
+        expense_record["_mf_derived_method"] = "VALIDATED_SGA_AS_OPERATING_EXPENSES"
+        expense_record["_mf_derived_from_tags"] = [str((sga_row or {}).get("tag") or "")]
+        duration["operating_expenses"][fy] = expense_record
+        duration["operating_income"][fy] = _synthetic_record(
+            gp, validated_income, "VALIDATED_GROSS_PROFIT_MINUS_SGA",
+            [gp, sga_row, pretax, nonoperating_total.get(fy), *[rows.get(fy) for rows in nonoperating_components.values()]],
+        )
+
+
+def _quarter_info_value(info: dict[str, Any] | None) -> Decimal | None:
+    return _as_decimal((info or {}).get("value"))
+
+
+def _apply_quarter_statement_bridges(
+    quarter_duration: dict[str, dict[tuple[int, str], dict[str, Any]]],
+    *,
+    annual_duration: dict[str, dict[int, dict[str, Any]]],
+    sga: dict[tuple[int, str], dict[str, Any]],
+    nonoperating_total: dict[tuple[int, str], dict[str, Any]],
+    nonoperating_components: dict[str, dict[tuple[int, str], dict[str, Any]]],
+) -> None:
+    keys = set().union(*(set(rows) for rows in quarter_duration.values()), set(sga), set(nonoperating_total))
+    for key in sorted(keys):
+        gp_info = quarter_duration.get("gross_profit", {}).get(key)
+        op_exp_info = quarter_duration.get("operating_expenses", {}).get(key)
+        op_income_info = quarter_duration.get("operating_income", {}).get(key)
+        gp_value = _quarter_info_value(gp_info)
+        if op_income_info is None and gp_value is not None and _quarter_info_value(op_exp_info) is not None:
+            op_exp_value = _quarter_info_value(op_exp_info)
+            quarter_duration["operating_income"][key] = {
+                "value": gp_value - op_exp_value,
+                "record": (gp_info or {}).get("record"),
+                "derived_from": [(gp_info or {}).get("record"), (op_exp_info or {}).get("record")],
+                "method": "GROSS_PROFIT_MINUS_OPERATING_EXPENSES",
+            }
+            op_income_info = quarter_duration["operating_income"][key]
+        if op_exp_info is None and gp_value is not None and _quarter_info_value(op_income_info) is not None:
+            op_income_value = _quarter_info_value(op_income_info)
+            quarter_duration["operating_expenses"][key] = {
+                "value": gp_value - op_income_value,
+                "record": (gp_info or {}).get("record"),
+                "derived_from": [(gp_info or {}).get("record"), (op_income_info or {}).get("record")],
+                "method": "GROSS_PROFIT_MINUS_OPERATING_INCOME",
+            }
+            op_exp_info = quarter_duration["operating_expenses"][key]
+        if op_income_info is not None or op_exp_info is not None:
+            continue
+
+        sga_info = sga.get(key) or {}
+        pretax_info = quarter_duration.get("pretax_income", {}).get(key) or {}
+        gp_record = (gp_info or {}).get("record")
+        sga_record = sga_info.get("record")
+        pretax_record = pretax_info.get("record")
+        total_info = nonoperating_total.get(key) or {}
+        component_infos = [rows.get(key) or {} for rows in nonoperating_components.values()]
+        # Validation operates on fact-shaped records; use quarter-only values so
+        # YTD source records do not distort the accounting bridge.
+        gp_fact = _synthetic_record(gp_record, gp_value, "QUARTER_VALUE") if gp_value is not None else None
+        sga_value = _quarter_info_value(sga_info)
+        pretax_value = _quarter_info_value(pretax_info)
+        total_value = _quarter_info_value(total_info)
+        sga_fact = _synthetic_record(sga_record, sga_value, "QUARTER_VALUE") if sga_value is not None else None
+        pretax_fact = _synthetic_record(pretax_record, pretax_value, "QUARTER_VALUE") if pretax_value is not None else None
+        total_fact = _synthetic_record(total_info.get("record"), total_value, "QUARTER_VALUE") if total_value is not None else None
+        component_facts = [
+            _synthetic_record(info.get("record"), value, "QUARTER_VALUE")
+            for info in component_infos
+            if (value := _quarter_info_value(info)) is not None
+        ]
+        validated_expense, validated_income = _validated_sga_operating_bridge(
+            gp_fact, sga_fact, pretax_fact, total_fact, component_facts
+        )
+        if validated_expense is None or validated_income is None:
+            continue
+        quarter_duration["operating_expenses"][key] = {
+            "value": validated_expense,
+            "record": sga_record,
+            "derived_from": [sga_record, gp_record, pretax_record],
+            "method": "VALIDATED_SGA_AS_OPERATING_EXPENSES",
+        }
+        quarter_duration["operating_income"][key] = {
+            "value": validated_income,
+            "record": gp_record,
+            "derived_from": [gp_record, sga_record, pretax_record, total_info.get("record"), *[info.get("record") for info in component_infos]],
+            "method": "VALIDATED_GROSS_PROFIT_MINUS_SGA",
+        }
+
+    # Once Q1-Q3 have been repaired, derive missing Q4 operating rows from
+    # the compatible annual total. This is the same exact FY - Q1 - Q2 - Q3
+    # bridge used for other duration facts.
+    fiscal_years = sorted({fy for fy, _ in keys} | set(annual_duration.get("operating_income", {})) | set(annual_duration.get("operating_expenses", {})))
+    for fy in fiscal_years:
+        for field in ("operating_expenses", "operating_income"):
+            if (fy, "Q4") in quarter_duration.get(field, {}):
+                continue
+            annual_record = annual_duration.get(field, {}).get(fy)
+            annual_value = _fact_value(annual_record)
+            quarter_values = [
+                _quarter_info_value(quarter_duration.get(field, {}).get((fy, fp)))
+                for fp in ("Q1", "Q2", "Q3")
+            ]
+            if annual_value is None or any(value is None for value in quarter_values):
+                continue
+            quarter_duration[field][(fy, "Q4")] = {
+                "value": annual_value - sum(quarter_values, Decimal("0")),
+                "record": annual_record,
+                "derived_from": [
+                    *((quarter_duration.get(field, {}).get((fy, fp)) or {}).get("record") for fp in ("Q1", "Q2", "Q3")),
+                    annual_record,
+                ],
+                "method": "FY_MINUS_Q1_Q2_Q3",
+            }
+
+
+def _weighted_average_increment(current: dict[str, Any] | None, previous: dict[str, Any] | None) -> Decimal | None:
+    current_value, previous_value = _fact_value(current), _fact_value(previous)
+    current_days, previous_days = _duration_days(current or {}), _duration_days(previous or {})
+    if current_value is None or previous_value is None or current_days is None or previous_days is None:
+        return None
+    increment_days = current_days - previous_days
+    if current_days <= previous_days or increment_days <= 0:
+        return None
+    return (current_value * Decimal(current_days) - previous_value * Decimal(previous_days)) / Decimal(increment_days)
+
+
 def _annual_duration(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "", namespace: str = "us-gaap") -> dict[int, dict[str, Any]]:
     output: dict[int, dict[str, Any]] = {}
     for tag in tags:
@@ -455,8 +887,15 @@ def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: di
                 continue
             current_ytd = ytd.get((fy, fp))
             if shares_metric:
-                if current_ytd:
-                    out[(fy, fp)] = {"value": _as_decimal(current_ytd.get("val")), "record": current_ytd, "method": "YTD_SHARE_PROXY"}
+                previous_ytd = ytd.get((fy, prev_fp)) or (direct.get((fy, "Q1")) if prev_fp == "Q1" else None)
+                increment = _weighted_average_increment(current_ytd, previous_ytd)
+                if current_ytd and previous_ytd and increment is not None:
+                    out[(fy, fp)] = {
+                        "value": increment,
+                        "record": current_ytd,
+                        "derived_from": [previous_ytd, current_ytd],
+                        "method": "YTD_WEIGHTED_AVERAGE_DIFFERENCE",
+                    }
                 continue
             previous_ytd = ytd.get((fy, prev_fp)) or (direct.get((fy, "Q1")) if prev_fp == "Q1" else None)
             cur_val = _as_decimal((current_ytd or {}).get("val"))
@@ -472,7 +911,15 @@ def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: di
         annual_value = _as_decimal((annual_record or {}).get("val"))
         if annual_value is not None:
             if shares_metric:
-                out[(fy, "Q4")] = {"value": annual_value, "record": annual_record, "method": "FY_SHARE_PROXY"}
+                q3_ytd = ytd.get((fy, "Q3"))
+                increment = _weighted_average_increment(annual_record, q3_ytd)
+                if q3_ytd and increment is not None:
+                    out[(fy, "Q4")] = {
+                        "value": increment,
+                        "record": annual_record,
+                        "derived_from": [q3_ytd, annual_record],
+                        "method": "FY_MINUS_9M_WEIGHTED_AVERAGE",
+                    }
             else:
                 values = [out.get((fy, fp), {}).get("value") for fp in ("Q1", "Q2", "Q3")]
                 if all(v is not None for v in values):
@@ -538,6 +985,8 @@ def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> S
 def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) -> None:
     if not record:
         return
+    if str(record.get("tag") or "") == "DERIVED" or str(record.get("namespace") or "") == "derived":
+        return
     value = _as_decimal(record.get("val"))
     if value is None:
         return
@@ -548,7 +997,7 @@ def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) ->
         return
     db.session.add(RawFinancialFact(
         financial_period_id=period.id,
-        source_id=source.id,
+        source_id=int(record.get("_mf_source_id") or source.id),
         taxonomy=str(record.get("namespace") or "us-gaap"),
         tag=str(record.get("tag") or ""),
         unit=str(record.get("unit") or ""),
@@ -601,6 +1050,9 @@ def _finish_normalized(
     if row.operating_expenses is None and row.gross_profit is not None and row.operating_income is not None:
         row.operating_expenses = row.gross_profit - row.operating_income
         source_map.setdefault("operating_expenses", {"tag": "DERIVED", "method": "GROSS_PROFIT_MINUS_OPERATING_INCOME"})
+    if row.operating_income is None and row.gross_profit is not None and row.operating_expenses is not None:
+        row.operating_income = row.gross_profit - row.operating_expenses
+        source_map.setdefault("operating_income", {"tag": "DERIVED", "method": "GROSS_PROFIT_MINUS_OPERATING_EXPENSES"})
     if row.cfo is not None and row.capex is not None:
         row.fcf = row.cfo - row.capex
     row.source_map = source_map
@@ -990,6 +1442,145 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
     }
 
 
+def _bridge_fy_end_instants_to_q4(company: Company) -> int:
+    """Copy exact balance-sheet facts from FY to same-date Q4 when Q4 is synthetic.
+
+    A Q4 reconstructed from FY minus Q1-Q3 is a duration construct. Balance-sheet
+    facts are instants, so the issuer's FY-end Inventory/Cash/Receivables/etc. are
+    exactly the Q4-end values. This bridge restores those fields without guessing.
+    """
+    bridged = 0
+    q4_periods = FinancialPeriod.query.filter_by(company_id=company.id, period_type="Q4").all()
+    for q4_period in q4_periods:
+        fy_period = FinancialPeriod.query.filter_by(
+            company_id=company.id,
+            period_type="FY",
+            fiscal_year=q4_period.fiscal_year,
+            end_date=q4_period.end_date,
+        ).first()
+        if fy_period is None:
+            continue
+        q4_row = NormalizedFinancial.query.filter_by(financial_period_id=q4_period.id).first()
+        fy_row = NormalizedFinancial.query.filter_by(financial_period_id=fy_period.id).first()
+        if q4_row is None or fy_row is None:
+            continue
+        source_map = dict(q4_row.source_map or {})
+        changed = False
+        for field in INSTANT_TAGS:
+            if getattr(q4_row, field, None) is not None:
+                continue
+            value = getattr(fy_row, field, None)
+            if value is None:
+                continue
+            setattr(q4_row, field, value)
+            fy_ref = (fy_row.source_map or {}).get(field)
+            ref = dict(fy_ref) if isinstance(fy_ref, dict) else ({"prior_source": str(fy_ref)} if fy_ref else {})
+            ref["method"] = "FY_END_INSTANT_BRIDGE"
+            ref["bridge_from_period_id"] = fy_period.id
+            source_map[field] = ref
+            source_id = int(ref.get("source_id") or fy_period.source_id or q4_period.source_id or 0)
+            if source_id:
+                exists = Provenance.query.filter_by(
+                    object_type="normalized_financial",
+                    object_id=str(q4_period.id),
+                    field_name=field,
+                    financial_period_id=q4_period.id,
+                ).filter(Provenance.notes.like("%FY_END_INSTANT_BRIDGE%")).first()
+                if not exists:
+                    db.session.add(Provenance(
+                        source_id=source_id,
+                        object_type="normalized_financial",
+                        object_id=str(q4_period.id),
+                        field_name=field,
+                        raw_or_normalized="NORMALIZED",
+                        financial_period_id=q4_period.id,
+                        provider=str(ref.get("provider") or "SEC"),
+                        freshness_at=utcnow(),
+                        calculation_version=CALCULATION_VERSION,
+                        notes=f"{ref.get('tag','')} / FY_END_INSTANT_BRIDGE / FY period {fy_period.id}",
+                    ))
+            bridged += 1
+            changed = True
+        if changed:
+            _finish_normalized(q4_row, source_map, period_type="Q4")
+    return bridged
+
+
+def _reconcile_financial_field_issues(company: Company) -> dict[str, Any]:
+    """Turn silent current-basis holes into explicit, applicability-aware issues."""
+    pairs = (
+        db.session.query(FinancialPeriod, NormalizedFinancial)
+        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+        .filter(FinancialPeriod.company_id == company.id)
+        .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
+        .limit(40)
+        .all()
+    )
+    if not pairs:
+        return {"basis_period_id": None, "missing_expected_fields": [], "issue_count": 0}
+
+    # Prefer the newest quarter when it is newer than FY; on the same date Q4 is
+    # the current quarter basis because FY-end instant bridges have already run.
+    current_period, current = pairs[0]
+    annual = [(period, row) for period, row in pairs if period.period_type == "FY"][:3]
+    historical_operating_income = any(row.operating_income is not None for _, row in annual)
+    historical_presence = {
+        field: any(getattr(row, field, None) is not None for _, row in annual)
+        for field in ("cash", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "shares_outstanding")
+    }
+
+    expected_missing: list[str] = []
+    if (
+        current.operating_income is None
+        and (
+            current.gross_profit is not None
+            or current.operating_expenses is not None
+            or historical_operating_income
+        )
+    ):
+        expected_missing.append("operating_income")
+    for field, expected in historical_presence.items():
+        if expected and getattr(current, field, None) is None:
+            expected_missing.append(field)
+
+    active_codes = {f"MISSING_EXPECTED_{field.upper()}" for field in expected_missing}
+    existing = DataQualityIssue.query.filter(
+        DataQualityIssue.company_id == company.id,
+        DataQualityIssue.object_type == "financial_basis",
+        DataQualityIssue.status == "OPEN",
+        DataQualityIssue.code.like("MISSING_EXPECTED_%"),
+    ).all()
+    for issue in existing:
+        if issue.code not in active_codes or issue.object_id != str(current_period.id):
+            issue.status = "RESOLVED"
+            issue.resolved_at = utcnow()
+
+    existing_keys = {(issue.code, issue.object_id) for issue in existing if issue.status == "OPEN"}
+    for field in expected_missing:
+        code = f"MISSING_EXPECTED_{field.upper()}"
+        key = (code, str(current_period.id))
+        if key in existing_keys:
+            continue
+        db.session.add(DataQualityIssue(
+            company_id=company.id,
+            object_type="financial_basis",
+            object_id=str(current_period.id),
+            code=code,
+            severity="REVIEW",
+            message=(
+                f"{current_period.period_type} FY{current_period.fiscal_year}: {field.replace('_', ' ')} "
+                "is missing even though issuer evidence indicates this field is applicable. "
+                "The current basis remains in data review until provider/normalization evidence resolves it."
+            ),
+        ))
+    return {
+        "basis_period_id": current_period.id,
+        "basis": f"{current_period.period_type} FY{current_period.fiscal_year}",
+        "missing_expected_fields": sorted(expected_missing),
+        "issue_count": len(expected_missing),
+    }
+
+
 def _reconcile_annual_history_issues(company: Company, target_years: int = 10) -> dict[str, Any]:
     """Persist visible quality issues for annual depth and holes between stored FYs."""
     rows = (
@@ -1086,6 +1677,10 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
     instant = {key: _annual_instant(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
 
+    extension_fallback = {
+        "attempted": False, "filings_scanned": 0, "concepts_added": 0, "facts_added": 0,
+    }
+
     # Companyfacts can expose a perfectly valid consolidated statement concept
     # under the filer's own taxonomy. Use exact statement-label matches only when
     # the canonical US-GAAP mapping did not resolve that fiscal period.
@@ -1097,6 +1692,57 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         for namespace, tags in _semantic_tag_groups(companyfacts, field).items():
             fallback_rows = _annual_instant(companyfacts, tags, namespace=namespace, fiscal_year_end=fiscal_year_end)
             _merge_missing(instant[field], _mark_semantic_records(fallback_rows, namespace))
+
+    # Generic statement-algebra inputs. SGA is only promoted to total operating
+    # expense when it independently reconciles to pretax/non-operating evidence.
+    sga_annual = _annual_duration(companyfacts, SGA_CANDIDATE_TAGS, fiscal_year_end)
+    for namespace, tags in _semantic_tag_groups_for_aliases(companyfacts, SGA_LABEL_ALIASES).items():
+        _merge_missing(
+            sga_annual,
+            _mark_semantic_records(_annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace), namespace),
+        )
+    nonoperating_total_annual = _annual_duration(companyfacts, NONOPERATING_TOTAL_TAGS, fiscal_year_end)
+    nonoperating_components_annual = {
+        tag: _annual_duration(companyfacts, [tag], fiscal_year_end)
+        for tag in NONOPERATING_COMPONENT_TAGS
+    }
+    _apply_annual_statement_bridges(
+        duration,
+        sga=sga_annual,
+        nonoperating_total=nonoperating_total_annual,
+        nonoperating_components=nonoperating_components_annual,
+    )
+
+    # Only leave Companyfacts when the standard + exact-label + accounting-algebra
+    # ladder is still incomplete. SEC filing-level extensions are bounded and are
+    # then fed back through the same resolver rather than handled per ticker.
+    if _extension_fallback_needed(duration, instant, companyfacts, fiscal_year_end):
+        extension_fallback = _augment_companyfacts_with_recent_filing_extensions(
+            company, companyfacts, meta, user_agent
+        )
+        if int(extension_fallback.get("facts_added") or 0) > 0:
+            for field in DURATION_TAGS:
+                for namespace, tags in _semantic_tag_groups(companyfacts, field).items():
+                    fallback_rows = _annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace)
+                    _merge_missing(duration[field], _mark_semantic_records(fallback_rows, namespace))
+            for field in INSTANT_TAGS:
+                for namespace, tags in _semantic_tag_groups(companyfacts, field).items():
+                    fallback_rows = _annual_instant(companyfacts, tags, namespace=namespace, fiscal_year_end=fiscal_year_end)
+                    _merge_missing(instant[field], _mark_semantic_records(fallback_rows, namespace))
+
+            # Rebuild the reconciliation-gated SGA bridge with any custom filing
+            # concepts that now have exact human-readable labels.
+            for namespace, tags in _semantic_tag_groups_for_aliases(companyfacts, SGA_LABEL_ALIASES).items():
+                _merge_missing(
+                    sga_annual,
+                    _mark_semantic_records(_annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace), namespace),
+                )
+            _apply_annual_statement_bridges(
+                duration,
+                sga=sga_annual,
+                nonoperating_total=nonoperating_total_annual,
+                nonoperating_components=nonoperating_components_annual,
+            )
 
     debt_current_annual = _annual_instant(companyfacts, DEBT_CURRENT_TAGS, fiscal_year_end=fiscal_year_end)
     debt_noncurrent_annual = _annual_instant(companyfacts, DEBT_NONCURRENT_TAGS, fiscal_year_end=fiscal_year_end)
@@ -1124,7 +1770,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             value = _as_decimal((rec or {}).get("val"))
             if rec and value is not None:
                 setattr(normalized, field, value)
-                source_map[field] = {"tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap", "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY"}
+                source_map[field] = {"tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap", "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": int(rec.get("_mf_source_id") or source.id), "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY")}
             elif getattr(normalized, field, None) is not None:
                 _mark_last_good_retained(source_map, field)
         for field, records in instant.items():
@@ -1135,8 +1781,8 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
-                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
-                    "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY",
+                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": int(rec.get("_mf_source_id") or source.id),
+                    "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY"),
                 }
             elif getattr(normalized, field, None) is not None:
                 _mark_last_good_retained(source_map, field)
@@ -1213,6 +1859,38 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             )
             _merge_missing(quarter_duration[field], _mark_semantic_records(semantic_quarters, namespace))
 
+    # Repair operating statement fields before creating quarter periods. This uses
+    # the same generic, reconciliation-gated ladder for every issuer.
+    sga_quarter = _quarter_duration_values(
+        companyfacts, SGA_CANDIDATE_TAGS, sga_annual, fiscal_year_end=fiscal_year_end
+    )
+    for namespace, tags in _semantic_tag_groups_for_aliases(companyfacts, SGA_LABEL_ALIASES).items():
+        semantic_sga_annual = _annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace)
+        semantic_sga_quarter = _quarter_duration_values(
+            companyfacts, tags, semantic_sga_annual,
+            fiscal_year_end=fiscal_year_end, namespace=namespace,
+        )
+        _merge_missing(sga_quarter, _mark_semantic_records(semantic_sga_quarter, namespace))
+
+    nonoperating_total_quarter = _quarter_duration_values(
+        companyfacts, NONOPERATING_TOTAL_TAGS, nonoperating_total_annual,
+        fiscal_year_end=fiscal_year_end,
+    )
+    nonoperating_components_quarter = {
+        tag: _quarter_duration_values(
+            companyfacts, [tag], nonoperating_components_annual[tag],
+            fiscal_year_end=fiscal_year_end,
+        )
+        for tag in NONOPERATING_COMPONENT_TAGS
+    }
+    _apply_quarter_statement_bridges(
+        quarter_duration,
+        annual_duration=duration,
+        sga=sga_quarter,
+        nonoperating_total=nonoperating_total_quarter,
+        nonoperating_components=nonoperating_components_quarter,
+    )
+
     quarter_instant = {field: _quarter_instants(companyfacts, tags, fiscal_year_end=fiscal_year_end) for field, tags in INSTANT_TAGS.items()}
     for field in INSTANT_TAGS:
         for namespace, semantic_tags in _semantic_tag_groups(companyfacts, field).items():
@@ -1253,9 +1931,9 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": (record or {}).get("tag"), "accession": (record or {}).get("accn"),
-                    "filed": (record or {}).get("filed"), "source_id": source.id,
+                    "filed": (record or {}).get("filed"), "source_id": int((record or {}).get("_mf_source_id") or source.id),
                     "namespace": (record or {}).get("_mf_namespace") or (record or {}).get("namespace") or "us-gaap",
-                    "method": "SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method"),
+                    "method": (record or {}).get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method")),
                 }
             elif getattr(normalized, field, None) is not None:
                 _mark_last_good_retained(source_map, field)
@@ -1267,8 +1945,8 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
-                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
-                    "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT",
+                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": int(rec.get("_mf_source_id") or source.id),
+                    "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT"),
                 }
             elif getattr(normalized, field, None) is not None:
                 _mark_last_good_retained(source_map, field)
@@ -1307,6 +1985,8 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         quarter_saved += 1
 
     fallback = _alpha_vantage_fill_missing(company, security, user_id)
+    fy_end_instant_bridges = _bridge_fy_end_instants_to_q4(company)
+    field_integrity = _reconcile_financial_field_issues(company)
     annual_history = _reconcile_annual_history_issues(company, target_years=10)
 
     company.legal_name = meta["name"] or company.legal_name
@@ -1323,6 +2003,9 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "years": years[-16:], "quarter_periods": [f"FY{fy}-{fp}" for fy, fp in quarter_keys[-24:]],
         "source_id": source.id,
         "normalizer_version": SEC_NORMALIZER_VERSION,
+        "fy_end_instant_bridges": fy_end_instant_bridges,
+        "field_integrity": field_integrity,
+        "filing_extension_fallback": extension_fallback,
         "fundamental_fallback": fallback,
         "annual_history": annual_history,
     }

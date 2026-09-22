@@ -34,7 +34,7 @@ from .management_promises import (
 from .macro_context import refresh_macro_context
 from .market_discovery import market_scan
 from .positioning import refresh_positioning_bundle
-from .secdata import SEC_DATA, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
+from .secdata import SEC_DATA, SEC_NORMALIZER_VERSION, _json as sec_json, _ticker_meta as sec_ticker_meta, _ua as sec_user_agent, refresh_company_fundamentals
 from .valuation_engine import valuation_base_quality
 
 ACTIVE_JOB_STATUSES = ("QUEUED", "RUNNING")
@@ -669,7 +669,20 @@ def _stale(user_id: int) -> dict[str, Any]:
             specs.append(("PRICE_HISTORY_REFRESH", 35))
         if sec_ready:
             last_sec = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="SEC_INGEST", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
-            if last_sec is None or last_sec.finished_at is None or (now - last_sec.finished_at).total_seconds() > 24 * 3600:
+            latest_companyfacts = (
+                Source.query
+                .filter_by(company_id=security.company_id, provider="SEC", source_type="COMPANYFACTS")
+                .order_by(Source.retrieved_at.desc(), Source.id.desc())
+                .first()
+            )
+            stored_normalizer = str(((latest_companyfacts.meta or {}).get("normalizer_version") if latest_companyfacts else "") or "")
+            normalizer_stale = stored_normalizer != SEC_NORMALIZER_VERSION
+            if (
+                normalizer_stale
+                or last_sec is None
+                or last_sec.finished_at is None
+                or (now - last_sec.finished_at).total_seconds() > 24 * 3600
+            ):
                 specs.append(("SEC_INGEST", 40))
         last_macro = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="MACRO_REFRESH", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
         if last_macro is None or last_macro.finished_at is None or (now - last_macro.finished_at).total_seconds() > 24 * 3600:
