@@ -586,14 +586,15 @@ def _nonoperating_magnitudes(
     total: dict[str, Any] | None,
     components: Iterable[dict[str, Any] | None],
 ) -> list[Decimal]:
+    candidates: set[Decimal] = set()
     total_value = _fact_value(total)
     if total_value is not None:
-        return [abs(total_value)]
+        candidates.add(abs(total_value))
     values = [_fact_value(row) for row in components]
     values = [value for value in values if value is not None]
-    if not values:
-        return []
-    candidates = {abs(sum(values, Decimal("0"))), sum((abs(value) for value in values), Decimal("0"))}
+    if values:
+        candidates.add(abs(sum(values, Decimal("0"))))
+        candidates.add(sum((abs(value) for value in values), Decimal("0")))
     return [value for value in candidates if value >= 0]
 
 
@@ -620,6 +621,11 @@ def _validated_sga_operating_bridge(
     scale = max(Decimal("1"), abs(pretax_value), abs(candidate), abs(gp))
     if gap <= scale * Decimal("0.015"):
         return sga_value, candidate
+    # SGA is a candidate component, not a license to manufacture a subtotal.
+    # If the missing bridge is large relative to the operating statement, leave
+    # it unresolved even when an unrelated non-operating amount happens to match.
+    if gap > max(Decimal("1"), abs(gp), abs(candidate)) * Decimal("0.12"):
+        return None, None
     for magnitude in _nonoperating_magnitudes(nonoperating_total, nonoperating_components):
         if _reconciles(gap, magnitude):
             return sga_value, candidate
