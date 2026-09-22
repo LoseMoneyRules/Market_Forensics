@@ -11,8 +11,15 @@
 > Any material change to workflow, rules, thresholds, data policy, valuation, validation,
 > Portfolio separation, privacy/security or permanent UI invariants must update that file too.
 
-**State-Version: 0.3.2**  
+**State-Version: 0.3.3**  
 **Product:** Market Forensics  
+**0.3.3 core-data recovery branch:** `release/0.3.3-core-data-recovery`, created directly from clean `main` `bc2761293c9dc415a9331a9ddaaa5299a537913d` after verifying VERSION 0.3.2, latest commit and successful 0.3.2 CI/deploy state.  
+**0.3.3 financial-basis rule:** SEC quarter identity is derived from the fact period end plus issuer fiscal year-end rather than trusting filing-level `fp`; Revenue concept coverage includes the standard including-tax concept plus conservative exact-label filer-taxonomy aliases. A structurally consecutive but Revenue-empty four-quarter set is not a valid TTM and cannot hide a valid annual basis.  
+**0.3.3 last-good integrity rule:** a refresh that cannot resolve a previously sourced fact for the same stored period retains that fact with `LAST_GOOD_RETAINED` provenance and visibly marks refresh incompleteness; values are never carried into a different/new financial period. Open MISSING_REVENUE issues resolve when Revenue becomes sourced.  
+**0.3.3 existing-Coverage recovery:** SEC COMPANYFACTS sources carry `normalizer_version=0.3.3`. Opening legacy Coverage may queue one deduplicated background SEC_INGEST when its stored normalizer version is older; GET navigation itself remains provider-free. Successful SEC ingest recalculates flows/autofill/cache so Current Financial Anatomy, Financial Flows and Expectations share the recovered basis.  
+**0.3.3 job integrity / Data UI:** failed job attempts roll back uncommitted business writes before terminal failure is recorded. CONTROL can clear FAILED/CANCELLED rows from the operational view by marking them DISMISSED without deleting audit/history. Settings consolidates the former Background Work and Data Ingestion panels into one Data Operations view because ingestion is one class of background job; Data Coverage is compact/collapsible.  
+**0.3.3 verification state:** release branch implementation complete; PR/CI/main/deploy identifiers are filled only after those gates actually complete.  
+
 **0.3.2 Validate / Regime / Peer closure branch:** `fix/0.3.2-validate-regime-peers`, created directly from clean main `4056482cce9f6f15c721464ea547c4d6cdbdfb5d`; VERSION remains 0.3.2.  
 **0.3.2 Validate / Regime / Peer pull request:** #63 `0.3.2: Validate parity, structural regimes & verified peers` merged by squash to `main` as `c4b8252589d993fe63f79bf71e82073145a8aae5`; VERSION remains 0.3.2.  
 **0.3.2 Validate / Regime / Peer verification:** final branch push CI #1689 / run `35683739052` SUCCESS; PR CI #1690 / run `35683827619` SUCCESS; post-merge main CI #1691 / run `35683919712` SUCCESS. All passed release metadata, Python/YAML/JS checks, full pytest, production-minimal startup + rich-report smoke and self-contained reporting-vendor smoke.  
