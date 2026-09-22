@@ -83,7 +83,12 @@ class InlineFactsParser(HTMLParser):
 
         if self._context is not None:
             self._context_depth += 1
-            if low.endswith(":explicitmember") or low.endswith(":typedmember"):
+            if (
+                low.endswith(":explicitmember")
+                or low.endswith(":typedmember")
+                or low.endswith(":segment")
+                or low.endswith(":scenario")
+            ):
                 self._context["dimensional"] = True
             if low.endswith(":startdate"):
                 self._context_capture = "start"
