@@ -12,7 +12,7 @@ from typing import Any
 
 from .autofill import prefill_coverage
 from .calculations import CALCULATION_VERSION, build_cash_flow, build_income_statement_flow, calculate_valuation, financial_metrics
-from .current_financials import canonical_annual_pairs, current_row
+from .current_financials import canonical_annual_rows, current_row
 from .core_models import (
     Alert, CalculationRun, Company, Coverage, DataQualityIssue, Event, FinancialFlow,
     FinancialPeriod, HistoricalPrice, Job, NormalizedFinancial, RefreshRun, Security, Source,
@@ -223,24 +223,33 @@ def recover_stale_running_jobs(user_id: int | None = None, stale_after_minutes: 
     return recovered
 
 
-def _flow_row(period: FinancialPeriod, row: NormalizedFinancial) -> dict[str, Any]:
+def _flow_row(period: FinancialPeriod, row: dict[str, Any]) -> dict[str, Any]:
     return {
         "period_label": f"FY{period.fiscal_year}", "fiscal_year": period.fiscal_year,
-        "revenue": row.revenue, "cogs": row.cogs, "gross_profit": row.gross_profit,
-        "operating_expenses": row.operating_expenses, "operating_income": row.operating_income,
-        "pretax_income": row.pretax_income, "income_tax": row.income_tax, "net_income": row.net_income,
-        "cfo": row.cfo, "capex": row.capex, "fcf": row.fcf, "buybacks": row.buybacks, "dividends": row.dividends,
+        "revenue": row.get("revenue"), "cogs": row.get("cogs"), "gross_profit": row.get("gross_profit"),
+        "operating_expenses": row.get("operating_expenses"), "operating_income": row.get("operating_income"),
+        "pretax_income": row.get("pretax_income"), "income_tax": row.get("income_tax"), "net_income": row.get("net_income"),
+        "cfo": row.get("cfo"), "capex": row.get("capex"), "fcf": row.get("fcf"),
+        "buybacks": row.get("buybacks"), "dividends": row.get("dividends"),
     }
 
 
 def recalculate_company(company_id: int, coverage_id: int | None = None) -> dict[str, Any]:
-    # Recalculate only canonical FY identities. Superseded/legacy duplicates stay
-    # auditable but must never generate flows, metrics or valuation inputs.
-    pairs = list(reversed(canonical_annual_pairs(company_id)))
+    # Recalculate one canonical write target per represented FY, but use the
+    # coalesced read contract so complementary facts preserved on sibling
+    # identities are not dropped from flows, metrics or valuation inputs.
+    rows = list(reversed(canonical_annual_rows(company_id)))
     previous = None; metrics_out = []; calculated = 0
-    for period, row in pairs:
+    for row in rows:
+        period_id = int(row.get("period_id") or 0)
+        period = db.session.get(FinancialPeriod, period_id) if period_id else None
+        if period is None:
+            continue
         flow_row = _flow_row(period, row)
-        enriched = flow_row | {"receivables": row.receivables, "inventory": row.inventory, "payables": row.payables, "cash": row.cash, "debt": row.debt}
+        enriched = flow_row | {
+            "receivables": row.get("receivables"), "inventory": row.get("inventory"),
+            "payables": row.get("payables"), "cash": row.get("cash"), "debt": row.get("debt"),
+        }
         metrics_out.append({"fiscal_year": period.fiscal_year, "metrics": financial_metrics(enriched, previous)}); previous = enriched
         for flow_type, payload in (("INCOME_STATEMENT", build_income_statement_flow(flow_row)), ("CASH_FLOW", build_cash_flow(flow_row))):
             flow = FinancialFlow.query.filter_by(financial_period_id=period.id, flow_type=flow_type, calculation_version=CALCULATION_VERSION).first()
@@ -735,6 +744,28 @@ def _store_finra_bundle(security: Security, bundle: dict[str, Any]) -> dict[str,
     db.session.commit(); return result
 
 
+def _publish_tape_after_evidence(security: Security | None, coverage_id: int | None) -> dict[str, Any]:
+    if not coverage_id or security is None:
+        return {"patched": False, "reason": "coverage unavailable"}
+    try:
+        from .decision_support import tape_series
+        from .research_cache import patch_research_cache_tape
+
+        tape = tape_series(security, 12)
+        patch_research_cache_tape(coverage_id, tape)
+        return {
+            "patched": True,
+            "market_rows": len(tape.get("daily_market") or []),
+            "flow_rows": len(tape.get("institutional_flow") or []),
+            "tape_rows": len(tape.get("tape_daily") or []),
+        }
+    except Exception as exc:
+        # Evidence persistence is the source of truth. A cache patch failure must
+        # not roll back a successful provider job; the queued RECALCULATE remains
+        # the recovery path and cache staleness detection will keep it fail-closed.
+        return {"patched": False, "reason": type(exc).__name__}
+
+
 def _queue_recalculate_after_evidence(job: Job, security: Security | None, coverage_id: int | None) -> int | None:
     if not coverage_id or security is None:
         return None
@@ -760,7 +791,10 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "PRICE_HISTORY_REFRESH":
         if not security: raise RuntimeError("Security not found")
         lookback_years = max(2, min(int((job.payload or {}).get("lookback_years") or 10), 20))
-        return refresh_historical_prices(security, job.user_id, lookback_years)
+        result = refresh_historical_prices(security, job.user_id, lookback_years)
+        result["tape_cache"] = _publish_tape_after_evidence(security, coverage_id)
+        result["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
+        return result
     if kind == "SEC_INGEST":
         company = db.session.get(Company, job.company_id or (security.company_id if security else None))
         if not security or not company: raise RuntimeError("Company/security not found")
@@ -815,6 +849,7 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "FINRA_IMPORT":
         if not security: raise RuntimeError("Security not found")
         payload = _store_finra_bundle(security, refresh_finra_bundle(security.ticker, job.user_id, int((job.payload or {}).get("lookback_days") or 35)))
+        payload["tape_cache"] = _publish_tape_after_evidence(security, coverage_id)
         payload["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         return payload
     if kind == "POSITIONING_REFRESH":
@@ -828,6 +863,7 @@ def _execute(job: Job) -> dict[str, Any]:
             payload=bundle,
         ))
         db.session.commit()
+        bundle["tape_cache"] = _publish_tape_after_evidence(security, coverage_id)
         bundle["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         return bundle
     if kind == "DEEP_VALIDATION":

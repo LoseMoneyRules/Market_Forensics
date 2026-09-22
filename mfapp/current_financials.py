@@ -29,18 +29,29 @@ def _normalized_richness(normalized: NormalizedFinancial) -> tuple[int, int]:
 
 
 def _period_candidate_score(period: FinancialPeriod, normalized: NormalizedFinancial, *, annual: bool) -> tuple:
-    """Prefer canonical, evidence-rich rows when legacy duplicate identities share an end date.
-
-    Old parser revisions could store the same represented period under a wrong fiscal
-    year/quarter label. Those rows are audit evidence, but they must never win a live
-    Research read merely because their database id is newer.
-    """
+    """Rank factual evidence inside one represented-period family."""
     populated, sourced = _normalized_richness(normalized)
     year_match = int(bool(annual and period.end_date and int(period.fiscal_year or 0) == period.end_date.year))
     source_id = int(period.source_id or 0)
     filed = period.filed_at.toordinal() if period.filed_at else 0
     updated = normalized.updated_at.isoformat() if normalized.updated_at else ""
     return (year_match, populated, sourced, source_id, filed, updated, int(period.id or 0))
+
+
+def _period_anchor_score(period: FinancialPeriod, normalized: NormalizedFinancial, *, annual: bool) -> tuple:
+    """Choose the durable live/write identity; evidence richness is secondary.
+
+    A SUPERSEDED/SUP row may contribute individual facts to the coalesced read,
+    but it must not become the period_id used by flows/provenance merely because
+    it contains more fields than the active canonical shell.
+    """
+    raw_type = str(period.period_type or "").upper()
+    active = int(not raw_type.startswith(("SUPERSEDED_", "SUP_")))
+    populated, sourced = _normalized_richness(normalized)
+    year_match = int(bool(annual and period.end_date and int(period.fiscal_year or 0) == period.end_date.year))
+    filed = period.filed_at.toordinal() if period.filed_at else 0
+    source_id = int(period.source_id or 0)
+    return (active, year_match, populated, sourced, source_id, filed, int(period.id or 0))
 
 
 def _logical_period_type(value: str | None) -> str:
@@ -64,22 +75,26 @@ def _period_family_filter(period_types: tuple[str, ...]):
     return or_(*clauses)
 
 
-def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, annual: bool) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
-    # Read every stored identity in the represented-period family, including
-    # audit-preserved SUPERSEDED/SUP rows. Production can contain a rich legacy
-    # row plus a sparse active shell after an older parser revision. Live reads
-    # must choose the richest factual evidence, not blindly trust active/newest id.
-    pairs = (
+def _period_family_pairs(company_id: int, period_types: tuple[str, ...]) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+    return (
         db.session.query(FinancialPeriod, NormalizedFinancial)
         .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
         .filter(FinancialPeriod.company_id == company_id, _period_family_filter(period_types))
         .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
         .all()
     )
+
+
+def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, annual: bool) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+    # Keep one durable database identity per represented period for write targets
+    # (flows/provenance/audit). Read surfaces separately coalesce complementary
+    # facts across the whole same-end family so a sparse active shell can never
+    # hide valid stored evidence from a richer sibling.
+    pairs = _period_family_pairs(company_id, period_types)
     by_end: dict[date, tuple[FinancialPeriod, NormalizedFinancial]] = {}
     for period, normalized in pairs:
         current = by_end.get(period.end_date)
-        if current is None or _period_candidate_score(period, normalized, annual=annual) > _period_candidate_score(current[0], current[1], annual=annual):
+        if current is None or _period_anchor_score(period, normalized, annual=annual) > _period_anchor_score(current[0], current[1], annual=annual):
             by_end[period.end_date] = (period, normalized)
     return sorted(
         by_end.values(),
@@ -118,7 +133,7 @@ def _period_row(period: FinancialPeriod, normalized: NormalizedFinancial) -> dic
         "period_end": period.end_date.isoformat(),
         "filed_at": period.filed_at.isoformat() if period.filed_at else None,
         "period_label": f"FY{period.fiscal_year}" if logical_type == "FY" else f"{logical_type} FY{period.fiscal_year}",
-        "source_map": normalized.source_map or {},
+        "source_map": dict(normalized.source_map or {}),
         "quality": quality,
     }
     for field in FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",):
@@ -126,9 +141,75 @@ def _period_row(period: FinancialPeriod, normalized: NormalizedFinancial) -> dic
     return row
 
 
+def _canonical_period_rows(company_id: int, period_types: tuple[str, ...], *, annual: bool) -> list[dict[str, Any]]:
+    """Coalesce complementary facts that represent the same economic period.
+
+    Production history can contain an audit-preserved rich legacy identity and a
+    newer sparse canonical shell. Picking one row is not enough: Revenue may live
+    on one identity while Inventory/Cash/Receivables live on another. For read
+    surfaces we choose the best source independently for every normalized field,
+    while preserving one canonical period_id as the durable write/audit target.
+    """
+    pairs = _period_family_pairs(company_id, period_types)
+    by_end: dict[date, list[tuple[FinancialPeriod, NormalizedFinancial]]] = {}
+    for period, normalized in pairs:
+        by_end.setdefault(period.end_date, []).append((period, normalized))
+
+    out: list[dict[str, Any]] = []
+    for family in by_end.values():
+        anchor_period, anchor_normalized = max(
+            family,
+            key=lambda pair: _period_anchor_score(pair[0], pair[1], annual=annual),
+        )
+        row = _period_row(anchor_period, anchor_normalized)
+        source_map = dict(row.get("source_map") or {})
+        merged_ids: set[int] = {int(anchor_period.id)}
+        for field in NORMALIZED_FIELDS:
+            candidates = [
+                pair for pair in family
+                if n(getattr(pair[1], field, None)) is not None
+            ]
+            if not candidates:
+                continue
+            winner_period, winner_normalized = max(
+                candidates,
+                key=lambda pair: _period_candidate_score(pair[0], pair[1], annual=annual),
+            )
+            row[field] = n(getattr(winner_normalized, field, None))
+            winner_source = dict(winner_normalized.source_map or {}).get(field)
+            if winner_source:
+                source_map[field] = winner_source
+            merged_ids.add(int(winner_period.id))
+
+        row["source_map"] = source_map
+        if len(merged_ids) > 1:
+            quality = dict(row.get("quality") or {})
+            quality["canonical_read_coalesced"] = True
+            quality["canonical_read_period_ids"] = sorted(merged_ids)
+            row["quality"] = quality
+        out.append(row)
+
+    return sorted(
+        out,
+        key=lambda row: (
+            str(row.get("period_end") or ""),
+            str(row.get("filed_at") or ""),
+            int(row.get("period_id") or 0),
+        ),
+        reverse=True,
+    )
+
+
+def canonical_annual_rows(company_id: int) -> list[dict[str, Any]]:
+    return _canonical_period_rows(company_id, ("FY",), annual=True)
+
+
+def canonical_quarter_rows(company_id: int) -> list[dict[str, Any]]:
+    return _canonical_period_rows(company_id, ("Q1", "Q2", "Q3", "Q4"), annual=False)
+
+
 def annual_rows(company_id: int, limit: int = 15) -> list[dict[str, Any]]:
-    pairs = canonical_annual_pairs(company_id)[:max(1, limit)]
-    rows = [_period_row(period, normalized) for period, normalized in pairs]
+    rows = canonical_annual_rows(company_id)[:max(1, limit)]
     chronological = list(reversed(rows))
     previous: dict[str, Any] = {}
     for row in chronological:
@@ -238,8 +319,7 @@ def annual_history_grid(
 
 
 def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
-    pairs = canonical_quarter_pairs(company_id)[:max(8, limit)]
-    rows = [_period_row(period, normalized) for period, normalized in pairs]
+    rows = canonical_quarter_rows(company_id)[:max(8, limit)]
 
     lookup = {(row.get("fiscal_year"), row.get("period_type")): row for row in rows}
     for row in rows:

@@ -423,6 +423,55 @@ def _fallback_synthesis(ctx: dict) -> dict:
     }
 
 
+def _materialized_tape_for_display(security: Security, cache: dict[str, Any]) -> dict:
+    """Return the freshest DB-materialized Tape view without provider calls.
+
+    Research cache remains the fast path. If stored Tape/FINRA evidence is newer
+    than that cache (or the cache has no Tape payload), rebuild only the Tape
+    surface from local database evidence so charts and Large/Whale do not render
+    blank while a full RECALCULATE job is still queued.
+    """
+    cached = dict((cache or {}).get("tape") or {})
+    generated_raw = (cache or {}).get("_generated_at")
+    try:
+        generated_at = datetime.fromisoformat(str(generated_raw)) if generated_raw else None
+    except (TypeError, ValueError):
+        generated_at = None
+
+    latest_evidence = (
+        Event.query
+        .filter(
+            Event.company_id == security.company_id,
+            Event.event_type.in_((
+                "ALPACA_POSITIONING",
+                "FINRA_SHORT_VOLUME_SERIES",
+                "FINRA_SHORT_INTEREST_SERIES",
+                "FINRA_ATS_SERIES",
+                "BORROW_FEE_OBSERVATION",
+            )),
+        )
+        .order_by(Event.event_date.desc(), Event.id.desc())
+        .first()
+    )
+    cache_current = bool(
+        cached
+        and (
+            latest_evidence is None
+            or generated_at is not None
+            and latest_evidence.event_date is not None
+            and latest_evidence.event_date <= generated_at
+        )
+    )
+    if cache_current:
+        return cached
+
+    try:
+        return tape_series(security, 12)
+    except Exception:
+        current_app.logger.exception("Tape DB-only display rebuild failed")
+        return cached
+
+
 def _cached_tape_for_months(tape: dict, months: int) -> dict:
     metric_defaults = {
         "return_1m_pct": None, "return_3m_pct": None, "volume_ratio_20d": None, "turnover_ratio_20d": None,
@@ -1083,7 +1132,8 @@ def company_section(ticker, section):
         ).order_by(Event.event_date.desc()).limit(30).all()
         extra["finra_summary"] = finra_stored_summary(company.id)
         extra["finra_api_ready"] = provider_status(g.user.id).get("finra_api", False)
-        extra["tape_series"] = _cached_tape_for_months(dict(cache.get("tape") or {}), months)
+        tape_materialized = _materialized_tape_for_display(ctx["security"], cache)
+        extra["tape_series"] = _cached_tape_for_months(tape_materialized, months)
     elif section == "monitoring":
         rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all()
         histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}

@@ -241,52 +241,72 @@ def refresh_research_cache(coverage_id: int) -> dict[str, Any]:
     return payload
 
 
-def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) -> dict[str, Any] | None:
-    """Patch live readiness and re-evaluate lightweight Decision Lenses.
-
-    Gate approve/reopen is a synchronous CONTROL action. It must not require a
-    heavy RECALCULATE job. Decision Lenses reuse already-materialized evidence
-    and valuation, so Research conclusion can reflect the new readiness state
-    immediately without calling providers or rebuilding heavy analytics.
-    """
-    row = Event.query.filter_by(event_type=cache_event_type(coverage_id)).order_by(Event.event_date.desc(), Event.id.desc()).first()
-    if row is None:
-        return None
-    payload = dict(row.payload or {})
-    payload["readiness"] = _jsonable(readiness)
-
-    updated_lenses = None
+def _rebuild_cached_lenses(payload: dict[str, Any], coverage_id: int) -> dict[str, Any] | None:
     coverage = db.session.get(Coverage, coverage_id)
     security = db.session.get(Security, coverage.security_id) if coverage else None
     company = db.session.get(Company, security.company_id) if security else None
     research = ResearchState.query.filter_by(coverage_id=coverage_id).first() if coverage else None
     risk = RiskPlan.query.filter_by(coverage_id=coverage_id).first() if coverage else None
     model = ValuationModel.query.filter_by(coverage_id=coverage_id, is_active=True).order_by(ValuationModel.id.desc()).first() if coverage else None
-    if all((coverage, security, company, research, risk, model)):
-        market = latest_snapshot(security.id)
-        valuation = dict(payload.get("valuation") or valuation_result(coverage))
-        if not valuation.get("base_quality"):
-            base_quality = stored_model_base_quality(model)
-            valuation["base_quality"] = base_quality
-            valuation["quality"] = valuation.get("quality") or base_quality
-            valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
-            payload["valuation"] = _jsonable(valuation)
-        updated_lenses = build_decision_lenses(
-            coverage=coverage,
-            company=company,
-            research=research,
-            risk=risk,
-            model=model,
-            market=market,
-            valuation=valuation,
-            intelligence=dict(payload.get("intelligence") or {}),
-            readiness=readiness,
-            management=dict(payload.get("management") or {}),
-            tape=dict(payload.get("tape") or {}),
-        )
-        payload["decision_lenses"] = _jsonable(updated_lenses)
+    if not all((coverage, security, company, research, risk, model)):
+        return None
 
+    market = latest_snapshot(security.id)
+    valuation = dict(payload.get("valuation") or valuation_result(coverage))
+    if not valuation.get("base_quality"):
+        base_quality = stored_model_base_quality(model)
+        valuation["base_quality"] = base_quality
+        valuation["quality"] = valuation.get("quality") or base_quality
+        valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
+        payload["valuation"] = _jsonable(valuation)
+
+    readiness = dict(payload.get("readiness") or research_readiness(coverage))
+    updated_lenses = build_decision_lenses(
+        coverage=coverage,
+        company=company,
+        research=research,
+        risk=risk,
+        model=model,
+        market=market,
+        valuation=valuation,
+        intelligence=dict(payload.get("intelligence") or {}),
+        readiness=readiness,
+        management=dict(payload.get("management") or {}),
+        tape=dict(payload.get("tape") or {}),
+    )
+    payload["decision_lenses"] = _jsonable(updated_lenses)
+    return updated_lenses
+
+
+def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) -> dict[str, Any] | None:
+    """Patch live readiness without rebuilding heavy materialized evidence."""
+    row = Event.query.filter_by(event_type=cache_event_type(coverage_id)).order_by(Event.event_date.desc(), Event.id.desc()).first()
+    if row is None:
+        return None
+    payload = dict(row.payload or {})
+    payload["readiness"] = _jsonable(readiness)
+    updated_lenses = _rebuild_cached_lenses(payload, coverage_id)
     row.payload = payload
+    return updated_lenses
+
+
+def patch_research_cache_tape(coverage_id: int, tape: dict[str, Any]) -> dict[str, Any] | None:
+    """Atomically publish newly materialized Tape evidence into the latest cache.
+
+    POSITIONING/FINRA jobs already do the provider work in background. Once that
+    evidence is stored, the UI should not wait for a second full RECALCULATE job
+    before Large/Whale, charts and Tape context become visible.
+    """
+    row = Event.query.filter_by(event_type=cache_event_type(coverage_id)).order_by(Event.event_date.desc(), Event.id.desc()).first()
+    if row is None:
+        return None
+    payload = dict(row.payload or {})
+    payload["tape"] = _jsonable(tape)
+    payload["tape_metrics"] = _jsonable((tape or {}).get("metrics") or {})
+    payload["tape_flow_method_version"] = FLOW_METHOD_VERSION
+    updated_lenses = _rebuild_cached_lenses(payload, coverage_id)
+    row.payload = payload
+    db.session.commit()
     return updated_lenses
 
 
@@ -313,10 +333,33 @@ def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: Valu
         return True
     if str(cache.get("tape_flow_method_version") or "") != FLOW_METHOD_VERSION:
         return True
+
+    # Evidence jobs can finish after the Research cache was generated. Treat a
+    # newer materialized Tape/FINRA event as stale cache so existing Coverage
+    # self-heals without requiring a manual ticker-by-ticker recalculation.
+    security = db.session.get(Security, coverage.security_id)
+    if security is not None:
+        latest_tape_evidence = (
+            Event.query
+            .filter(
+                Event.company_id == security.company_id,
+                Event.event_type.in_((
+                    "ALPACA_POSITIONING",
+                    "FINRA_SHORT_VOLUME_SERIES",
+                    "FINRA_SHORT_INTEREST_SERIES",
+                    "FINRA_ATS_SERIES",
+                    "BORROW_FEE_OBSERVATION",
+                )),
+            )
+            .order_by(Event.event_date.desc(), Event.id.desc())
+            .first()
+        )
+        if latest_tape_evidence and latest_tape_evidence.event_date and latest_tape_evidence.event_date > generated_at:
+            return True
     return False
 
 
 __all__ = [
     "cache_event_type", "latest_research_cache", "latest_cache_map",
-    "refresh_research_cache", "patch_research_cache_readiness", "cache_is_stale",
+    "refresh_research_cache", "patch_research_cache_readiness", "patch_research_cache_tape", "cache_is_stale",
 ]

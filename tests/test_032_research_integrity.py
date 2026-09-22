@@ -7,8 +7,8 @@ from cryptography.fernet import Fernet
 
 from mfapp import create_app
 from mfapp.core_models import (
-    Company, Coverage, Expectation, FinancialFlow, FinancialPeriod, MarketSnapshot,
-    NormalizedFinancial, ResearchGateApproval, Security,
+    Company, Coverage, Event, Expectation, FinancialFlow, FinancialPeriod, HistoricalPrice,
+    MarketSnapshot, NormalizedFinancial, ResearchGateApproval, Security,
 )
 from mfapp.extensions import db
 from mfapp.financial_flow_engine import build_cash_flow, build_income_statement_flow
@@ -519,3 +519,192 @@ def test_032_price_history_falls_through_partial_provider_to_full_ten_year_sourc
     assert result[0]["provider"] == "Tiingo historical"
     assert (result[-1]["trade_date"] - result[0]["trade_date"]).days >= 3650
     assert any("Alpaca: partial historical span" in item for item in errors)
+
+
+def test_032_current_financial_coalesces_complementary_same_period_evidence(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "coalesced_period")
+    with app.app_context():
+        db.create_all()
+        company = Company(
+            legal_name="Coalesced Evidence Co", display_name="Coalesced Evidence Co",
+            sector="Consumer", industry="Footwear",
+        )
+        db.session.add(company); db.session.flush()
+
+        prior = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2024,
+            start_date=date(2023, 6, 1), end_date=date(2024, 5, 31),
+            filed_at=date(2024, 7, 20), accession_no="TEST-2024", currency="USD",
+        )
+        active = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2025,
+            start_date=date(2024, 6, 1), end_date=date(2025, 5, 31),
+            filed_at=date(2025, 7, 20), accession_no="TEST-2025-A", currency="USD",
+        )
+        legacy = FinancialPeriod(
+            company_id=company.id, period_type="SUPERSEDED_FY", fiscal_year=2025,
+            start_date=date(2024, 6, 1), end_date=date(2025, 5, 31),
+            filed_at=date(2025, 7, 20), accession_no="TEST-2025-B", currency="USD",
+        )
+        db.session.add_all([prior, active, legacy]); db.session.flush()
+
+        prior_row = _normalized(prior, revenue=1000, cogs=600, op_income=140, net_income=100, cfo=180, capex=60, shares=100)
+        active_row = _normalized(active, revenue=1100, cogs=640, op_income=160, net_income=115, cfo=200, capex=65, shares=99)
+        legacy_row = _normalized(legacy, revenue=1100, cogs=640, op_income=160, net_income=115, cfo=200, capex=65, shares=99)
+
+        # Reproduce the production failure mode: the active identity has the
+        # duration statement, while an audit-preserved sibling retains Inventory.
+        active_row.inventory = None
+        active_row.source_map = dict(active_row.source_map or {}) | {"inventory": None}
+        legacy_row.revenue = None
+        legacy_row.source_map = dict(legacy_row.source_map or {}) | {"revenue": None}
+        legacy_row.inventory = Decimal("125")
+        db.session.add_all([prior_row, active_row, legacy_row])
+        db.session.commit()
+
+        from mfapp.current_financials import current_row
+        from mfapp.secdata import _reconcile_financial_field_issues
+
+        current = current_row(company.id)
+        assert current is not None
+        assert current["period_id"] == active.id
+        assert current["revenue"] == 1100.0
+        assert current["inventory"] == 125.0
+        assert abs(float(current["metrics"]["revenue_growth_pct"]) - 10.0) < 1e-9
+        assert current["quality"]["canonical_read_coalesced"] is True
+        assert len(current["quality"]["canonical_read_period_ids"]) == 2
+
+        issues = _reconcile_financial_field_issues(company)
+        assert "inventory" not in issues["missing_expected_fields"]
+
+
+def test_032_tape_display_recovers_from_stored_evidence_without_provider_call(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "tape_display_recovery")
+    uid, coverage_id = seed_full_research(app)
+
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        security = db.session.get(Security, coverage.security_id)
+        day = date(2026, 9, 18)
+        db.session.add_all([
+            HistoricalPrice(
+                security_id=security.id, trade_date=date(2026, 9, 17),
+                provider="TEST", close_raw=Decimal("100"), close_split_adjusted=Decimal("100"),
+                volume=Decimal("1000000"), quality="OBSERVED", payload={},
+            ),
+            HistoricalPrice(
+                security_id=security.id, trade_date=day,
+                provider="TEST", close_raw=Decimal("101"), close_split_adjusted=Decimal("101"),
+                volume=Decimal("1200000"), quality="OBSERVED", payload={},
+            ),
+            Event(
+                company_id=security.company_id,
+                event_type="ALPACA_POSITIONING",
+                title="stored positioning",
+                event_date=datetime(2026, 9, 18, 20, 0, 0),
+                payload={
+                    "flow": {
+                        "rows": [{
+                            "date": day.isoformat(),
+                            "method_version": __import__("mfapp.positioning", fromlist=["FLOW_METHOD_VERSION"]).FLOW_METHOD_VERSION,
+                            "sanity_status": "PASS",
+                            "observation_usable": True,
+                            "decision_usable": False,
+                            "decision_reasons": ["PARTIAL_SAMPLE_CONTEXT_ONLY"],
+                            "coverage_status": "SAMPLED",
+                            "feed": "sip",
+                            "feed_scope": "CONSOLIDATED_SIP",
+                            "source_status": "PARTIAL_SAMPLED",
+                            "classification_method": "REGULAR_SESSION_RECONCILED_TICK_RULE_PROXY",
+                            "flow_confidence_pct": 40.0,
+                            "sample_volume_pct": 20.0,
+                            "eligible_volume_pct": 95.0,
+                            "reference_volume": 1200000,
+                            "large_threshold": 100000.0,
+                            "very_large_threshold": 250000.0,
+                            "whale_threshold": 500000.0,
+                            "large_buy": 2000000.0,
+                            "large_sell": 1000000.0,
+                            "net_large": 1000000.0,
+                            "very_large_buy": 900000.0,
+                            "very_large_sell": 400000.0,
+                            "net_very_large": 500000.0,
+                            "whale_buy": 600000.0,
+                            "whale_sell": 100000.0,
+                            "net_whale": 500000.0,
+                            "net_large_ratio": 5.0,
+                            "net_whale_ratio": 2.5,
+                            "large_share_pct": 20.0,
+                            "whale_share_pct": 5.0,
+                        }]
+                    }
+                },
+            ),
+        ])
+        db.session.commit()
+
+        from mfapp.routes import _materialized_tape_for_display
+
+        tape = _materialized_tape_for_display(security, {})
+        assert len(tape["daily_market"]) == 2
+        assert len(tape["institutional_flow"]) == 1
+        assert tape["metrics"]["large_buy"] == 2000000.0
+        assert tape["metrics"]["net_whale"] == 500000.0
+        assert tape["metrics"]["flow_observation_usable"] is True
+
+    client = app.test_client(); login(client, uid)
+    response = client.get("/company/TST/tape")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "CONSOLIDATED_SIP" in html
+    assert "No stored trade-flow observations yet." not in html
+    assert "2026-09-18" in html
+
+
+
+def test_032_fundamentals_page_uses_coalesced_current_basis(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "fundamentals_page_coalesced")
+    uid, coverage_id = seed_full_research(app)
+
+    with app.app_context():
+        coverage = db.session.get(Coverage, coverage_id)
+        security = db.session.get(Security, coverage.security_id)
+        active = FinancialPeriod.query.filter_by(
+            company_id=security.company_id, period_type="FY", fiscal_year=2025
+        ).first()
+        assert active is not None
+        active_row = NormalizedFinancial.query.filter_by(financial_period_id=active.id).first()
+        assert active_row is not None
+        active_row.inventory = None
+        active_sources = dict(active_row.source_map or {})
+        active_sources.pop("inventory", None)
+        active_row.source_map = active_sources
+
+        sibling = FinancialPeriod(
+            company_id=security.company_id,
+            period_type="SUPERSEDED_FY",
+            fiscal_year=active.fiscal_year,
+            start_date=active.start_date,
+            end_date=active.end_date,
+            filed_at=active.filed_at,
+            accession_no="TEST-2025-INVENTORY-SIBLING",
+            currency=active.currency,
+        )
+        db.session.add(sibling); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=sibling.id,
+            inventory=Decimal("777"),
+            source_map={"inventory": "TEST-SIBLING-INVENTORY"},
+            quality={},
+            calculation_version="0.3.4-test",
+        ))
+        db.session.commit()
+
+    client = app.test_client(); login(client, uid)
+    response = client.get("/company/TST/fundamentals")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert '<span>Inventory</span><strong>—</strong>' not in html
+    assert "TEST-SIBLING-INVENTORY" in html
+    assert "CURRENT FINANCIAL ANATOMY" in html
+    assert "fundamentals-current-strip" in html
