@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .valuation_engine import ENGINE_VERSION as VALUATION_ENGINE_VERSION
+
 
 MIN_VALID_SAMPLES = 5
 VALIDATED_RELIABILITY = 65.0
@@ -58,6 +60,9 @@ def validation_state(
 def state_for_run(run: Any | None) -> str:
     if run is None:
         return "NOT RUN"
+    run_engine = str(getattr(run, "engine_version", "") or "")
+    if run_engine != VALUATION_ENGINE_VERSION:
+        return "REVIEW"
     return validation_state(
         exists=True,
         execution_status=getattr(run, "status", None),
@@ -83,6 +88,8 @@ def validation_payload(run: Any | None) -> dict[str, Any]:
         }
     score = _number(getattr(run, "reliability_score", None))
     state = state_for_run(run)
+    run_engine = str(getattr(run, "engine_version", "") or "")
+    engine_current = run_engine == VALUATION_ENGINE_VERSION
     return {
         "state": state,
         "run_id": getattr(run, "id", None),
@@ -90,6 +97,10 @@ def validation_payload(run: Any | None) -> dict[str, Any]:
         "execution_status": str(getattr(run, "status", "") or "") or None,
         "samples": int(getattr(run, "sample_size", 0) or 0),
         "reliability": score,
+        "engine_version": run_engine or None,
+        "current_engine_version": VALUATION_ENGINE_VERSION,
+        "engine_current": engine_current,
+        "stale_reason": None if engine_current else "Historical validation was produced by an older valuation engine and must be rerun.",
         "policy": {
             "min_valid_samples": MIN_VALID_SAMPLES,
             "validated_reliability": VALIDATED_RELIABILITY,
