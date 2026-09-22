@@ -115,6 +115,7 @@ def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], 
                 "net_income": row.get("net_income"),
                 "fcf": row.get("fcf"),
                 "ebitda": ebitda,
+                "equity": row.get("equity"),
                 "net_debt": (
                     economic_net_debt
                     if economic and not economic.get("material_unresolved")
@@ -291,6 +292,16 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
     weights = dict(saved.get("weights") or defaults["weights"]) if saved_engine_current else dict(defaults["weights"])
     horizon_years = int(saved.get("horizon_years") or defaults["horizon_years"])
     current_price = _reference_price(security.id)
+    metrics["current_price"] = current_price
+    current_equity = n(metrics.get("equity"))
+    current_shares_for_pb = n(metrics.get("shares"))
+    pb_history = calibration.get("p_b") or (None, None, None)
+    historical_pb_median = n(pb_history[1]) if len(pb_history) >= 2 else None
+    if current_price not in (None, 0) and current_equity not in (None, 0) and current_equity > 0 and current_shares_for_pb not in (None, 0):
+        current_pb = current_price * current_shares_for_pb / current_equity
+        metrics["current_p_b"] = current_pb
+        if historical_pb_median not in (None, 0):
+            metrics["pb_deviation_from_history_pct"] = (current_pb / historical_pb_median - 1.0) * 100.0
     anchor_price = n(calibration.get("latest_filing_anchor_price"))
     if current_price not in (None, 0) and anchor_price not in (None, 0):
         metrics["market_move_since_filing_pct"] = (current_price / anchor_price - 1.0) * 100.0
