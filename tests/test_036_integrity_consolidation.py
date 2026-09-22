@@ -87,6 +87,139 @@ def test_036_current_row_coalesces_split_same_period_evidence_with_provenance(tm
 
 
 
+
+def test_036_post_fye_cover_share_instant_does_not_create_next_fiscal_year():
+    from mfapp.secdata import _annual_instant
+
+    facts = {
+        "facts": {
+            "dei": {
+                "EntityCommonStockSharesOutstanding": {
+                    "units": {
+                        "shares": [
+                            {
+                                "end": "2026-07-31",
+                                "val": 268000000,
+                                "form": "10-K",
+                                "fp": "FY",
+                                "filed": "2026-09-09",
+                                "accn": "TEST-INTU-FYE",
+                            },
+                            {
+                                "end": "2026-08-31",
+                                "val": 267236000,
+                                "form": "10-K",
+                                "fp": "FY",
+                                "filed": "2026-09-09",
+                                "accn": "TEST-INTU-COVER",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+    rows = _annual_instant(
+        facts,
+        ["EntityCommonStockSharesOutstanding"],
+        namespace="dei",
+        fiscal_year_end="0731",
+    )
+    assert set(rows) == {2026}
+    assert rows[2026]["end"] == "2026-07-31"
+    assert 2027 not in rows
+
+
+def test_036_legacy_instant_only_fy_shell_cannot_become_current_basis(tmp_path, monkeypatch):
+    from mfapp.current_financials import annual_rows, current_row
+
+    app = make_app(tmp_path, monkeypatch, "phantom_fy")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="July Software Co", display_name="July Software Co")
+        db.session.add(company)
+        db.session.flush()
+
+        prior = FinancialPeriod(
+            company_id=company.id,
+            period_type="FY",
+            fiscal_year=2025,
+            end_date=date(2025, 7, 31),
+            currency="USD",
+        )
+        real = FinancialPeriod(
+            company_id=company.id,
+            period_type="FY",
+            fiscal_year=2026,
+            end_date=date(2026, 7, 31),
+            currency="USD",
+        )
+        phantom = FinancialPeriod(
+            company_id=company.id,
+            period_type="FY",
+            fiscal_year=2027,
+            end_date=date(2026, 8, 31),
+            currency="USD",
+        )
+        db.session.add_all([prior, real, phantom])
+        db.session.flush()
+
+        db.session.add_all([
+            NormalizedFinancial(
+                financial_period_id=prior.id,
+                revenue=Decimal("18831"),
+                operating_income=Decimal("4923"),
+                net_income=Decimal("3869"),
+                cfo=Decimal("6207"),
+                capex=Decimal("84"),
+                fcf=Decimal("6123"),
+                source_map={"revenue": {"provider": "SEC"}},
+                quality={},
+            ),
+            NormalizedFinancial(
+                financial_period_id=real.id,
+                revenue=Decimal("21448"),
+                operating_income=Decimal("5884"),
+                net_income=Decimal("4566"),
+                cfo=Decimal("8838"),
+                capex=Decimal("175"),
+                fcf=Decimal("8663"),
+                cash=Decimal("4705"),
+                assets=Decimal("40000"),
+                liabilities=Decimal("26000"),
+                equity=Decimal("14000"),
+                diluted_shares=Decimal("277"),
+                source_map={"revenue": {"provider": "SEC"}},
+                quality={},
+            ),
+            NormalizedFinancial(
+                financial_period_id=phantom.id,
+                shares_outstanding=Decimal("267236000"),
+                source_map={
+                    "shares_outstanding": {
+                        "provider": "SEC",
+                        "namespace": "dei",
+                        "tag": "EntityCommonStockSharesOutstanding",
+                    }
+                },
+                quality={},
+            ),
+        ])
+        db.session.commit()
+
+        rows = annual_rows(company.id, 5)
+        assert [row["fiscal_year"] for row in rows] == [2026, 2025]
+
+        current = current_row(company.id)
+        assert current is not None
+        assert current["fiscal_year"] == 2026
+        assert current["period_end"] == "2026-07-31"
+        assert current["revenue"] == 21448.0
+        assert current["operating_income"] == 5884.0
+        assert current["cfo"] == 8838.0
+        assert current["metrics"]["revenue_growth_pct"] is not None
+
 def test_036_sparse_newer_ttm_cannot_hide_complete_fy_current_basis(tmp_path, monkeypatch):
     from mfapp.current_financials import current_row
 
