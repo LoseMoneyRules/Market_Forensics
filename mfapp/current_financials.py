@@ -16,6 +16,57 @@ FLOW_FIELDS = (
     "buybacks", "dividends",
 )
 INSTANT_FIELDS = ("cash", "debt", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "shares_outstanding")
+NORMALIZED_FIELDS = FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",)
+
+
+def _normalized_richness(normalized: NormalizedFinancial) -> tuple[int, int]:
+    populated = sum(1 for field in NORMALIZED_FIELDS if getattr(normalized, field, None) is not None)
+    source_map = dict(normalized.source_map or {})
+    sourced = sum(1 for field in NORMALIZED_FIELDS if source_map.get(field))
+    return populated, sourced
+
+
+def _period_candidate_score(period: FinancialPeriod, normalized: NormalizedFinancial, *, annual: bool) -> tuple:
+    """Prefer canonical, evidence-rich rows when legacy duplicate identities share an end date.
+
+    Old parser revisions could store the same represented period under a wrong fiscal
+    year/quarter label. Those rows are audit evidence, but they must never win a live
+    Research read merely because their database id is newer.
+    """
+    populated, sourced = _normalized_richness(normalized)
+    year_match = int(bool(annual and period.end_date and int(period.fiscal_year or 0) == period.end_date.year))
+    source_id = int(period.source_id or 0)
+    filed = period.filed_at.toordinal() if period.filed_at else 0
+    updated = normalized.updated_at.isoformat() if normalized.updated_at else ""
+    return (year_match, populated, sourced, source_id, filed, updated, int(period.id or 0))
+
+
+def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, annual: bool) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+    pairs = (
+        db.session.query(FinancialPeriod, NormalizedFinancial)
+        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
+        .filter(FinancialPeriod.company_id == company_id, FinancialPeriod.period_type.in_(period_types))
+        .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
+        .all()
+    )
+    by_end: dict[date, tuple[FinancialPeriod, NormalizedFinancial]] = {}
+    for period, normalized in pairs:
+        current = by_end.get(period.end_date)
+        if current is None or _period_candidate_score(period, normalized, annual=annual) > _period_candidate_score(current[0], current[1], annual=annual):
+            by_end[period.end_date] = (period, normalized)
+    return sorted(
+        by_end.values(),
+        key=lambda pair: (pair[0].end_date, pair[0].filed_at or date.min, pair[0].id),
+        reverse=True,
+    )
+
+
+def canonical_annual_pairs(company_id: int) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+    return _canonical_period_pairs(company_id, ("FY",), annual=True)
+
+
+def canonical_quarter_pairs(company_id: int) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+    return _canonical_period_pairs(company_id, ("Q1", "Q2", "Q3", "Q4"), annual=False)
 
 
 def n(value: Any) -> float | None:
@@ -45,18 +96,8 @@ def _period_row(period: FinancialPeriod, normalized: NormalizedFinancial) -> dic
 
 
 def annual_rows(company_id: int, limit: int = 15) -> list[dict[str, Any]]:
-    periods = FinancialPeriod.query.filter_by(company_id=company_id, period_type="FY").order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()).limit(max(2, limit * 2)).all()
-    rows: list[dict[str, Any]] = []
-    seen: set[date] = set()
-    for period in periods:
-        if period.end_date in seen:
-            continue
-        normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
-        if normalized:
-            seen.add(period.end_date)
-            rows.append(_period_row(period, normalized))
-        if len(rows) >= max(1, limit):
-            break
+    pairs = canonical_annual_pairs(company_id)[:max(1, limit)]
+    rows = [_period_row(period, normalized) for period, normalized in pairs]
     chronological = list(reversed(rows))
     previous: dict[str, Any] = {}
     for row in chronological:
@@ -166,20 +207,8 @@ def annual_history_grid(
 
 
 def quarterly_rows(company_id: int, limit: int = 12) -> list[dict[str, Any]]:
-    periods = FinancialPeriod.query.filter(
-        FinancialPeriod.company_id == company_id,
-        FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"]),
-    ).order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc()).limit(max(8, limit)).all()
-    rows: list[dict[str, Any]] = []
-    seen: set[date] = set()
-    for period in periods:
-        if period.end_date in seen:
-            continue
-        normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
-        if not normalized:
-            continue
-        seen.add(period.end_date)
-        rows.append(_period_row(period, normalized))
+    pairs = canonical_quarter_pairs(company_id)[:max(8, limit)]
+    rows = [_period_row(period, normalized) for period, normalized in pairs]
 
     lookup = {(row.get("fiscal_year"), row.get("period_type")): row for row in rows}
     for row in rows:
