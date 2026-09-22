@@ -11,6 +11,7 @@ from .extensions import db
 from .models import UserPreference
 
 CACHE_KEY = "discovery_full_market_fundamentals_v1"
+PEER_UNIVERSE_CACHE_KEY = "discovery_peer_universe_v1"
 CACHE_HOURS = 24
 FRAME_TIMEOUT = (5, 30)
 SEC_DATA = "https://data.sec.gov"
@@ -94,6 +95,16 @@ def _save_preference(user_id: int, value: dict[str, Any]) -> None:
     row = UserPreference.query.filter_by(user_id=user_id, key=CACHE_KEY).first()
     if row is None:
         row = UserPreference(user_id=user_id, key=CACHE_KEY, value=value)
+        db.session.add(row)
+    else:
+        row.value = value
+    db.session.commit()
+
+
+def _save_peer_universe(user_id: int, value: dict[str, Any]) -> None:
+    row = UserPreference.query.filter_by(user_id=user_id, key=PEER_UNIVERSE_CACHE_KEY).first()
+    if row is None:
+        row = UserPreference(user_id=user_id, key=PEER_UNIVERSE_CACHE_KEY, value=value)
         db.session.add(row)
     else:
         row.value = value
@@ -504,6 +515,7 @@ def _screen_one(row: dict[str, Any], facts: dict[str, Any] | None) -> dict[str, 
             "operating_margin_pct": operating_margin,
             "operating_margin_change_pp": operating_margin_change,
             "fcf_margin_pct": fcf_margin,
+            "capex_to_revenue_pct": _ratio(abs(capex), revenue, 100.0) if capex is not None else None,
             "inventory_growth_pct": inventory_growth,
             "receivables_growth_pct": receivables_growth,
             "pe_proxy": pe,
@@ -558,6 +570,44 @@ def screen_full_universe(
 
     total = len(augmented)
     usable = ready + partial
+
+    peer_rows: list[dict[str, Any]] = []
+    for row in augmented:
+        screen = dict(row.get("fundamental_screen") or {})
+        metrics = dict(screen.get("metrics") or {})
+        if screen.get("status") not in {"READY", "PARTIAL"}:
+            continue
+        if metrics.get("market_cap_proxy") is None:
+            continue
+        peer_rows.append({
+            "ticker": str(row.get("ticker") or "").upper(),
+            "name": str(row.get("name") or row.get("ticker") or ""),
+            "exchange": str(row.get("exchange") or ""),
+            "price": _num(row.get("price")),
+            "market_cap": _num(metrics.get("market_cap_proxy")),
+            "revenue_growth_pct": _num(metrics.get("revenue_yoy_pct")),
+            "operating_margin_pct": _num(metrics.get("operating_margin_pct")),
+            "fcf_margin_pct": _num(metrics.get("fcf_margin_pct")),
+            "capex_to_revenue_pct": _num(metrics.get("capex_to_revenue_pct")),
+            "pe": _num(metrics.get("pe_proxy")),
+            "p_sales": _num(metrics.get("ps_proxy")),
+            "fcf_yield_pct": _num(metrics.get("fcf_yield_pct")),
+            "cik": screen.get("cik"),
+            "latest_filed": screen.get("latest_filed"),
+            "snapshot_as_of": row.get("snapshot_as_of"),
+            "dollar_volume": _num(row.get("dollar_volume")),
+            "source": "FULL_MARKET_DISCOVERY_SEC_FRAMES",
+        })
+    peer_rows.sort(key=lambda row: row.get("ticker") or "")
+    _save_peer_universe(user_id, {
+        "generated_at": baseline.get("generated_at") or _iso(),
+        "market_generated_at": max((str(row.get("snapshot_as_of") or "") for row in augmented), default=None),
+        "source": "Discovery full-market liquid universe + SEC frame operating evidence",
+        "row_count": len(peer_rows),
+        "rows": peer_rows,
+        "valuation_eligibility": "CANDIDATE_ONLY_UNTIL_BUSINESS_TAXONOMY_VERIFIED",
+    })
+
     stats = {
         "configured": bool(baseline.get("configured")),
         "generated_at": baseline.get("generated_at"),
@@ -583,5 +633,5 @@ def screen_full_universe(
 
 
 __all__ = [
-    "CACHE_HOURS", "screen_full_universe", "_frame_periods", "_screen_one",
+    "CACHE_HOURS", "PEER_UNIVERSE_CACHE_KEY", "screen_full_universe", "_frame_periods", "_screen_one",
 ]
