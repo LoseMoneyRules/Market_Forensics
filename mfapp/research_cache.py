@@ -290,26 +290,6 @@ def patch_research_cache_readiness(coverage_id: int, readiness: dict[str, Any]) 
     return updated_lenses
 
 
-def patch_research_cache_tape(coverage_id: int, tape: dict[str, Any]) -> dict[str, Any] | None:
-    """Atomically publish newly materialized Tape evidence into the latest cache.
-
-    POSITIONING/FINRA jobs already do the provider work in background. Once that
-    evidence is stored, the UI should not wait for a second full RECALCULATE job
-    before Large/Whale, charts and Tape context become visible.
-    """
-    row = Event.query.filter_by(event_type=cache_event_type(coverage_id)).order_by(Event.event_date.desc(), Event.id.desc()).first()
-    if row is None:
-        return None
-    payload = dict(row.payload or {})
-    payload["tape"] = _jsonable(tape)
-    payload["tape_metrics"] = _jsonable((tape or {}).get("metrics") or {})
-    payload["tape_flow_method_version"] = FLOW_METHOD_VERSION
-    updated_lenses = _rebuild_cached_lenses(payload, coverage_id)
-    row.payload = payload
-    db.session.commit()
-    return updated_lenses
-
-
 def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: ValuationModel | None = None) -> bool:
     if not cache:
         return True
@@ -361,5 +341,5 @@ def cache_is_stale(cache: dict[str, Any] | None, coverage: Coverage, model: Valu
 
 __all__ = [
     "cache_event_type", "latest_research_cache", "latest_cache_map",
-    "refresh_research_cache", "patch_research_cache_readiness", "patch_research_cache_tape", "cache_is_stale",
+    "refresh_research_cache", "patch_research_cache_readiness", "cache_is_stale",
 ]
