@@ -191,12 +191,13 @@ def test_029_old_tape_cache_is_forward_compatible():
     assert upgraded["tape_daily"] == []
 
 
-def test_029_tape_v2_uses_background_evidence_and_fails_open_to_stored_rows():
+def test_029_tape_v2_uses_background_materialization_not_get_navigation():
     jobs = Path("mfapp/jobs.py").read_text()
     positioning = Path("mfapp/positioning.py").read_text()
     finra = Path("mfapp/finra.py").read_text()
     routes = Path("mfapp/routes.py").read_text()
     cache = Path("mfapp/research_cache.py").read_text()
+    js = Path("mfapp/static/js/app.js").read_text()
 
     assert 'event_type="ALPACA_POSITIONING"' in jobs
     assert 'refresh_positioning_bundle(security.ticker, job.user_id)' in jobs
@@ -206,13 +207,21 @@ def test_029_tape_v2_uses_background_evidence_and_fails_open_to_stored_rows():
 
     tape_route = routes.split("elif section == \"tape\":", 1)[1].split("elif section == \"monitoring\":", 1)[0]
     assert "_cached_tape_for_months" in tape_route
-    assert "tape_series(security, months)" in tape_route
-    assert "Display fails open to already-materialized evidence" in tape_route
-    assert "requests." not in tape_route
+    assert "tape_series(" not in tape_route
+    assert "Normal GET navigation serves only the materialized Tape cache" in tape_route
     assert "tape = tape_series(security, 12)" in cache
+    assert 'CACHE_SCHEMA_VERSION = "0.3.4-integrity-r2"' in cache
+    assert 'cache.get("cache_schema_version")' in cache
+    assert '"cache_schema_version": CACHE_SCHEMA_VERSION' in cache
 
-    price_history_block = jobs.split('if kind == "PRICE_HISTORY_REFRESH":', 1)[1].split('if kind == "MACRO_REFRESH":', 1)[0]
+    price_history_block = jobs.split('if kind == "PRICE_HISTORY_REFRESH":', 1)[1].split('if kind == "SEC_INGEST":', 1)[0]
     assert "_queue_recalculate_after_evidence(job, security, coverage_id)" in price_history_block
+
+    # Finished background evidence should become visible without a manual reload,
+    # unless the user has unsaved form edits.
+    assert "if(!dirty)" in js
+    assert "window.location.reload();" in js
+    assert "if(active>0)return false" in js
 
 
 
