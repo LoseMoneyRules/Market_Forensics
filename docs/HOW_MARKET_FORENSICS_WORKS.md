@@ -1458,9 +1458,9 @@ The source is always visible:
 
 IEX evidence receives a material Data Confidence penalty.
 
-Partial/page-capped samples are labeled PARTIAL_SAMPLED and also reduce confidence.
+Partial/page-capped consolidated-SIP samples are labeled PARTIAL_SAMPLED, show their sampled-volume coverage, and are context-only: they may be charted but never drive Tape rank/regime. IEX evidence is not accepted as institutional-flow evidence.
 
-The system must never present IEX/partial evidence as if it represented the full US consolidated tape.
+The system must never present IEX/partial evidence as if it represented the full US consolidated tape or a complete daily flow total.
 
 ### 16.3 Tape scores
 
