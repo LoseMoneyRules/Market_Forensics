@@ -1031,15 +1031,24 @@ def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) ->
 def _period_family_query(company_id: int, end_date: date, period_type: str):
     query = FinancialPeriod.query.filter_by(company_id=company_id, end_date=end_date)
     if period_type == "FY":
-        return query.filter(FinancialPeriod.period_type.in_(["FY", "SUPERSEDED_FY"]))
-    return query.filter(FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4", "SUPERSEDED_Q1", "SUPERSEDED_Q2", "SUPERSEDED_Q3", "SUPERSEDED_Q4"]))
+        return query.filter(FinancialPeriod.period_type == "FY")
+    return query.filter(FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"]))
 
 
 def _supersede_period_identity(period: FinancialPeriod) -> None:
     original = str(period.period_type or "")
-    if original.startswith("SUPERSEDED_"):
+    if original.startswith("SUPERSEDED_") or original.startswith("SUP_"):
         return
-    period.period_type = f"SUPERSEDED_{original}"[:16]
+    target = f"SUPERSEDED_{original}"[:16]
+    collision = FinancialPeriod.query.filter_by(
+        company_id=period.company_id,
+        period_type=target,
+        fiscal_year=period.fiscal_year,
+        end_date=period.end_date,
+    ).filter(FinancialPeriod.id != period.id).first()
+    if collision is not None:
+        target = f"SUP_{original}_{period.id}"[:16]
+    period.period_type = target
     normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
     if normalized is not None:
         quality = dict(normalized.quality or {})
