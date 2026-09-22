@@ -9,6 +9,7 @@ from .core_models import Event, FinancialPeriod, HistoricalPrice, Security, Valu
 from .current_financials import annual_rows, current_row, forecast_rows
 from .finra import stored_summary as finra_stored_summary
 from .tape_engine import score_tape_day, what_changed, what_would_change_regime
+from .positioning import FLOW_METHOD_VERSION
 from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 
 
@@ -320,12 +321,29 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     ).order_by(Event.event_date.desc(), Event.id.desc()).limit(120).all()
     positioning = dict((positioning_events[0].payload or {}) if positioning_events else {})
     flow_by_date: dict[str, dict[str, Any]] = {}
+    flow_rejections: list[dict[str, Any]] = []
     for event in reversed(positioning_events):
         payload = dict(event.payload or {})
         for row in ((payload.get("flow") or {}).get("rows") or []):
             day = str(row.get("date") or "")[:10]
-            if day and day >= cutoff.isoformat():
+            if not day or day < cutoff.isoformat():
+                continue
+            usable = (
+                str(row.get("method_version") or "") == FLOW_METHOD_VERSION
+                and str(row.get("sanity_status") or "") == "PASS"
+                and bool(row.get("decision_usable"))
+            )
+            if usable:
                 flow_by_date[day] = dict(row)
+            else:
+                flow_rejections.append({
+                    "date": day,
+                    "method_version": row.get("method_version") or "LEGACY",
+                    "sanity_status": row.get("sanity_status") or "LEGACY_UNVERIFIED",
+                    "sanity_reasons": list(row.get("sanity_reasons") or ["LEGACY_OR_UNVERIFIED_FLOW"]),
+                    "source_status": row.get("source_status") or "",
+                    "feed": row.get("feed") or "",
+                })
     flow_rows = [flow_by_date[key] for key in sorted(flow_by_date)]
 
     for idx, row in enumerate(flow_rows):
@@ -463,6 +481,7 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         "short_interest": short_interest,
         "short_volume": short_volume,
         "institutional_flow": flow_rows,
+        "flow_rejections": flow_rejections[-20:],
         "ats": ats_rows,
         "tape_daily": tape_daily,
         "positioning": positioning,
@@ -504,6 +523,9 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "flow_source_status": latest_flow.get("source_status") or "",
             "flow_method": latest_flow.get("classification_method") or "",
             "flow_confidence_pct": n(latest_flow.get("flow_confidence_pct")),
+            "flow_method_version": FLOW_METHOD_VERSION,
+            "flow_withheld_count": len(flow_rejections),
+            "flow_sanity_status": latest_flow.get("sanity_status") or ("WITHHELD" if flow_rejections else "NO_DATA"),
             "large_threshold": n(latest_flow.get("large_threshold")),
             "very_large_threshold": n(latest_flow.get("very_large_threshold")),
             "whale_threshold": n(latest_flow.get("whale_threshold")),
