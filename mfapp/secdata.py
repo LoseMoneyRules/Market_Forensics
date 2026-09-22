@@ -18,7 +18,7 @@ from .sec_inline_facts import extract_extension_concepts
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.4-data-surface-integrity-r2"
+SEC_NORMALIZER_VERSION = "0.3.6-fiscal-instant-integrity-r3"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
@@ -837,12 +837,44 @@ def _annual_duration(companyfacts: dict, tags: Iterable[str], fiscal_year_end: s
     return output
 
 
+def _annual_instant_matches_fye(row: dict[str, Any], fiscal_year_end: str = "", *, tolerance_days: int = 21) -> bool:
+    """Return True only when a 10-K instant represents the fiscal-year balance sheet.
+
+    10-K Companyfacts also contains cover-page instants such as
+    EntityCommonStockSharesOutstanding measured days or weeks after fiscal
+    year-end. Those are valid facts, but they are not a new fiscal year. Treating
+    their as-of date as an FY end can create a phantom next-year period containing
+    little more than a share count.
+    """
+    fye = str(fiscal_year_end or "").strip()
+    if len(fye) != 4 or not fye.isdigit():
+        return True
+    try:
+        end = date.fromisoformat(str(row.get("end") or "")[:10])
+        month, day = int(fye[:2]), int(fye[2:])
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            return True
+        candidate_day = day
+        nominal = None
+        while candidate_day >= 28:
+            try:
+                nominal = date(end.year, month, candidate_day)
+                break
+            except ValueError:
+                candidate_day -= 1
+        return nominal is not None and abs((end - nominal).days) <= int(tolerance_days)
+    except Exception:
+        return False
+
+
 def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "us-gaap", fiscal_year_end: str = "") -> dict[int, dict[str, Any]]:
     output: dict[int, dict[str, Any]] = {}
     for tag in tags:
         candidates: dict[int, list[dict[str, Any]]] = defaultdict(list)
         for row in _facts(companyfacts, namespace, tag):
             if row.get("form") not in {"10-K", "10-K/A"} or row.get("start"):
+                continue
+            if not _annual_instant_matches_fye(row, fiscal_year_end):
                 continue
             fy = _fiscal_year_from_end(row, fiscal_year_end)
             if fy is None:
