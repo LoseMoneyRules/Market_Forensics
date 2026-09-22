@@ -183,11 +183,155 @@ def _ccc_days(row: dict[str, Any]) -> float | None:
     return dso + dio - dpo
 
 
+
+def _row_ratio(row: dict[str, Any], numerator_key: str, denominator_key: str = "revenue", *, absolute: bool = False) -> float | None:
+    numerator = n(row.get(numerator_key))
+    denominator = n(row.get(denominator_key))
+    if numerator is None or denominator in (None, 0):
+        return None
+    if absolute:
+        numerator = abs(numerator)
+    return numerator / denominator
+
+
+def _median_feature(rows: list[dict[str, Any]], getter) -> float | None:
+    values = [getter(row) for row in rows]
+    values = [value for value in values if value is not None]
+    return median(values) if values else None
+
+
+def detect_operating_regime(history: list[dict[str, Any]]) -> dict[str, Any]:
+    """Detect a persistent structural break without using future information.
+
+    The detector is deliberately conservative. It requires at least two years
+    on each side of a candidate boundary and multiple persistent changes in
+    scale/economics. A single recession, commodity spike or one-off margin year
+    must not erase otherwise comparable history.
+    """
+    rows = [dict(row) for row in history if n(row.get("revenue")) not in (None, 0)]
+    rows.sort(key=lambda row: (int(row.get("fiscal_year") or 0), str(row.get("period_end") or "")))
+    if len(rows) < 5:
+        return {
+            "detected": False,
+            "start_fiscal_year": int(rows[0].get("fiscal_year") or 0) if rows else None,
+            "start_index": 0,
+            "comparable_years": len(rows),
+            "excluded_years": 0,
+            "confidence": "INSUFFICIENT HISTORY" if len(rows) < 4 else "NO BREAK",
+            "signals": [],
+            "rule": "Persistent multi-dimensional operating break; minimum two observations on each side.",
+        }
+
+    def revenue(row): return n(row.get("revenue"))
+    def gross_margin(row): return _row_ratio(row, "gross_profit")
+    def operating_margin(row): return _row_ratio(row, "operating_income")
+    def fcf_margin(row): return _row_ratio(row, "fcf")
+    def capex_intensity(row): return _row_ratio(row, "capex", absolute=True)
+    def shares(row): return n(row.get("diluted_shares")) or n(row.get("shares_outstanding"))
+
+    candidates: list[dict[str, Any]] = []
+    # The latest boundary still needs two filed fiscal years after it to prove
+    # persistence. This prevents a single new filing from rewriting history.
+    for i in range(2, len(rows) - 1):
+        before = rows[max(0, i - 3):i]
+        after = rows[i:]
+        if len(before) < 2 or len(after) < 2:
+            continue
+
+        before_rev = _median_feature(before, revenue)
+        after_rev = _median_feature(after, revenue)
+        scale_ratio = (
+            after_rev / before_rev
+            if before_rev not in (None, 0) and after_rev not in (None, 0)
+            else None
+        )
+        feature_pairs = [
+            ("gross margin", _median_feature(before, gross_margin), _median_feature(after, gross_margin), .040, .080, 1, 2),
+            ("operating margin", _median_feature(before, operating_margin), _median_feature(after, operating_margin), .025, .050, 1, 2),
+            ("FCF margin", _median_feature(before, fcf_margin), _median_feature(after, fcf_margin), .035, .070, 1, 2),
+            ("capital intensity", _median_feature(before, capex_intensity), _median_feature(after, capex_intensity), .025, .050, 1, 2),
+        ]
+        score = 0
+        signals: list[str] = []
+        if scale_ratio is not None:
+            if scale_ratio >= 1.75 or scale_ratio <= .57:
+                score += 3
+                signals.append(f"revenue scale changed {scale_ratio:.2f}x")
+            elif scale_ratio >= 1.35 or scale_ratio <= .74:
+                score += 2
+                signals.append(f"revenue scale changed {scale_ratio:.2f}x")
+
+        for label, pre, post, moderate, strong, moderate_points, strong_points in feature_pairs:
+            if pre is None or post is None:
+                continue
+            delta = abs(post - pre)
+            if delta >= strong:
+                score += strong_points
+                signals.append(f"{label} shifted {delta * 100.0:.1f} pp")
+            elif delta >= moderate:
+                score += moderate_points
+                signals.append(f"{label} shifted {delta * 100.0:.1f} pp")
+
+        before_shares = _median_feature(before, shares)
+        after_shares = _median_feature(after, shares)
+        if before_shares not in (None, 0) and after_shares not in (None, 0):
+            share_ratio = after_shares / before_shares
+            if share_ratio >= 1.30 or share_ratio <= .70:
+                score += 1
+                signals.append(f"share base changed {share_ratio:.2f}x")
+
+        # Require both enough total evidence and at least two separate signals.
+        if score >= 4 and len(signals) >= 2:
+            candidates.append({
+                "start_index": i,
+                "start_fiscal_year": int(rows[i].get("fiscal_year") or 0) or None,
+                "score": score,
+                "signals": signals,
+            })
+
+    if not candidates:
+        return {
+            "detected": False,
+            "start_fiscal_year": int(rows[0].get("fiscal_year") or 0) or None,
+            "start_index": 0,
+            "comparable_years": len(rows),
+            "excluded_years": 0,
+            "confidence": "NO MATERIAL PERSISTENT BREAK",
+            "signals": [],
+            "rule": "Persistent multi-dimensional operating break; minimum two observations on each side.",
+        }
+
+    # Prefer the most recent proven structural break. Old regimes should not
+    # contaminate current calibration after a later persistent transformation.
+    chosen = max(candidates, key=lambda row: int(row["start_index"]))
+    comparable = len(rows) - int(chosen["start_index"])
+    return {
+        "detected": True,
+        "start_fiscal_year": chosen["start_fiscal_year"],
+        "start_index": chosen["start_index"],
+        "comparable_years": comparable,
+        "excluded_years": int(chosen["start_index"]),
+        "confidence": "HIGH" if int(chosen["score"]) >= 6 else "MEDIUM",
+        "score": chosen["score"],
+        "signals": chosen["signals"],
+        "rule": "Persistent multi-dimensional operating break; pre-regime history excluded from automatic current-regime calibration.",
+    }
+
+
 def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = None, share_source: str = "", company_type: str = "Generic") -> dict[str, Any]:
     rows = [dict(row) for row in history if n(row.get("revenue")) is not None]
     rows.sort(key=lambda row: (str(row.get("period_end") or ""), int(row.get("fiscal_year") or 0)))
     if not rows:
         return _empty_metrics("No annual filing-derived fundamentals are available.")
+
+    regime = detect_operating_regime(rows)
+    regime_start_fy = regime.get("start_fiscal_year")
+    analysis_rows = [
+        row for row in rows
+        if regime_start_fy is None or int(row.get("fiscal_year") or 0) >= int(regime_start_fy)
+    ]
+    if not analysis_rows:
+        analysis_rows = rows[-1:]
 
     latest = rows[-1]
     revenue = n(latest.get("revenue"))
@@ -211,7 +355,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         net_debt = None
         net_debt_basis = "ECONOMIC_NET_DEBT_UNRESOLVED"
 
-    revenues = [n(row.get("revenue")) for row in rows]
+    revenues = [n(row.get("revenue")) for row in analysis_rows]
     revenue_growths: list[float] = []
     for previous, current in zip(revenues, revenues[1:]):
         if current is None or previous in (None, 0):
@@ -231,7 +375,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
     earnings_normalization_review = False
     sbc_material = False
 
-    for row in rows:
+    for row in analysis_rows:
         row_revenue = n(row.get("revenue"))
         row_net_income = n(row.get("net_income"))
         row_fcf = n(row.get("fcf"))
@@ -339,12 +483,17 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         warnings.append("Tax/non-operating earnings anomalies are excluded from P/E calibration rather than normalized by guess.")
     if sbc_material:
         warnings.append("Material SBC is handled through observed diluted-share growth; reported FCF is not double-penalized by subtracting SBC again.")
+    if regime.get("detected"):
+        warnings.append(
+            f"STRUCTURAL REGIME CHANGE: automatic history starts at FY{regime.get('start_fiscal_year')}; "
+            f"{int(regime.get('excluded_years') or 0)} older fiscal year(s) are excluded from current-regime calibration."
+        )
     if not economic:
         warnings.append("Economic Reality is not materialized on this filing basis yet; enterprise-value methods are excluded and a fresh SEC ingest is required.")
     elif economic_unresolved:
         warnings.append("Economic debt classification is materially unresolved; enterprise-value methods are excluded until the financing bridge is classified.")
 
-    company_quality = build_company_quality(rows, company_type)
+    company_quality = build_company_quality(analysis_rows, company_type)
     valuation_policy = dict(company_quality.get("valuation_policy") or {})
     return {
         "fiscal_year": latest.get("fiscal_year"),
@@ -364,6 +513,8 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         "company_quality": company_quality,
         "company_quality_state": company_quality.get("state"),
         "valuation_policy": valuation_policy,
+        "operating_regime": regime,
+        "regime_start_fiscal_year": regime_start_fy,
         "revenue_growth": _cagr(revenues, 3) or _median_growth(revenues),
         "gross_margin": gross_margin,
         "net_margin": median([x for x in net_margins[-3:] if x is not None]) if any(x is not None for x in net_margins[-3:]) else None,
@@ -439,13 +590,24 @@ def _calibration_series(observations: list[dict[str, Any]], key: str) -> tuple[l
     return [], "INSUFFICIENT"
 
 
-def calibrate_multiples(observations: list[dict[str, Any]], company_type: str = "Generic") -> dict[str, Any]:
+def calibrate_multiples(
+    observations: list[dict[str, Any]],
+    company_type: str = "Generic",
+    regime_start_fiscal_year: int | None = None,
+) -> dict[str, Any]:
     """Company-specific point-in-time multiple calibration.
 
     No sector/type multiple proxy is used. Each method must earn its own 5Y
     history (minimum four filing anchors) or fall back to the company's 10Y
     history. If neither is available, that method stays unavailable.
     """
+    original_count = len(observations)
+    if regime_start_fiscal_year is not None:
+        observations = [
+            row for row in observations
+            if row.get("fiscal_year") is not None
+            and int(row.get("fiscal_year") or 0) >= int(regime_start_fiscal_year)
+        ]
     computed: list[dict[str, Any]] = []
     for row in observations:
         price = n(row.get("price"))
@@ -509,6 +671,8 @@ def calibrate_multiples(observations: list[dict[str, Any]], company_type: str = 
         "method_stats": stats,
         "uses_fixed_type_proxy": False,
         "company_type_context": company_type,
+        "regime_start_fiscal_year": regime_start_fiscal_year,
+        "pre_regime_observations_excluded": max(0, original_count - len(observations)),
     })
     return result
 
@@ -1377,7 +1541,7 @@ def evaluate(
 
 __all__ = [
     "ENGINE_VERSION", "TYPE_PRIORS", "DECISION_GRADE_QUALITIES", "canonical_valuation_quality",
-    "valuation_base_quality", "valuation_is_decision_grade", "stored_model_base_quality", "infer_company_type", "metrics_from_history", "calibrate_multiples",
+    "valuation_base_quality", "valuation_is_decision_grade", "stored_model_base_quality", "infer_company_type", "detect_operating_regime", "metrics_from_history", "calibrate_multiples",
     "default_cases", "pe_value", "p_sales_value", "ev_ebitda_value", "ev_sales_value", "fcf_yield_value", "dcf_value", "robust_blend",
     "scenario_value", "evaluate", "n", "clamp", "quantile",
 ]
