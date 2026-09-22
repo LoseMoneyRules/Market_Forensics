@@ -192,6 +192,14 @@ def _feature_median(rows: list[dict[str, Any]], key: str) -> float | None:
 
 def _regime_feature_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = [dict(row) for row in history if n(row.get("revenue")) is not None]
+    annual = [
+        row for row in rows
+        if str(row.get("period_type") or "").upper() in {"", "FY"}
+    ]
+    # Structural breaks are annual-regime questions. TTM can drive current value,
+    # but it must not masquerade as an additional fiscal year.
+    if len(annual) >= 5:
+        rows = annual
     rows.sort(key=lambda row: (int(row.get("fiscal_year") or 0), str(row.get("period_end") or "")))
     previous_revenue: float | None = None
     out: list[dict[str, Any]] = []
