@@ -43,11 +43,36 @@ def _period_candidate_score(period: FinancialPeriod, normalized: NormalizedFinan
     return (year_match, populated, sourced, source_id, filed, updated, int(period.id or 0))
 
 
+def _logical_period_type(value: str | None) -> str:
+    raw = str(value or "").upper()
+    if raw.startswith("SUPERSEDED_"):
+        return raw.split("SUPERSEDED_", 1)[1]
+    if raw.startswith("SUP_"):
+        parts = raw.split("_")
+        return parts[1] if len(parts) > 1 else raw
+    return raw
+
+
+def _period_family_filter(period_types: tuple[str, ...]):
+    clauses = []
+    for period_type in period_types:
+        clauses.extend((
+            FinancialPeriod.period_type == period_type,
+            FinancialPeriod.period_type == f"SUPERSEDED_{period_type}",
+            FinancialPeriod.period_type.like(f"SUP_{period_type}_%"),
+        ))
+    return or_(*clauses)
+
+
 def _canonical_period_pairs(company_id: int, period_types: tuple[str, ...], *, annual: bool) -> list[tuple[FinancialPeriod, NormalizedFinancial]]:
+    # Read every stored identity in the represented-period family, including
+    # audit-preserved SUPERSEDED/SUP rows. Production can contain a rich legacy
+    # row plus a sparse active shell after an older parser revision. Live reads
+    # must choose the richest factual evidence, not blindly trust active/newest id.
     pairs = (
         db.session.query(FinancialPeriod, NormalizedFinancial)
         .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
-        .filter(FinancialPeriod.company_id == company_id, FinancialPeriod.period_type.in_(period_types))
+        .filter(FinancialPeriod.company_id == company_id, _period_family_filter(period_types))
         .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.id.desc())
         .all()
     )
