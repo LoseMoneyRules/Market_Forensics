@@ -1674,10 +1674,6 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     extension_fallback = {
         "attempted": False, "filings_scanned": 0, "concepts_added": 0, "facts_added": 0,
     }
-    if _extension_fallback_needed(duration, instant, companyfacts, fiscal_year_end):
-        extension_fallback = _augment_companyfacts_with_recent_filing_extensions(
-            company, companyfacts, meta, user_agent
-        )
 
     # Companyfacts can expose a perfectly valid consolidated statement concept
     # under the filer's own taxonomy. Use exact statement-label matches only when
@@ -1710,6 +1706,37 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         nonoperating_total=nonoperating_total_annual,
         nonoperating_components=nonoperating_components_annual,
     )
+
+    # Only leave Companyfacts when the standard + exact-label + accounting-algebra
+    # ladder is still incomplete. SEC filing-level extensions are bounded and are
+    # then fed back through the same resolver rather than handled per ticker.
+    if _extension_fallback_needed(duration, instant, companyfacts, fiscal_year_end):
+        extension_fallback = _augment_companyfacts_with_recent_filing_extensions(
+            company, companyfacts, meta, user_agent
+        )
+        if int(extension_fallback.get("facts_added") or 0) > 0:
+            for field in DURATION_TAGS:
+                for namespace, tags in _semantic_tag_groups(companyfacts, field).items():
+                    fallback_rows = _annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace)
+                    _merge_missing(duration[field], _mark_semantic_records(fallback_rows, namespace))
+            for field in INSTANT_TAGS:
+                for namespace, tags in _semantic_tag_groups(companyfacts, field).items():
+                    fallback_rows = _annual_instant(companyfacts, tags, namespace=namespace, fiscal_year_end=fiscal_year_end)
+                    _merge_missing(instant[field], _mark_semantic_records(fallback_rows, namespace))
+
+            # Rebuild the reconciliation-gated SGA bridge with any custom filing
+            # concepts that now have exact human-readable labels.
+            for namespace, tags in _semantic_tag_groups_for_aliases(companyfacts, SGA_LABEL_ALIASES).items():
+                _merge_missing(
+                    sga_annual,
+                    _mark_semantic_records(_annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace), namespace),
+                )
+            _apply_annual_statement_bridges(
+                duration,
+                sga=sga_annual,
+                nonoperating_total=nonoperating_total_annual,
+                nonoperating_components=nonoperating_components_annual,
+            )
 
     debt_current_annual = _annual_instant(companyfacts, DEBT_CURRENT_TAGS, fiscal_year_end=fiscal_year_end)
     debt_noncurrent_annual = _annual_instant(companyfacts, DEBT_NONCURRENT_TAGS, fiscal_year_end=fiscal_year_end)
