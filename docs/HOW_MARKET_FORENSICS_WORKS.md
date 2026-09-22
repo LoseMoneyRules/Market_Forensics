@@ -80,6 +80,8 @@ When legacy/audit period identities share the exact same represented end date, l
 
 A reconstructed TTM is eligible to become the canonical current financial basis only when it can stand on its own evidence. If the latest filed FY contains a material normalized field and a newer synthesized TTM loses that field, Market Forensics must keep the complete FY as the current decision basis and mark the newer TTM as withheld/incomplete. It must not carry the FY value into the newer date, and it must not let a Revenue-only TTM blank Current Financial Anatomy or other current-basis surfaces.
 
+A 10-K can contain cover-page instant facts measured after the fiscal balance-sheet date. Those instants remain valid source evidence but do not define a new fiscal year. Canonical annual financial periods require annual duration-statement evidence, and annual instant facts used in an FY basis must fall within the fiscal-year-end tolerance. Instant-only legacy FY shells are excluded from annual history/current-basis selection rather than being allowed to hide the latest complete filed FY.
+
 Tape distinguishes observation validity from decision usability. A reconciled consolidated-SIP observation can remain visible when direction-eligible coverage is low, while still being prohibited from influencing rank/regime. Partial/page-capped samples are context-only. An explicit Tape refresh must also repair the stored HistoricalPrice spine used by Tape charts.
 
 Important automated conclusions should be traceable to sources, transformations and assumptions.
