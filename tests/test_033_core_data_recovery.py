@@ -236,6 +236,70 @@ def test_033_sec_inline_extension_parser_recovers_custom_whole_entity_facts(monk
     assert revenue[0]["_mf_filing_extension"] is True
 
 
+
+def test_033_companyfacts_gap_is_filled_by_generic_filing_extension_pipeline(tmp_path, monkeypatch):
+    from mfapp.secdata import refresh_company_fundamentals
+
+    app = make_app(tmp_path, monkeypatch, "extension_pipeline")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Extension Co", display_name="Extension Co")
+        security = Security(company=company, ticker="EXTN", exchange="NYSE")
+        db.session.add_all([company, security]); db.session.commit()
+
+        def duration_node(label, value):
+            return {
+                "label": label,
+                "units": {"USD": [{
+                    "start": "2025-01-01", "end": "2025-12-31", "val": value,
+                    "form": "10-K", "fp": "FY", "filed": "2026-02-20",
+                    "accn": "STD", "fy": 2025,
+                }]}
+            }
+
+        facts = {
+            "entityName": "Extension Co",
+            "facts": {"us-gaap": {
+                "RevenueFromContractWithCustomerExcludingAssessedTax": duration_node("Revenues", 1000),
+                "CostOfRevenue": duration_node("Cost of revenue", 500),
+                "GrossProfit": duration_node("Gross profit", 500),
+                "OperatingIncomeLoss": duration_node("Operating income", 180),
+                "NetIncomeLoss": duration_node("Net income", 120),
+            }}
+        }
+
+        def inject_extension(company_arg, companyfacts, meta, ua):
+            companyfacts.setdefault("facts", {})["filing-extension"] = {
+                "CustomInventory": {
+                    "label": "Inventories",
+                    "units": {"USD": [{
+                        "end": "2025-12-31", "val": Decimal("240"), "form": "10-K", "fp": "FY",
+                        "filed": "2026-02-20", "accn": "EXT", "tag": "CustomInventory",
+                        "namespace": "ext", "_mf_filing_extension": True,
+                        "_mf_source_id": None,
+                        "_mf_derived_method": "FILING_EXTENSION_LABEL_FALLBACK",
+                    }]}
+                }
+            }
+            return {"attempted": True, "filings_scanned": 1, "concepts_added": 1, "facts_added": 1}
+
+        monkeypatch.setattr("mfapp.secdata._ua", lambda user_id: "Research test research@example.com")
+        monkeypatch.setattr("mfapp.secdata._ticker_meta", lambda ticker, ua: {
+            "cik": "0000000002", "name": "Extension Co", "sic": "3990",
+            "sic_description": "Manufacturing", "fiscal_year_end": "1231",
+        })
+        monkeypatch.setattr("mfapp.secdata._json", lambda url, ua: facts)
+        monkeypatch.setattr("mfapp.secdata._augment_companyfacts_with_recent_filing_extensions", inject_extension)
+
+        result = refresh_company_fundamentals(company, security, 1)
+        period = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY", fiscal_year=2025).first()
+        row = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
+
+        assert result["filing_extension_fallback"]["facts_added"] == 1
+        assert row.inventory == Decimal("240")
+        assert row.source_map["inventory"]["method"] == "FILING_EXTENSION_LABEL_FALLBACK"
+
+
 def test_033_nike_like_companyfacts_flow_resolves_operating_income_and_inventory_end_to_end(tmp_path, monkeypatch):
     from mfapp.secdata import refresh_company_fundamentals
 
