@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mfapp.positioning import _aggregate_trade_flow
+from mfapp.positioning import FLOW_METHOD_VERSION, _aggregate_trade_flow
 from mfapp.tape_engine import path_regime, score_tape_day
 
 
@@ -89,14 +89,25 @@ def test_029_large_whale_flow_uses_adaptive_thresholds_and_proxy_language():
     ])
     row = _aggregate_trade_flow(
         __import__("datetime").date(2026, 9, 17),
-        {"rows": trades, "feed": "sip", "feed_scope": "CONSOLIDATED_SIP", "complete": True, "sampled": False, "errors": []},
+        {
+            "rows": trades,
+            "feed": "sip",
+            "feed_scope": "CONSOLIDATED_SIP",
+            "complete": True,
+            "sampled": False,
+            "reference_bar": {"available": True, "volume": sum(float(x["s"]) for x in trades), "reference_price": 101.0},
+            "errors": [],
+        },
     )
     assert row["large_threshold"] >= 100_000
     assert row["very_large_threshold"] >= 250_000
     assert row["whale_threshold"] >= 500_000
-    assert row["classification_method"] == "TICK_RULE_PROXY"
+    assert row["classification_method"] == "REGULAR_SESSION_FILTERED_TICK_RULE_PROXY"
     assert row["feed_scope"] == "CONSOLIDATED_SIP"
     assert row["trade_rows"] == len(trades)
+    assert row["method_version"] == FLOW_METHOD_VERSION
+    assert row["sanity_status"] == "PASS"
+    assert row["decision_usable"] is True
 
 
 def test_029_tape_surface_restores_local_chart_contract():
@@ -193,3 +204,93 @@ def test_029_tape_v2_is_wired_to_background_evidence_not_get_navigation():
     assert "_cached_tape_for_months" in tape_route
     assert "tape_series(" not in tape_route
     assert "tape = tape_series(security, 12)" in cache
+
+
+
+def test_029_non_price_forming_huge_print_is_not_directional_large_sell():
+    trades = [
+        {"p": 100.00, "s": 100, "t": "2026-09-18T14:00:00Z", "i": 1, "c": []},
+        {"p": 100.10, "s": 100, "t": "2026-09-18T14:00:01Z", "i": 2, "c": []},
+        # Average-price / non-price-forming style print. It is huge and below the
+        # prior tick, but must not be allowed to manufacture a Large Sell signal.
+        {"p": 95.00, "s": 1_000_000, "t": "2026-09-18T14:00:02Z", "i": 3, "c": ["W"]},
+        {"p": 100.20, "s": 100, "t": "2026-09-18T14:00:03Z", "i": 4, "c": []},
+    ]
+    row = _aggregate_trade_flow(
+        __import__("datetime").date(2026, 9, 18),
+        {
+            "rows": trades,
+            "feed": "sip",
+            "feed_scope": "CONSOLIDATED_SIP",
+            "complete": True,
+            "sampled": False,
+            "reference_bar": {"available": True, "volume": 1_000_300, "reference_price": 100.0},
+            "errors": [],
+        },
+    )
+    assert row["excluded_condition_rows"] == 1
+    assert row["large_sell"] == 0
+    assert row["whale_sell"] == 0
+
+
+def test_029_flow_fails_closed_when_sample_volume_exceeds_daily_reference():
+    trades = [
+        {"p": 100.0, "s": 700, "t": "2026-09-18T14:00:00Z", "i": 1, "c": []},
+        {"p": 99.9, "s": 700, "t": "2026-09-18T14:00:01Z", "i": 2, "c": []},
+    ]
+    row = _aggregate_trade_flow(
+        __import__("datetime").date(2026, 9, 18),
+        {
+            "rows": trades,
+            "feed": "sip",
+            "feed_scope": "CONSOLIDATED_SIP",
+            "complete": True,
+            "sampled": False,
+            "reference_bar": {"available": True, "volume": 1_000, "reference_price": 100.0},
+            "errors": [],
+        },
+    )
+    assert row["sanity_status"] == "FAIL"
+    assert row["decision_usable"] is False
+    assert "SAMPLE_VOLUME_EXCEEDS_REFERENCE" in row["sanity_reasons"]
+    assert row["flow_confidence_pct"] == 0
+
+
+def test_029_partial_or_iex_flow_never_drives_tape_decision():
+    trade = {"p": 100.0, "s": 1_000, "t": "2026-09-18T14:00:00Z", "i": 1, "c": []}
+    for feed, complete, expected_reason in (
+        ("sip", False, "INCOMPLETE_TRADE_WINDOW"),
+        ("iex", True, "CONSOLIDATED_SIP_REQUIRED"),
+    ):
+        row = _aggregate_trade_flow(
+            __import__("datetime").date(2026, 9, 18),
+            {
+                "rows": [trade],
+                "feed": feed,
+                "feed_scope": "CONSOLIDATED_SIP" if feed == "sip" else "IEX_PARTIAL_MARKET",
+                "complete": complete,
+                "sampled": not complete,
+                "reference_bar": {"available": True, "volume": 1_000, "reference_price": 100.0},
+                "errors": [],
+            },
+        )
+        assert row["decision_usable"] is False
+        assert expected_reason in row["sanity_reasons"]
+
+
+def test_029_tape_ui_labels_large_whale_values_as_dollar_notionals():
+    template = Path("mfapp/templates/company_section.html").read_text()
+    assert "Large Buy $" in template
+    assert "Large Sell $" in template
+    assert "Net Large $" in template
+    assert "Net Whale $" in template
+    assert "FLOW EVIDENCE WITHHELD" in template
+
+
+def test_029_legacy_flow_cache_is_forced_stale():
+    cache = Path("mfapp/research_cache.py").read_text()
+    support = Path("mfapp/decision_support.py").read_text()
+    assert '"tape_flow_method_version": FLOW_METHOD_VERSION' in cache
+    assert 'str(cache.get("tape_flow_method_version") or "") != FLOW_METHOD_VERSION' in cache
+    assert 'str(row.get("method_version") or "") == FLOW_METHOD_VERSION' in support
+    assert 'bool(row.get("decision_usable"))' in support
