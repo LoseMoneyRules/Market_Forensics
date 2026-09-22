@@ -17,7 +17,7 @@ from mfapp.research_basis import FINANCIAL_REVIEW_GATES, latest_financial_basis
 from mfapp.security import encrypt_secret, hash_password
 from mfapp.services import ensure_workspace
 from mfapp.valuation_forensics import (
-    _market_implied_expectations, _multiple_bridge, _peer_adjustment,
+    _market_implied_expectations, _multiple_bridge, _peer_adjustment, _similarity,
     _rerating_conditions, _triangulation,
 )
 
@@ -211,12 +211,13 @@ def test_peer_adjusted_multiple_uses_only_close_and_partial_peers():
     peers = [
         {"comparability": "CLOSE PEER", "pe": 24, "revenue_growth_pct": 7, "operating_margin_pct": 13, "fcf_margin_pct": 10, "roic_pct": 15, "net_debt_to_fcf": .6, "cash_conversion": 1.0},
         {"comparability": "PARTIAL PEER", "pe": 22, "revenue_growth_pct": 4, "operating_margin_pct": 11, "fcf_margin_pct": 8, "roic_pct": 14, "net_debt_to_fcf": .8, "cash_conversion": 1.0},
+        {"comparability": "CLOSE PEER", "pe": 26, "revenue_growth_pct": 6, "operating_margin_pct": 12.5, "fcf_margin_pct": 9.5, "roic_pct": 16, "net_debt_to_fcf": .5, "cash_conversion": 1.1},
         {"comparability": "REFERENCE ONLY", "pe": 80, "revenue_growth_pct": 40},
     ]
     result = _peer_adjustment(target, peers, "pe")
     assert result["available"] is True
-    assert result["peer_count"] == 2
-    assert result["peer_median"] == 23
+    assert result["peer_count"] == 3
+    assert result["peer_median"] == 24
     assert result["justified_multiple"] < 80
     assert result["relative_gap_pct"] is not None
 
