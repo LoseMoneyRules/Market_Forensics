@@ -15,6 +15,7 @@ from .extensions import db
 from .historical_data import preferred_provider, price_on_or_after
 from .macro_context import macro_context
 from .research_basis import latest_financial_basis
+from .valuation_engine import detect_operating_regime
 
 ENGINE_VERSION = "0.3.2-integrity-v1"
 
@@ -544,6 +545,12 @@ def _similarity(target: dict[str, Any], peer: dict[str, Any], target_company: Co
     evidence = []
     max_score = 0.0
 
+    same_sic = bool(target_sic and peer_sic and target_sic == peer_sic)
+    same_sic_division = bool(target_sic and peer_sic and target_sic[:2] == peer_sic[:2])
+    same_industry = bool(target_company.industry and target_company.industry == peer_company.industry)
+    same_sector = bool(target_company.sector and target_company.sector == peer_company.sector)
+    structural_match = same_sic or same_sic_division or same_industry
+
     def categorical(points, matched, label):
         nonlocal score, max_score
         max_score += points
@@ -552,10 +559,10 @@ def _similarity(target: dict[str, Any], peer: dict[str, Any], target_company: Co
             evidence.append(label)
 
     if target_sic and peer_sic:
-        categorical(25, target_sic == peer_sic, "same SIC")
-        categorical(8, target_sic[:2] == peer_sic[:2], "same SIC division")
-    categorical(15, bool(target_company.industry and target_company.industry == peer_company.industry), "same industry")
-    categorical(8, bool(target_company.sector and target_company.sector == peer_company.sector), "same sector")
+        categorical(25, same_sic, "same SIC")
+        categorical(8, same_sic_division, "same SIC division")
+    categorical(15, same_industry, "same industry")
+    categorical(8, same_sector, "same sector")
     categorical(4, bool(target_company.country and target_company.country == peer_company.country), "same country")
 
     target_cap, peer_cap = _n(target.get("market_cap")), _n(peer.get("market_cap"))
@@ -586,17 +593,39 @@ def _similarity(target: dict[str, Any], peer: dict[str, Any], target_company: Co
             score += points * .5
 
     normalized = score / max_score * 100.0 if max_score else 0.0
-    tier = "CLOSE PEER" if normalized >= 70 else "PARTIAL PEER" if normalized >= 50 else "REFERENCE ONLY" if normalized >= 30 else "NOT COMPARABLE"
-    return {"score": round(normalized, 1), "tier": tier, "evidence": evidence}
+
+    # Economic resemblance cannot by itself manufacture a peer relationship.
+    # At least one structural industry/SIC relation is mandatory for any peer
+    # that can enter the peer median or peer-adjusted valuation.
+    if not structural_match:
+        tier = "REFERENCE ONLY" if normalized >= 30 else "NOT COMPARABLE"
+    elif same_sic and normalized >= 60:
+        tier = "CLOSE PEER"
+    elif normalized >= 55:
+        tier = "CLOSE PEER"
+    elif normalized >= 40:
+        tier = "PARTIAL PEER"
+    else:
+        tier = "REFERENCE ONLY"
+
+    return {
+        "score": round(normalized, 1),
+        "tier": tier,
+        "evidence": evidence,
+        "structural_match": structural_match,
+        "same_sic": same_sic,
+        "same_sic_division": same_sic_division,
+        "same_industry": same_industry,
+    }
 
 
 def _peer_adjustment(target: dict[str, Any], peers: list[dict[str, Any]], multiple_key: str) -> dict[str, Any]:
     eligible = [p for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"} and _n(p.get(multiple_key)) is not None]
     vals = [_n(p.get(multiple_key)) for p in eligible if _n(p.get(multiple_key)) is not None]
-    if len(vals) < 2:
+    if len(vals) < 3:
         return {
             "available": False, "multiple_key": multiple_key, "peer_count": len(eligible),
-            "reason": "Fewer than two close/partial peers have a usable comparable multiple.",
+            "reason": "Fewer than three structurally comparable close/partial peers have a usable comparable multiple.",
             "adjustments": [],
         }
     peer_med = median(vals)
@@ -665,7 +694,15 @@ def build_peer_analysis(company_id: int, user_id: int | None = None, limit: int 
         })
         candidates.append(peer)
     candidates.sort(key=lambda r: (-float(r.get("similarity_score") or 0), abs((_n(r.get("market_cap")) or 0) - (_n(target.get("market_cap")) or 0))))
-    peers = candidates[:max(2, limit)]
+    eligible_candidates = [
+        row for row in candidates
+        if row.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"}
+    ]
+    peers = eligible_candidates[:max(3, limit)]
+    reference_candidates = [
+        row for row in candidates
+        if row.get("comparability") == "REFERENCE ONLY"
+    ][:max(0, min(limit, 5))]
 
     comparisons = []
     for key, label in (
@@ -681,22 +718,34 @@ def build_peer_analysis(company_id: int, user_id: int | None = None, limit: int 
             "peer_median": median(vals) if vals else None, "sample_size": len(vals),
         })
 
-    primary = next((key for key in ("pe", "ev_ebitda", "ev_ebit", "ev_sales", "p_fcf") if _n(target.get(key)) is not None and sum(1 for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"} and _n(p.get(key)) is not None) >= 2), "pe")
+    primary = next((
+        key for key in ("pe", "ev_ebitda", "ev_ebit", "ev_sales", "p_fcf")
+        if _n(target.get(key)) is not None
+        and sum(
+            1 for p in peers
+            if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"}
+            and _n(p.get(key)) is not None
+        ) >= 3
+    ), "pe")
     adjusted = _peer_adjustment(target, peers, primary)
     eligible_count = sum(1 for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"})
     return {
         "available": bool(peers),
-        "reason": "" if peers else "No stored peer fundamentals are available.",
-        "method": "MULTI_DIMENSIONAL_STORED_PEER_SIMILARITY",
+        "reason": "" if peers else "No structurally comparable stored peers are available; peer valuation is withheld rather than using unrelated researched names.",
+        "method": "STRUCTURAL_AND_ECONOMIC_STORED_PEER_SIMILARITY",
+        "peer_universe_scope": "STORED_NORMALIZED_COMPANIES_ONLY",
+        "peer_selection_rule": "SIC division or same industry required; sector/economic resemblance alone cannot qualify a peer.",
         "sic": target_sic,
         "sic_description": target_sic_description,
         "target": target,
         "peers": peers,
+        "reference_candidates": reference_candidates,
         "eligible_peer_count": eligible_count,
+        "candidate_pool_count": len(candidates),
         "comparisons": comparisons,
         "peer_adjusted": adjusted,
         "limitations": [
-            "Only companies with stored normalized fundamentals and a stored market snapshot can be compared.",
+            "The current peer universe is still limited to companies with stored normalized fundamentals and a stored market snapshot; unrelated researched names are never promoted into the peer median merely because they are present in the database.",
             "Recurring-revenue mix, customer concentration and competitive position are not scored unless structured evidence exists.",
             "EV/EBITDA is available only when filed D&A and the economic debt bridge are both usable.",
         ],
@@ -894,7 +943,15 @@ def build_valuation_forensics(
     price = _n(market.price) if market else _n(valuation.get("current_price"))
     current_financial = current_row(company.id) or {}
     current = _economics_from_row(current_financial, price=price)
+    regime_history = list(reversed(annual_rows(company.id, 12)))
+    operating_regime = detect_operating_regime(regime_history)
+    regime_start_fy = operating_regime.get("start_fiscal_year")
     observations = _historical_observations(company.id, security.id, 10)
+    if regime_start_fy is not None:
+        observations = [
+            row for row in observations
+            if int(row.get("fiscal_year") or 0) >= int(regime_start_fy)
+        ]
     stats = _multiple_stats(observations, current)
     macro = macro_context(company.id)
     bridge = _multiple_bridge(current, stats, observations, macro)
@@ -922,6 +979,7 @@ def build_valuation_forensics(
         "current_economics": current,
         "historical_multiples": stats,
         "historical_observations": observations,
+        "operating_regime": operating_regime,
         "multiple_bridge": bridge,
         "rerating_conditions": rerating,
         "old_multiple_defensibility": defensibility,
@@ -934,6 +992,8 @@ def build_valuation_forensics(
             "historical_basis": "POINT_IN_TIME_POST_FILING_ANCHORS",
             "historical_price_provider": preferred_provider(security.id),
             "historical_observation_count": len(observations),
+            "regime_start_fiscal_year": regime_start_fy,
+            "pre_regime_history_excluded": bool(operating_regime.get("detected")),
             "peer_basis": "STORED_NORMALIZED_FINANCIALS_AND_STORED_MARKET_SNAPSHOTS",
             "network_calls": False,
             "blind_average_used": False,
