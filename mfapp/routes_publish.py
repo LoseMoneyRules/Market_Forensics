@@ -12,7 +12,7 @@ from .core_models import Company, Coverage, InvestmentState, Job, PortfolioRiskP
 from .data_providers import latest_snapshot, provider_overview, provider_status, set_secret
 from .extensions import db
 from .formatting import NUMBER_FORMATS, get_number_format, set_number_format
-from .jobs import cancel_job, enqueue_job, recover_stale_running_jobs, terminate_job_executor
+from .jobs import cancel_job, dismiss_terminal_jobs, enqueue_job, recover_stale_running_jobs, terminate_job_executor
 from .models import AuditEvent, Invite, User
 from .portfolio_engine import portfolio_rows, position_capacity, position_sizing
 from .position_action import build_position_action, monitoring_condition_state, monitoring_invalidation_state
@@ -466,6 +466,20 @@ def cancel_active_job(job_id):
     return redirect(request.referrer or url_for("web.settings"))
 
 
+@bp.post("/jobs/clear-failed")
+@role_required("CONTROL")
+def clear_failed_jobs():
+    require_control_view()
+    count = dismiss_terminal_jobs(g.user.id, ("FAILED", "CANCELLED"))
+    audit("job.dismiss_terminal", "user", g.user.id, {"count": count, "statuses": ["FAILED", "CANCELLED"]})
+    db.session.commit()
+    flash(
+        f"Cleared {count} failed/cancelled job record(s) from the operational queue. Audit history is preserved.",
+        "success",
+    )
+    return redirect(request.referrer or url_for("web.settings"))
+
+
 @bp.post("/jobs/pump")
 @role_required("CONTROL")
 def pump_jobs():
@@ -488,10 +502,23 @@ def pump_jobs():
 def settings():
     require_control_view()
     queue_status = _queue_status(g.user.id)
-    jobs = Job.query.filter_by(user_id=g.user.id).order_by(Job.created_at.desc()).limit(50).all()
+    jobs = (
+        Job.query
+        .filter(Job.user_id == g.user.id, Job.status != "DISMISSED")
+        .order_by(Job.created_at.desc())
+        .limit(50)
+        .all()
+    )
     job_targets = _job_target_map(jobs)
     job_items = [{"job": job, "target": job_targets[job.id]} for job in jobs]
-    refreshes = RefreshRun.query.order_by(RefreshRun.started_at.desc()).limit(30).all()
+    refreshes = (
+        RefreshRun.query
+        .join(Job, RefreshRun.job_id == Job.id)
+        .filter(Job.user_id == g.user.id, Job.status != "DISMISSED")
+        .order_by(RefreshRun.started_at.desc())
+        .limit(30)
+        .all()
+    )
     return render_template(
         "settings.html",
         providers=provider_status(g.user.id),

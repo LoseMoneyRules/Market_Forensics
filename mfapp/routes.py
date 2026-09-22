@@ -34,6 +34,7 @@ from .research_cache import cache_is_stale, latest_research_cache, latest_cache_
 from .triangulation_engine import automatic_triangulation
 from .security import login_required, role_required
 from .services import can_view_publication, coverage_for_ticker, ensure_security_from_validation, ensure_workspace, valuation_result
+from .secdata import SEC_NORMALIZER_VERSION
 from .symbols import validate_ticker
 from .valuation_engine import infer_company_type, stored_model_base_quality, valuation_base_quality, valuation_is_decision_grade
 
@@ -350,7 +351,32 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         Job.job_type == "SEC_INGEST",
         Job.status.in_(["QUEUED", "RUNNING"]),
     ).first()
+    latest_sec_source = (
+        Source.query
+        .filter_by(company_id=company.id, provider="SEC", source_type="COMPANYFACTS")
+        .order_by(Source.retrieved_at.desc(), Source.id.desc())
+        .first()
+    )
+    stored_normalizer_version = str(((latest_sec_source.meta or {}).get("normalizer_version") if latest_sec_source else "") or "")
+    core_financial_recovery_needed = stored_normalizer_version != SEC_NORMALIZER_VERSION
+    if (
+        core_financial_recovery_needed
+        and active_sec is None
+        and queue_recalc
+        and provider_status(g.user.id).get("sec")
+    ):
+        # One-time non-destructive parser migration for existing Coverage. The
+        # GET only queues work; SEC/network access remains in the background job.
+        active_sec = enqueue_job(
+            "SEC_INGEST",
+            user_id=g.user.id,
+            company_id=company.id,
+            security_id=security.id,
+            payload={"coverage_id": coverage.id, "normalizer_version": SEC_NORMALIZER_VERSION},
+            priority=30,
+        )
     economic_reclass_pending = active_sec is not None
+    core_financial_recovery_pending = core_financial_recovery_needed and active_sec is not None
 
     cache_pending = active_recalc is not None or economic_reclass_pending
     # Readiness is intentionally live DB state. It is lightweight and user-edited;
@@ -372,6 +398,8 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         "intelligence": intelligence, "decision_lenses": decision_lenses, "brief": brief,
         "research_cache": cache or {}, "cache_pending": cache_pending,
         "economic_reclass_pending": economic_reclass_pending,
+        "core_financial_recovery_pending": core_financial_recovery_pending,
+        "financial_normalizer_version": stored_normalizer_version,
     }
 
 def _fallback_synthesis(ctx: dict) -> dict:

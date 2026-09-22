@@ -16,9 +16,10 @@ from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_T
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
+SEC_NORMALIZER_VERSION = "0.3.3"
 
 DURATION_TAGS = {
-    "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"],
+    "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
     "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfProductsSold", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"],
     "gross_profit": ["GrossProfit"],
     "operating_income": ["OperatingIncomeLoss"],
@@ -44,7 +45,7 @@ INSTANT_TAGS = {
 }
 
 SEMANTIC_LABEL_ALIASES = {
-    "revenue": {"revenue", "revenues", "net sales", "sales", "total revenues"},
+    "revenue": {"revenue", "revenues", "net revenue", "net revenues", "net sales", "sales", "total revenue", "total revenues", "operating revenue", "operating revenues"},
     "cogs": {"cost of sales", "cost of revenue", "cost of revenues", "cost of goods sold", "cost of goods and services sold"},
     "gross_profit": {"gross profit"},
     "operating_income": {"operating income", "income from operations", "operating income loss"},
@@ -308,6 +309,59 @@ def _fiscal_year_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> int
     return end.year
 
 
+def _fiscal_quarter_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> str | None:
+    """Classify the represented period from its own end date, not filing fp.
+
+    SEC Companyfacts repeats comparative facts in later filings. The row fp
+    describes the filing period and can therefore mislabel an older comparative
+    fact as Q2/Q3. Deriving the quarter from the fact end date keeps non-calendar
+    issuers on a consecutive fiscal sequence.
+    """
+    raw_fye = str(fiscal_year_end or "").strip()
+    fallback = str(row.get("fp") or "").upper()
+    if len(raw_fye) != 4 or not raw_fye.isdigit():
+        return fallback if fallback in {"Q1", "Q2", "Q3", "Q4"} else None
+    month, day = int(raw_fye[:2]), int(raw_fye[2:])
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return fallback if fallback in {"Q1", "Q2", "Q3", "Q4"} else None
+    try:
+        end = date.fromisoformat(str(row.get("end") or "")[:10])
+        fy = _fiscal_year_from_end(row, raw_fye)
+        if fy is None:
+            return None
+
+        def fye(year: int) -> date:
+            candidate_day = day
+            while candidate_day >= 28:
+                try:
+                    return date(year, month, candidate_day)
+                except ValueError:
+                    candidate_day -= 1
+            return date(year, month, candidate_day)
+
+        previous_end = fye(fy - 1)
+        current_end = fye(fy)
+        span = max(1, (current_end - previous_end).days)
+        elapsed = (end - previous_end).days
+        if elapsed <= 0 or elapsed > span + 24:
+            return None
+        ratio = elapsed / span
+        centers = {"Q1": 0.25, "Q2": 0.50, "Q3": 0.75, "Q4": 1.00}
+        quarter, center = min(centers.items(), key=lambda item: abs(ratio - item[1]))
+        return quarter if abs(ratio - center) <= 0.16 else None
+    except (TypeError, ValueError):
+        return fallback if fallback in {"Q1", "Q2", "Q3", "Q4"} else None
+
+
+def _mark_last_good_retained(source_map: dict[str, Any], field: str) -> None:
+    """Keep a previously sourced same-period value when a refresh cannot resolve it."""
+    raw = source_map.get(field)
+    prior = dict(raw) if isinstance(raw, dict) else ({"prior_source": str(raw)} if raw else {})
+    prior["refresh_state"] = "LAST_GOOD_RETAINED"
+    prior["refresh_note"] = "Current provider refresh missed this same-period fact; prior sourced value retained."
+    source_map[field] = prior
+
+
 def _annual_duration(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "", namespace: str = "us-gaap") -> dict[int, dict[str, Any]]:
     output: dict[int, dict[str, Any]] = {}
     for tag in tags:
@@ -350,10 +404,11 @@ def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "u
 
 
 def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "", namespace: str = "us-gaap") -> tuple[dict[tuple[int, str], dict[str, Any]], dict[tuple[int, str], dict[str, Any]]]:
-    """Return quarter-only and YTD 10-Q facts, preserving tag priority.
+    """Return quarter-only and YTD facts keyed by represented fiscal quarter.
 
-    Income-statement facts often expose a ~90-day quarter and a YTD context. Cash-flow
-    facts commonly expose YTD only, so Q2/Q3 must be derived by differencing YTD facts.
+    Companyfacts can repeat comparative periods in later 10-Q filings. The
+    filing-level fp marker is therefore not trusted as the represented quarter;
+    the fact end date and issuer fiscal year-end define the key.
     """
     direct: dict[tuple[int, str], dict[str, Any]] = {}
     ytd: dict[tuple[int, str], dict[str, Any]] = {}
@@ -361,8 +416,10 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
         direct_candidates: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
         ytd_candidates: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
         for row in _facts(companyfacts, namespace, tag):
-            fp = str(row.get("fp") or "").upper()
-            if row.get("form") not in {"10-Q", "10-Q/A"} or fp not in {"Q1", "Q2", "Q3"}:
+            if row.get("form") not in {"10-Q", "10-Q/A"}:
+                continue
+            quarter = _fiscal_quarter_from_end(row, fiscal_year_end)
+            if quarter not in {"Q1", "Q2", "Q3"}:
                 continue
             days = _duration_days(row)
             if days is None or _as_decimal(row.get("val")) is None:
@@ -370,7 +427,7 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
             fy = _fiscal_year_from_end(row, fiscal_year_end)
             if fy is None:
                 continue
-            key = (fy, fp)
+            key = (fy, quarter)
             if 60 <= days <= 120:
                 direct_candidates[key].append(row)
             elif 121 <= days <= 310:
@@ -382,7 +439,6 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
             if key not in ytd:
                 ytd[key] = _sort_rows(rows)[-1]
     return direct, ytd
-
 
 def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: dict[int, dict[str, Any]], *, shares_metric: bool = False, fiscal_year_end: str = "", namespace: str = "us-gaap") -> dict[tuple[int, str], dict[str, Any]]:
     direct, ytd = _quarter_duration_sources(companyfacts, tags, fiscal_year_end, namespace=namespace)
@@ -436,11 +492,14 @@ def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = 
             if row.get("start") or _as_decimal(row.get("val")) is None:
                 continue
             form = str(row.get("form") or "")
-            fp = str(row.get("fp") or "").upper()
-            if form in {"10-Q", "10-Q/A"} and fp in {"Q1", "Q2", "Q3"}:
-                quarter = fp
-            elif form in {"10-K", "10-K/A"} and fp == "FY":
-                quarter = "Q4"
+            if form in {"10-Q", "10-Q/A"}:
+                quarter = _fiscal_quarter_from_end(row, fiscal_year_end)
+                if quarter not in {"Q1", "Q2", "Q3"}:
+                    continue
+            elif form in {"10-K", "10-K/A"}:
+                quarter = _fiscal_quarter_from_end(row, fiscal_year_end)
+                if quarter != "Q4":
+                    continue
             else:
                 continue
             fy = _fiscal_year_from_end(row, fiscal_year_end)
@@ -451,7 +510,6 @@ def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = 
             if key not in out:
                 out[key] = _sort_rows(rows)[-1]
     return out
-
 
 def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> Source:
     stamp = f"{facts.get('entityName') or meta['name']}|{datetime.now(timezone.utc).date().isoformat()}"
@@ -469,6 +527,7 @@ def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> S
             "sic": meta.get("sic") or "",
             "sic_description": meta.get("sic_description") or "",
             "user_agent_present": bool(user_agent),
+            "normalizer_version": SEC_NORMALIZER_VERSION,
         },
     )
     db.session.add(source)
@@ -546,9 +605,15 @@ def _finish_normalized(
         row.fcf = row.cfo - row.capex
     row.source_map = source_map
     quality = dict(row.quality or {})
+    retained = sorted(
+        field for field, ref in source_map.items()
+        if isinstance(ref, dict) and ref.get("refresh_state") == "LAST_GOOD_RETAINED"
+    )
     quality.update({
         "provider": "SEC", "filing_aware": True, "raw_facts_persisted": True,
         "period_type": period_type, "ttm_eligible": period_type in {"Q1", "Q2", "Q3", "Q4"},
+        "retained_last_good_fields": retained,
+        "provider_refresh_complete": not retained,
     })
     if economic_reality is not None:
         quality["economic_reality"] = economic_reality
@@ -1052,23 +1117,29 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         end_date = date.fromisoformat(str(anchor["end"])[:10])
         period = _upsert_period(company, source, period_type="FY", fiscal_year=fy, end_date=end_date, anchor=anchor)
         normalized = _normalized(period)
-        source_map: dict[str, Any] = {}
+        source_map: dict[str, Any] = dict(normalized.source_map or {})
         for field, records in duration.items():
             rec = records.get(fy)
             _record_raw(period, source, rec)
-            setattr(normalized, field, _as_decimal((rec or {}).get("val")))
-            if rec:
+            value = _as_decimal((rec or {}).get("val"))
+            if rec and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {"tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap", "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY"}
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
         for field, records in instant.items():
             rec = records.get(fy)
             _record_raw(period, source, rec)
-            setattr(normalized, field, _as_decimal((rec or {}).get("val")))
-            if rec:
+            value = _as_decimal((rec or {}).get("val"))
+            if rec and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
                     "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
                     "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY",
                 }
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
 
         debt_value, debt_records, debt_method = _compose_debt(
             instant.get("debt", {}).get(fy), debt_current_annual.get(fy), debt_noncurrent_annual.get(fy), debt_short_annual.get(fy)
@@ -1084,8 +1155,10 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
             }
         elif str((instant.get("debt", {}).get(fy) or {}).get("tag") or "") == "LongTermDebt":
-            normalized.debt = None
-            source_map.pop("debt", None)
+            if normalized.debt is not None:
+                _mark_last_good_retained(source_map, "debt")
+            else:
+                source_map.pop("debt", None)
         economic_facts, economic_sources = _economic_fact_bundle(
             economic_duration_annual, economic_instant_annual, fy
         )
@@ -1099,11 +1172,34 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             normalized, source_map, period_type="FY", economic_reality=economic_snapshot
         )
         for field, ref in source_map.items():
-            db.session.add(Provenance(source_id=source.id, object_type="normalized_financial", object_id=str(period.id), field_name=field, raw_or_normalized="NORMALIZED", financial_period_id=period.id, provider="SEC", freshness_at=utcnow(), calculation_version=CALCULATION_VERSION, notes=f"{ref.get('tag','')} / {ref.get('accession','')} / {ref.get('method','')}"))
+            ref = ref if isinstance(ref, dict) else {"prior_source": str(ref)}
+            provenance_source_id = int(ref.get("source_id") or source.id)
+            provenance_provider = str(ref.get("provider") or "SEC")
+            provenance_note = " / ".join(str(part) for part in (
+                ref.get("tag", ""), ref.get("accession", ""), ref.get("method", ""), ref.get("refresh_state", "")
+            ) if part)
+            db.session.add(Provenance(
+                source_id=provenance_source_id,
+                object_type="normalized_financial",
+                object_id=str(period.id),
+                field_name=field,
+                raw_or_normalized="NORMALIZED",
+                financial_period_id=period.id,
+                provider=provenance_provider,
+                freshness_at=utcnow(),
+                calculation_version=CALCULATION_VERSION,
+                notes=provenance_note,
+            ))
+        missing_revenue_issue = DataQualityIssue.query.filter_by(
+            company_id=company.id, object_type="financial_period", object_id=str(period.id),
+            code="MISSING_REVENUE", status="OPEN",
+        ).first()
         if normalized.revenue is None:
-            exists = DataQualityIssue.query.filter_by(company_id=company.id, object_type="financial_period", object_id=str(period.id), code="MISSING_REVENUE", status="OPEN").first()
-            if not exists:
+            if not missing_revenue_issue:
                 db.session.add(DataQualityIssue(company_id=company.id, object_type="financial_period", object_id=str(period.id), code="MISSING_REVENUE", severity="REVIEW", message=f"FY{fy}: revenue was not resolved from SEC Companyfacts."))
+        elif missing_revenue_issue:
+            missing_revenue_issue.status = "RESOLVED"
+            missing_revenue_issue.resolved_at = utcnow()
         annual_saved += 1
 
     quarter_duration: dict[str, dict[tuple[int, str], dict[str, Any]]] = {}
@@ -1145,31 +1241,37 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         end_date = date.fromisoformat(str(anchor.get("end"))[:10])
         period = _upsert_period(company, source, period_type=fp, fiscal_year=fy, end_date=end_date, anchor=anchor)
         normalized = _normalized(period)
-        source_map: dict[str, Any] = {}
+        source_map: dict[str, Any] = dict(normalized.source_map or {})
         for field, records in quarter_duration.items():
             info = records.get((fy, fp)) or {}
             record = info.get("record")
             for raw in info.get("derived_from") or []:
                 _record_raw(period, source, raw)
             _record_raw(period, source, record)
-            setattr(normalized, field, info.get("value"))
-            if info:
+            value = info.get("value")
+            if info and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": (record or {}).get("tag"), "accession": (record or {}).get("accn"),
                     "filed": (record or {}).get("filed"), "source_id": source.id,
                     "namespace": (record or {}).get("_mf_namespace") or (record or {}).get("namespace") or "us-gaap",
                     "method": "SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method"),
                 }
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
         for field, records in quarter_instant.items():
             rec = records.get((fy, fp))
             _record_raw(period, source, rec)
-            setattr(normalized, field, _as_decimal((rec or {}).get("val")))
-            if rec:
+            value = _as_decimal((rec or {}).get("val"))
+            if rec and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
                     "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
                     "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT",
                 }
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
 
         debt_value, debt_records, debt_method = _compose_debt(
             quarter_instant.get("debt", {}).get((fy, fp)),
@@ -1186,8 +1288,10 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
             }
         elif str((quarter_instant.get("debt", {}).get((fy, fp)) or {}).get("tag") or "") == "LongTermDebt":
-            normalized.debt = None
-            source_map.pop("debt", None)
+            if normalized.debt is not None:
+                _mark_last_good_retained(source_map, "debt")
+            else:
+                source_map.pop("debt", None)
         economic_facts, economic_sources = _economic_fact_bundle(
             economic_duration_quarter, economic_instant_quarter, (fy, fp)
         )
@@ -1218,6 +1322,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "cik": meta["cik"], "name": company.display_name,
         "years": years[-16:], "quarter_periods": [f"FY{fy}-{fp}" for fy, fp in quarter_keys[-24:]],
         "source_id": source.id,
+        "normalizer_version": SEC_NORMALIZER_VERSION,
         "fundamental_fallback": fallback,
         "annual_history": annual_history,
     }
