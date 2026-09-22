@@ -96,13 +96,16 @@ def test_035_low_direction_coverage_is_visible_but_not_scorable():
     assert "DIRECTION_ELIGIBLE_VOLUME_TOO_LOW" in flow["decision_reasons"]
 
 
-def test_035_recalculate_is_the_research_cache_materialization_boundary():
+def test_035_recalculate_company_is_the_single_cache_materialization_boundary():
     from mfapp import jobs
 
-    source = inspect.getsource(jobs._execute)
-    recalc = source.split('if kind == "RECALCULATE":', 1)[1].split('if kind == "RESEARCH_PREFILL":', 1)[0]
-    assert "refresh_research_cache" in recalc
-    assert 'result["research_cache"]' in recalc
+    source = inspect.getsource(jobs.recalculate_company)
+    assert source.count("refresh_research_cache") == 1
+    assert '"research_cache"' in source
+
+    execute = inspect.getsource(jobs._execute)
+    recalc = execute.split('if kind == "RECALCULATE":', 1)[1].split('if kind == "RESEARCH_PREFILL":', 1)[0]
+    assert "refresh_research_cache" not in recalc
 
 
 def test_035_positioning_refresh_repairs_price_spine_too():
