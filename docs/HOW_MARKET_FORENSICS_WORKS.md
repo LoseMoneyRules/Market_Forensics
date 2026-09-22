@@ -98,6 +98,14 @@ Model priors may be used as explicit assumptions, but they are not facts and mus
 
 A provider refresh may not erase a previously sourced value for the **same financial period** merely because the current provider response fails to resolve that field. Market Forensics retains that last-good same-period fact with explicit `LAST_GOOD_RETAINED` provenance and marks the provider refresh incomplete. This is not permission to carry an old value into a new period: missing new-period evidence stays missing.
 
+The 0.3.3 **financial-completeness ladder is issuer-generic and field-generic**. Resolution order is: canonical US-GAAP concept → exact consolidated statement-label fallback → deterministic/reconciled accounting algebra → exact FY-end-to-synthetic-Q4 instant bridge → configured secondary-provider missing-field fallback. No ticker may have a symbol-specific parser exception.
+
+Operating profit is a concrete example. If a filer supplies Gross Profit and a true Operating Expenses total, Operating Income may be derived exactly. If it supplies only Selling, General & Administrative expense, MF may treat SGA as the full operating-expense layer **only when the resulting operating profit independently reconciles to pre-tax income through reported non-operating evidence**. Otherwise the field stays unresolved; SGA is never blindly assumed to equal all operating expenses. This protects R&D-heavy and other multi-expense companies while resolving retail/manufacturing presentations such as Gross Profit → total S&A → pre-tax income.
+
+Synthetic Q4 has a separate instant-field rule: FY-end Inventory, Cash, Receivables, Payables, Assets, Liabilities, Equity and share-count facts are exactly the same point-in-time facts as Q4-end when the dates match, so they are bridged with explicit `FY_END_INSTANT_BRIDGE` provenance rather than left blank. Weighted-average diluted shares are not additive: Q2/Q3/Q4 quarter averages are reconstructed from YTD/FY weighted averages using period lengths, and a YTD average may never masquerade as a single-quarter average.
+
+After fundamentals ingestion, MF performs an applicability-aware field-integrity audit. A field that was historically applicable (for example Inventory) or an operating-profit field supported by the issuer's statement structure may not silently disappear from the current basis: an explicit `MISSING_EXPECTED_*` data-quality issue is opened until the evidence is resolved.
+
 ### 3.3 Reported accounting is not automatically economic reality
 
 The filed statement is always preserved. Market Forensics may add an auditable **Economic Reality** interpretation layer, but it must never silently rewrite the filing.
