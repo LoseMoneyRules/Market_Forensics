@@ -310,32 +310,45 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         else None
     )
 
-    sanity_reasons: list[str] = []
+    # Separate factual integrity from sampling coverage. A partial SIP sample is
+    # still observable evidence and should remain visible in charts, but it only
+    # enters Tape scoring when its share-volume coverage is material. This avoids
+    # the 0.3.3 failure mode where nearly every liquid stock disappeared because
+    # an eight-page cap could not fetch the entire trading day.
+    integrity_reasons: list[str] = []
     if sample.get("feed") != "sip":
-        sanity_reasons.append("CONSOLIDATED_SIP_REQUIRED")
-    if not sample.get("complete"):
-        sanity_reasons.append("INCOMPLETE_TRADE_WINDOW")
+        integrity_reasons.append("CONSOLIDATED_SIP_REQUIRED")
     if reference_volume in (None, 0):
-        sanity_reasons.append("REFERENCE_VOLUME_MISSING")
+        integrity_reasons.append("REFERENCE_VOLUME_MISSING")
     else:
         if sample_share_volume > reference_volume * 1.05:
-            sanity_reasons.append("SAMPLE_VOLUME_EXCEEDS_REFERENCE")
-        if sample.get("complete") and sample_share_volume < reference_volume * 0.70:
-            sanity_reasons.append("COMPLETE_SAMPLE_COVERS_TOO_LITTLE_VOLUME")
+            integrity_reasons.append("SAMPLE_VOLUME_EXCEEDS_REFERENCE")
     if reference_notional not in (None, 0) and sample_total_notional > reference_notional * 1.15:
-        sanity_reasons.append("SAMPLE_NOTIONAL_EXCEEDS_REFERENCE")
+        integrity_reasons.append("SAMPLE_NOTIONAL_EXCEEDS_REFERENCE")
     if not eligible:
-        sanity_reasons.append("NO_DIRECTION_ELIGIBLE_TRADES")
+        integrity_reasons.append("NO_DIRECTION_ELIGIBLE_TRADES")
     elif eligible_volume_pct is not None and eligible_volume_pct < 50.0:
-        sanity_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
+        integrity_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
 
-    sanity_status = "PASS" if not sanity_reasons else "FAIL"
-    decision_usable = sanity_status == "PASS"
-    feed_factor = 1.0 if sample.get("feed") == "sip" else .0
-    completeness_factor = 1.0 if sample.get("complete") else 0.0
-    flow_confidence = (directional_share or 0.0) * feed_factor * completeness_factor
-    if not decision_usable:
-        flow_confidence = 0.0
+    sanity_status = "PASS" if not integrity_reasons else "FAIL"
+    observation_usable = sanity_status == "PASS"
+
+    decision_reasons: list[str] = []
+    if observation_usable:
+        if sample.get("complete"):
+            if sample_volume_pct is None or sample_volume_pct < 70.0:
+                decision_reasons.append("COMPLETE_SAMPLE_COVERS_TOO_LITTLE_VOLUME")
+        elif sample_volume_pct is None or sample_volume_pct < 10.0:
+            decision_reasons.append("SAMPLED_VOLUME_COVERAGE_TOO_LOW")
+    else:
+        decision_reasons.extend(integrity_reasons)
+
+    decision_usable = observation_usable and not decision_reasons
+    coverage_status = "COMPLETE" if sample.get("complete") else "SAMPLED"
+    coverage_factor = min(1.0, max(0.0, (sample_volume_pct or 0.0) / 20.0))
+    flow_confidence = (directional_share or 0.0) * coverage_factor if observation_usable else 0.0
+    if not sample.get("complete"):
+        flow_confidence = min(flow_confidence, 60.0)
 
     return {
         "date": day.isoformat(),
