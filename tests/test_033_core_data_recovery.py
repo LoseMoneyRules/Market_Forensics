@@ -13,8 +13,11 @@ from mfapp.models import User
 from mfapp.secdata import (
     DURATION_TAGS,
     _annual_duration,
+    _apply_annual_statement_bridges,
+    _bridge_fy_end_instants_to_q4,
     _fiscal_quarter_from_end,
     _quarter_duration_values,
+    _validated_sga_operating_bridge,
 )
 
 
@@ -64,6 +67,131 @@ def test_033_march_year_end_quarters_are_consecutive_for_lpg_shape():
     ]
     assert [_fiscal_quarter_from_end(row, "0331") for row, _ in samples] == [expected for _, expected in samples]
 
+
+
+
+def _annual_fact(*, start: str, end: str, value: int, tag: str = "Fact"):
+    return {
+        "start": start, "end": end, "val": value, "form": "10-K", "fp": "FY",
+        "filed": "2026-07-24", "accn": "TEST-ANNUAL", "fy": int(end[:4]),
+        "tag": tag, "namespace": "us-gaap",
+    }
+
+
+def test_033_nike_like_statement_resolves_operating_income_without_symbol_rules():
+    # Generic retail/manufacturing presentation: Gross Profit + total S&A +
+    # pretax/non-operating evidence, but no explicit OperatingIncomeLoss fact.
+    gp = _annual_fact(start="2025-06-01", end="2026-05-31", value=19911, tag="GrossProfit")
+    sga = _annual_fact(start="2025-06-01", end="2026-05-31", value=16114, tag="SellingGeneralAndAdministrativeExpense")
+    pretax = _annual_fact(start="2025-06-01", end="2026-05-31", value=3900, tag="IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest")
+    nonop = _annual_fact(start="2025-06-01", end="2026-05-31", value=103, tag="NonoperatingIncomeExpense")
+    duration = {
+        field: {} for field in DURATION_TAGS
+    }
+    duration["gross_profit"][2026] = gp
+    duration["pretax_income"][2026] = pretax
+
+    _apply_annual_statement_bridges(
+        duration,
+        sga={2026: sga},
+        nonoperating_total={2026: nonop},
+        nonoperating_components={},
+    )
+
+    assert duration["operating_expenses"][2026]["val"] == 16114
+    assert duration["operating_income"][2026]["val"] == 3797
+    from mfapp.calculations import financial_metrics
+    metrics = financial_metrics(
+        {"revenue": 46398, "gross_profit": 19911, "operating_expenses": 16114, "operating_income": 3797},
+        {},
+    )
+    assert round(metrics["operating_margin_pct"], 2) == 8.18
+
+
+def test_033_sga_is_not_blindly_treated_as_total_opex():
+    # A company with separate R&D could have SGA that is only one operating-cost
+    # component. If the candidate operating income does not reconcile through
+    # independent non-operating evidence, leave it unresolved.
+    gp = _annual_fact(start="2025-01-01", end="2025-12-31", value=800, tag="GrossProfit")
+    sga = _annual_fact(start="2025-01-01", end="2025-12-31", value=300, tag="SellingGeneralAndAdministrativeExpense")
+    pretax = _annual_fact(start="2025-01-01", end="2025-12-31", value=350, tag="IncomeBeforeTax")
+    nonop = _annual_fact(start="2025-01-01", end="2025-12-31", value=10, tag="NonoperatingIncomeExpense")
+
+    expense, operating = _validated_sga_operating_bridge(gp, sga, pretax, nonop, [])
+    assert expense is None
+    assert operating is None
+
+
+def test_033_direct_operating_expenses_produce_exact_operating_income():
+    gp = _annual_fact(start="2025-01-01", end="2025-12-31", value=500, tag="GrossProfit")
+    opex = _annual_fact(start="2025-01-01", end="2025-12-31", value=300, tag="OperatingExpenses")
+    duration = {field: {} for field in DURATION_TAGS}
+    duration["gross_profit"][2025] = gp
+    duration["operating_expenses"][2025] = opex
+
+    _apply_annual_statement_bridges(
+        duration, sga={}, nonoperating_total={}, nonoperating_components={}
+    )
+    assert duration["operating_income"][2025]["val"] == 200
+    assert duration["operating_income"][2025]["_mf_derived_method"] == "GROSS_PROFIT_MINUS_OPERATING_EXPENSES"
+
+
+def test_033_weighted_average_shares_are_reconstructed_by_quarter_not_ytd_proxy():
+    rows = [
+        _fact(start="2026-01-01", end="2026-03-31", value=100, form="10-Q", fp="Q1", filed="2026-05-01"),
+        _fact(start="2026-01-01", end="2026-06-30", value=105, form="10-Q", fp="Q2", filed="2026-08-01"),
+        _fact(start="2026-01-01", end="2026-09-30", value=110, form="10-Q", fp="Q3", filed="2026-11-01"),
+        _fact(start="2026-01-01", end="2026-12-31", value=115, form="10-K", fp="FY", filed="2027-02-01"),
+    ]
+    facts = {"facts": {"us-gaap": {"WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": rows}}}}}
+    annual = _annual_duration(facts, DURATION_TAGS["diluted_shares"], "1231")
+    quarters = _quarter_duration_values(
+        facts, DURATION_TAGS["diluted_shares"], annual,
+        shares_metric=True, fiscal_year_end="1231",
+    )
+
+    assert quarters[(2026, "Q1")]["value"] == Decimal("100")
+    # YTD averages must be converted back to incremental quarter averages.
+    assert 109 < float(quarters[(2026, "Q2")]["value"]) < 111
+    assert 119 < float(quarters[(2026, "Q3")]["value"]) < 121
+    assert 129 < float(quarters[(2026, "Q4")]["value"]) < 131
+    assert quarters[(2026, "Q4")]["method"] == "FY_MINUS_9M_WEIGHTED_AVERAGE"
+
+
+def test_033_fy_end_inventory_bridges_exactly_to_synthetic_q4(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "q4_inventory")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Inventory Co", display_name="Inventory Co")
+        db.session.add(company); db.session.flush()
+        fy = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2026,
+            end_date=date(2026, 5, 31), currency="USD",
+        )
+        q4 = FinancialPeriod(
+            company_id=company.id, period_type="Q4", fiscal_year=2026,
+            end_date=date(2026, 5, 31), currency="USD",
+        )
+        db.session.add_all([fy, q4]); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=fy.id,
+            revenue=Decimal("46398"), inventory=Decimal("7501"),
+            source_map={"inventory": {"provider": "SEC", "tag": "InventoryNet"}},
+            quality={},
+        ))
+        db.session.add(NormalizedFinancial(
+            financial_period_id=q4.id,
+            revenue=Decimal("11000"), inventory=None,
+            source_map={"revenue": {"provider": "SEC"}}, quality={},
+        ))
+        db.session.commit()
+
+        assert _bridge_fy_end_instants_to_q4(company) >= 1
+        db.session.flush()
+        q4_row = NormalizedFinancial.query.filter_by(financial_period_id=q4.id).first()
+        assert q4_row.inventory == Decimal("7501")
+        assert q4_row.source_map["inventory"]["method"] == "FY_END_INSTANT_BRIDGE"
+        assert q4_row.source_map["inventory"]["bridge_from_period_id"] == fy.id
 
 
 def test_033_empty_quarter_shells_do_not_hide_valid_annual_current_basis(tmp_path, monkeypatch):
