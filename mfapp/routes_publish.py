@@ -422,6 +422,18 @@ def queue_refresh(ticker, kind):
         # A user-requested scan is an explicit re-read, even when this parser
         # version previously completed with zero extracted promises.
         payload.update({"force": True, "limit": 60})
+    if kind == "positioning":
+        # Tape charts and Tape scoring share HistoricalPrice as their market
+        # spine. One explicit Tape refresh repairs that dependency too, so the
+        # user never has to discover and run a separate price-history action.
+        enqueue_job(
+            "PRICE_HISTORY_REFRESH",
+            user_id=g.user.id,
+            company_id=ctx["company"].id,
+            security_id=ctx["security"].id,
+            payload={"coverage_id": ctx["coverage"].id, "lookback_years": 2},
+            priority=35,
+        )
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
                       payload=payload, priority=priorities.get(kind, 50))
     audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
