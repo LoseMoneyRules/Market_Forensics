@@ -1018,7 +1018,7 @@ def company_section(ticker, section):
         completeness = numbers_completeness(company.id)
         company_type = str((ctx["model"].assumptions or {}).get("company_type") or infer_company_type(company.sector, company.industry))
         fundamentals_forensics = dict(cache.get("fundamentals_forensics") or {
-            "engine_version": "0.3.0",
+            "engine_version": "fundamentals-forensics-v2",
             "state": "CALCULATING" if ctx.get("cache_pending") else "INSUFFICIENT EVIDENCE",
             "headline": "Fundamentals forensics is updating in the research job queue." if ctx.get("cache_pending") else "No materialized Fundamentals forensic read is stored yet.",
             "strengths": [], "red_flags": [], "watches": [], "inconsistencies": [], "data_gaps": [],
