@@ -172,6 +172,7 @@ Permanent 0.3.2 valuation-integrity rules:
 - fixed sector/company-type multiple proxies are forbidden in automatic fair value;
 - P/E, P/S, EV/Sales, EV/EBITDA and FCF Yield can be used only when the company has its own point-in-time historical evidence for that method;
 - each method uses the company's 5Y P10 / median / P90 when at least four comparable filing-price anchors exist, otherwise the company's own 10Y history; unsupported methods remain unavailable;
+- historical anchors must also belong to the same economic regime. A persistent multi-dimensional structural break in revenue scale, margins, capital intensity and/or share base starts a new regime; pre-regime years are excluded from automatic current-regime calibration rather than mixed into the median. One abnormal year is not enough to trigger a reset. If the new regime has insufficient comparable history, the method remains unavailable/under review instead of reaching back into a structurally different business;
 - FCF Yield is economically inverted across scenarios: Bear requires the higher historical yield and Bull the lower yield;
 - DCF is a real valuation method in the canonical blend when cash-flow evidence is usable, not merely a decorative cross-check;
 - a single valid method is explicitly non-decision-grade;
@@ -209,11 +210,13 @@ The forensic bridge is explanatory, not a second intrinsic valuation engine or a
 
 ### 3.7 True peer triangulation
 
-Peer selection is multi-dimensional. Same sector alone is not enough.
+Peer selection is multi-dimensional and fail-closed. Same sector, similar margins or simply being present in the user's Research database is **not** enough.
 
-Stored peers are classified as **CLOSE PEER**, **PARTIAL PEER**, **REFERENCE ONLY** or **NOT COMPARABLE** using available evidence for business classification, industry/SIC, size, geography, growth, operating/FCF margins, ROIC, leverage and capital intensity. Missing qualitative facts such as recurring-revenue mix or customer concentration are limitations; they do not receive fabricated scores.
+A company can qualify as a valuation peer only when there is structural business comparability — same SIC, same SIC division or same industry — plus sufficient similarity in size/economics. Companies that are merely numerically similar remain REFERENCE ONLY and cannot enter the peer median. Stored peers are classified as **CLOSE PEER**, **PARTIAL PEER**, **REFERENCE ONLY** or **NOT COMPARABLE** using available evidence for industry/SIC, size, geography, growth, operating/FCF margins, ROIC, leverage and capital intensity.
 
-Only CLOSE/PARTIAL peers set peer medians. Relative value must explain the adjustment from peer median to a justified company multiple. The peer estimate never automatically alters intrinsic Bear/Base/Bull.
+Only CLOSE/PARTIAL peers set peer medians, and a peer-adjusted multiple requires at least three structurally comparable peers with the relevant multiple. If the stored database does not contain enough true peers, peer valuation is withheld rather than filled with unrelated companies the user happens to be studying. The current peer universe is still limited to companies with stored normalized fundamentals/quotes; that limitation must remain explicit until a broad independent peer-universe cache exists.
+
+Relative value must explain the adjustment from peer median to a justified company multiple. The peer estimate never automatically alters intrinsic Bear/Base/Bull.
 
 Triangulation keeps three worlds independent:
 
@@ -1617,6 +1620,9 @@ Current Process/Decision Lens state:
 The canonical validation policy is defined once and used by historical-run status, Validate, Process Readiness, Decision Lenses, Research Conclusion, report/export and cached/API-facing readiness:
 
 - VALIDATED requires at least 5 valid scored samples;
+- a valid scored sample must itself have been decision-grade at that historical cutoff: Base quality INTRINSIC, at least two independent valuation families, no reference-price fallback, and only evidence filed on or before the cutoff;
+- Valuation and Validate must use the same canonical valuation engine/version and the same regime-aware company-history rules. Validate may not use a simplified or legacy fair-value formula;
+- structural-regime detection inside Validate is point-in-time: a historical sample may only detect changes visible by that date, never a later transformation;
 - VALIDATED requires reliability ≥ 65;
 - fewer than 5 valid samples is LIMITED regardless of a high reliability score;
 - failed/error execution or very weak reliability is REVIEW;
