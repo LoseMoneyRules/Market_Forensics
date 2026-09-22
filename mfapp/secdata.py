@@ -508,6 +508,7 @@ def _quarter_info_value(info: dict[str, Any] | None) -> Decimal | None:
 def _apply_quarter_statement_bridges(
     quarter_duration: dict[str, dict[tuple[int, str], dict[str, Any]]],
     *,
+    annual_duration: dict[str, dict[int, dict[str, Any]]],
     sga: dict[tuple[int, str], dict[str, Any]],
     nonoperating_total: dict[tuple[int, str], dict[str, Any]],
     nonoperating_components: dict[str, dict[tuple[int, str], dict[str, Any]]],
@@ -578,36 +579,31 @@ def _apply_quarter_statement_bridges(
             "method": "VALIDATED_GROSS_PROFIT_MINUS_SGA",
         }
 
-    # Once Q1-Q3 have been repaired, derive Q4 from the annual-equivalent values
-    # already materialized by _quarter_duration_values whenever possible.
-    fiscal_years = sorted({fy for fy, _ in keys})
+    # Once Q1-Q3 have been repaired, derive missing Q4 operating rows from
+    # the compatible annual total. This is the same exact FY - Q1 - Q2 - Q3
+    # bridge used for other duration facts.
+    fiscal_years = sorted({fy for fy, _ in keys} | set(annual_duration.get("operating_income", {})) | set(annual_duration.get("operating_expenses", {})))
     for fy in fiscal_years:
         for field in ("operating_expenses", "operating_income"):
             if (fy, "Q4") in quarter_duration.get(field, {}):
                 continue
-            annual_equivalent = None
-            # The field may have Q4 absent because Q1-Q3 were repaired only after
-            # initial annual-minus-quarter reconstruction. Reconstruct the implied
-            # annual total from the other fields when an annual Q4 anchor exists.
-            gp_q4 = quarter_duration.get("gross_profit", {}).get((fy, "Q4"))
-            if field == "operating_income":
-                op_exp_q4 = quarter_duration.get("operating_expenses", {}).get((fy, "Q4"))
-                if gp_q4 and op_exp_q4:
-                    quarter_duration[field][(fy, "Q4")] = {
-                        "value": _quarter_info_value(gp_q4) - _quarter_info_value(op_exp_q4),
-                        "record": (gp_q4 or {}).get("record"),
-                        "derived_from": [(gp_q4 or {}).get("record"), (op_exp_q4 or {}).get("record")],
-                        "method": "GROSS_PROFIT_MINUS_OPERATING_EXPENSES",
-                    }
-            elif field == "operating_expenses":
-                op_income_q4 = quarter_duration.get("operating_income", {}).get((fy, "Q4"))
-                if gp_q4 and op_income_q4:
-                    quarter_duration[field][(fy, "Q4")] = {
-                        "value": _quarter_info_value(gp_q4) - _quarter_info_value(op_income_q4),
-                        "record": (gp_q4 or {}).get("record"),
-                        "derived_from": [(gp_q4 or {}).get("record"), (op_income_q4 or {}).get("record")],
-                        "method": "GROSS_PROFIT_MINUS_OPERATING_INCOME",
-                    }
+            annual_record = annual_duration.get(field, {}).get(fy)
+            annual_value = _fact_value(annual_record)
+            quarter_values = [
+                _quarter_info_value(quarter_duration.get(field, {}).get((fy, fp)))
+                for fp in ("Q1", "Q2", "Q3")
+            ]
+            if annual_value is None or any(value is None for value in quarter_values):
+                continue
+            quarter_duration[field][(fy, "Q4")] = {
+                "value": annual_value - sum(quarter_values, Decimal("0")),
+                "record": annual_record,
+                "derived_from": [
+                    *((quarter_duration.get(field, {}).get((fy, fp)) or {}).get("record") for fp in ("Q1", "Q2", "Q3")),
+                    annual_record,
+                ],
+                "method": "FY_MINUS_Q1_Q2_Q3",
+            }
 
 
 def _weighted_average_increment(current: dict[str, Any] | None, previous: dict[str, Any] | None) -> Decimal | None:
@@ -714,8 +710,15 @@ def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: di
                 continue
             current_ytd = ytd.get((fy, fp))
             if shares_metric:
-                if current_ytd:
-                    out[(fy, fp)] = {"value": _as_decimal(current_ytd.get("val")), "record": current_ytd, "method": "YTD_SHARE_PROXY"}
+                previous_ytd = ytd.get((fy, prev_fp)) or (direct.get((fy, "Q1")) if prev_fp == "Q1" else None)
+                increment = _weighted_average_increment(current_ytd, previous_ytd)
+                if current_ytd and previous_ytd and increment is not None:
+                    out[(fy, fp)] = {
+                        "value": increment,
+                        "record": current_ytd,
+                        "derived_from": [previous_ytd, current_ytd],
+                        "method": "YTD_WEIGHTED_AVERAGE_DIFFERENCE",
+                    }
                 continue
             previous_ytd = ytd.get((fy, prev_fp)) or (direct.get((fy, "Q1")) if prev_fp == "Q1" else None)
             cur_val = _as_decimal((current_ytd or {}).get("val"))
@@ -731,7 +734,15 @@ def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: di
         annual_value = _as_decimal((annual_record or {}).get("val"))
         if annual_value is not None:
             if shares_metric:
-                out[(fy, "Q4")] = {"value": annual_value, "record": annual_record, "method": "FY_SHARE_PROXY"}
+                q3_ytd = ytd.get((fy, "Q3"))
+                increment = _weighted_average_increment(annual_record, q3_ytd)
+                if q3_ytd and increment is not None:
+                    out[(fy, "Q4")] = {
+                        "value": increment,
+                        "record": annual_record,
+                        "derived_from": [q3_ytd, annual_record],
+                        "method": "FY_MINUS_9M_WEIGHTED_AVERAGE",
+                    }
             else:
                 values = [out.get((fy, fp), {}).get("value") for fp in ("Q1", "Q2", "Q3")]
                 if all(v is not None for v in values):
@@ -797,6 +808,8 @@ def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> S
 def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) -> None:
     if not record:
         return
+    if str(record.get("tag") or "") == "DERIVED" or str(record.get("namespace") or "") == "derived":
+        return
     value = _as_decimal(record.get("val"))
     if value is None:
         return
@@ -860,6 +873,9 @@ def _finish_normalized(
     if row.operating_expenses is None and row.gross_profit is not None and row.operating_income is not None:
         row.operating_expenses = row.gross_profit - row.operating_income
         source_map.setdefault("operating_expenses", {"tag": "DERIVED", "method": "GROSS_PROFIT_MINUS_OPERATING_INCOME"})
+    if row.operating_income is None and row.gross_profit is not None and row.operating_expenses is not None:
+        row.operating_income = row.gross_profit - row.operating_expenses
+        source_map.setdefault("operating_income", {"tag": "DERIVED", "method": "GROSS_PROFIT_MINUS_OPERATING_EXPENSES"})
     if row.cfo is not None and row.capex is not None:
         row.fcf = row.cfo - row.capex
     row.source_map = source_map
@@ -1247,6 +1263,70 @@ def _alpha_vantage_fill_missing(company: Company, security: Security, user_id: i
         "years_backfilled": sorted(set(years_backfilled), reverse=True),
         "sources": sorted(payloads),
     }
+
+
+def _bridge_fy_end_instants_to_q4(company: Company) -> int:
+    """Copy exact balance-sheet facts from FY to same-date Q4 when Q4 is synthetic.
+
+    A Q4 reconstructed from FY minus Q1-Q3 is a duration construct. Balance-sheet
+    facts are instants, so the issuer's FY-end Inventory/Cash/Receivables/etc. are
+    exactly the Q4-end values. This bridge restores those fields without guessing.
+    """
+    bridged = 0
+    q4_periods = FinancialPeriod.query.filter_by(company_id=company.id, period_type="Q4").all()
+    for q4_period in q4_periods:
+        fy_period = FinancialPeriod.query.filter_by(
+            company_id=company.id,
+            period_type="FY",
+            fiscal_year=q4_period.fiscal_year,
+            end_date=q4_period.end_date,
+        ).first()
+        if fy_period is None:
+            continue
+        q4_row = NormalizedFinancial.query.filter_by(financial_period_id=q4_period.id).first()
+        fy_row = NormalizedFinancial.query.filter_by(financial_period_id=fy_period.id).first()
+        if q4_row is None or fy_row is None:
+            continue
+        source_map = dict(q4_row.source_map or {})
+        changed = False
+        for field in INSTANT_TAGS:
+            if getattr(q4_row, field, None) is not None:
+                continue
+            value = getattr(fy_row, field, None)
+            if value is None:
+                continue
+            setattr(q4_row, field, value)
+            fy_ref = (fy_row.source_map or {}).get(field)
+            ref = dict(fy_ref) if isinstance(fy_ref, dict) else ({"prior_source": str(fy_ref)} if fy_ref else {})
+            ref["method"] = "FY_END_INSTANT_BRIDGE"
+            ref["bridge_from_period_id"] = fy_period.id
+            source_map[field] = ref
+            source_id = int(ref.get("source_id") or fy_period.source_id or q4_period.source_id or 0)
+            if source_id:
+                exists = Provenance.query.filter_by(
+                    object_type="normalized_financial",
+                    object_id=str(q4_period.id),
+                    field_name=field,
+                    financial_period_id=q4_period.id,
+                ).filter(Provenance.notes.like("%FY_END_INSTANT_BRIDGE%")).first()
+                if not exists:
+                    db.session.add(Provenance(
+                        source_id=source_id,
+                        object_type="normalized_financial",
+                        object_id=str(q4_period.id),
+                        field_name=field,
+                        raw_or_normalized="NORMALIZED",
+                        financial_period_id=q4_period.id,
+                        provider=str(ref.get("provider") or "SEC"),
+                        freshness_at=utcnow(),
+                        calculation_version=CALCULATION_VERSION,
+                        notes=f"{ref.get('tag','')} / FY_END_INSTANT_BRIDGE / FY period {fy_period.id}",
+                    ))
+            bridged += 1
+            changed = True
+        if changed:
+            _finish_normalized(q4_row, source_map, period_type="Q4")
+    return bridged
 
 
 def _reconcile_annual_history_issues(company: Company, target_years: int = 10) -> dict[str, Any]:
