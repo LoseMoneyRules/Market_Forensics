@@ -9,7 +9,7 @@ from flask import Blueprint, abort, current_app, flash, g, redirect, render_temp
 from sqlalchemy import or_
 
 from .access import audit, effective_role, require_control_view
-from .current_financials import annual_history_grid, annual_rows, current_row, forecast_rows, history_with_current, numbers_completeness, quarterly_rows, scenario_forecasts
+from .current_financials import annual_history_grid, annual_rows, canonical_annual_pairs, current_row, forecast_rows, history_with_current, numbers_completeness, quarterly_rows, scenario_forecasts
 from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_context_metrics, tape_series
 from .management_promises import evaluate_promises
 from .extensions import db
@@ -1048,9 +1048,13 @@ def company_section(ticker, section):
     elif section == "catalysts":
         extra["catalyst_rows"] = Catalyst.query.filter_by(coverage_id=coverage.id).order_by(Catalyst.expected_date.asc(), Catalyst.id.desc()).all()
     elif section == "financial-flows":
-        periods = FinancialPeriod.query.filter_by(company_id=company.id, period_type="FY").order_by(FinancialPeriod.fiscal_year.desc()).all(); year = int(request.args.get("year") or (periods[0].fiscal_year if periods else 0)); period = next((p for p in periods if p.fiscal_year == year), None); flows = {}
+        periods = [period for period, _ in canonical_annual_pairs(company.id)]
+        year = int(request.args.get("year") or (periods[0].fiscal_year if periods else 0))
+        period = next((p for p in periods if p.fiscal_year == year), None)
+        flows = {}
         if period:
-            for row in FinancialFlow.query.filter_by(financial_period_id=period.id).order_by(FinancialFlow.id.desc()).all(): flows.setdefault(row.flow_type, row.payload)
+            for row in FinancialFlow.query.filter_by(financial_period_id=period.id).order_by(FinancialFlow.id.desc()).all():
+                flows.setdefault(row.flow_type, row.payload)
         extra.update({"periods": periods, "selected_year": year, "flows": flows})
     elif section == "management":
         extra["management_rows"] = ManagementAssessment.query.filter_by(coverage_id=coverage.id).order_by(ManagementAssessment.as_of.desc()).all()
