@@ -654,6 +654,9 @@ def _local_forensics(
     snapshot = _operating_snapshot(current, prior)
     signals, long_score, short_score = _signals(snapshot, day_move)
     stored_valuation = dict(context.get("valuation") or {})
+    engine_version = str(stored_valuation.get("engine_version") or "")
+    if not engine_version.startswith("0.3.2-integrity"):
+        return None, "VALUATION ENGINE STALE / RECALCULATE"
     stored_base = _num(stored_valuation.get("base"))
     base_gap = _num(context.get("base_gap_pct"))
     methods = int(context.get("valuation_methods") or 0)
