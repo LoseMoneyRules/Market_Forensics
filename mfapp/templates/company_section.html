@@ -618,9 +618,12 @@
       </div>
       <p class="muted tape-source-note">
         Method {{ tm.flow_method or '—' }} · flow confidence {{ '%.0f'|format(tm.flow_confidence_pct) if tm.flow_confidence_pct is not none else '—' }}%
-        · Large {{ tm.large_threshold|mf_num(0) if tm.large_threshold is not none else '—' }}
-        · Whale {{ tm.whale_threshold|mf_num(0) if tm.whale_threshold is not none else '—' }}.
-        {% if tm.flow_feed_scope == 'IEX_PARTIAL_MARKET' %}IEX is partial-market evidence; confidence is automatically reduced.{% elif tm.flow_feed_scope == 'CONSOLIDATED_SIP' %}Historical SIP provides consolidated US-exchange coverage for the sampled window.{% endif %}
+        · sampled volume {{ '%.1f'|format(tm.flow_sample_volume_pct) if tm.flow_sample_volume_pct is not none else '—' }}% of same-feed daily volume
+        · direction-eligible {{ '%.1f'|format(tm.flow_eligible_volume_pct) if tm.flow_eligible_volume_pct is not none else '—' }}%
+        · Large USD {{ tm.large_threshold|mf_num(0) if tm.large_threshold is not none else '—' }}
+        · Whale USD {{ tm.whale_threshold|mf_num(0) if tm.whale_threshold is not none else '—' }}.
+        {% if tm.flow_coverage_status == 'SAMPLED' %}Displayed notionals are sampled observations, not full-day totals; confidence is coverage-weighted.{% elif tm.flow_coverage_status == 'COMPLETE' %}Complete regular-session observation.{% endif %}
+        {% if tm.flow_decision_usable %} This observation may contribute to Tape scoring.{% elif tm.flow_observation_usable %} This observation is visible for context but excluded from Tape rank/regime because coverage is insufficient.{% endif %}
       </p>
     </div>
 
@@ -648,7 +651,7 @@
       <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">DAILY SHORT PRESSURE</p><h2>FINRA Daily Short Volume %</h2></div></div><canvas data-mf-chart="tape-short" data-series='{{ tape_series.short_volume|tojson|forceescape }}'></canvas>{% if not tape_series.short_volume %}<p class="muted">Refresh FINRA to populate the daily series.</p>{% endif %}</div>
 
       <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">INSTITUTIONAL FLOW</p><h2>Net Large Flow</h2></div></div><canvas data-mf-chart="tape-flow" data-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas>{% if not tape_series.institutional_flow %}<p class="muted">No stored trade-flow observations yet.</p>{% endif %}</div>
-      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">FLOW PERSISTENCE</p><h2>Cumulative 5D / 20D Large Flow</h2></div></div><canvas data-mf-chart="tape-cumulative-flow" data-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas></div>
+      <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">FLOW PERSISTENCE</p><h2>Cumulative sampled 5D / 20D Large Flow</h2></div></div><canvas data-mf-chart="tape-cumulative-flow" data-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas></div>
 
       <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">TAPE SCORES</p><h2>Absorption · Short Pressure · Net Tape</h2></div></div><canvas data-mf-chart="tape-scores" data-series='{{ tape_series.tape_daily|tojson|forceescape }}'></canvas></div>
       <div class="panel chart-card"><div class="panel-head"><div><p class="eyebrow">WHALE FLOW</p><h2>Net Whale Flow</h2></div></div><canvas data-mf-chart="tape-whale" data-series='{{ tape_series.institutional_flow|tojson|forceescape }}'></canvas></div>
@@ -657,13 +660,13 @@
     </div>
 
     {% if tape_series.flow_rejections %}
-    <div class="notice amber"><strong>FLOW EVIDENCE WITHHELD.</strong> {{ tape_series.flow_rejections|length }} stored Large/Whale observation(s) are legacy, partial, non-SIP, or failed the daily-volume sanity check. They are excluded from Tape rank/regime until a fresh complete consolidated SIP observation passes validation.</div>
+    <div class="notice amber"><strong>FLOW QUALITY RESTRICTION.</strong> {{ tape_series.flow_rejections|length }} latest session observation(s) are excluded from Tape rank/regime because they are legacy, fail factual sanity, or do not meet minimum sampled-volume coverage. Reconciled current-method SIP samples may still be displayed in the charts without being treated as full-day totals.</div>
     {% endif %}
 
     {% if tape_series.institutional_flow %}
     <div class="table-card scroll tape-flow-table">
       <table class="data-table numeric">
-        <thead><tr><th>Date</th><th>Feed</th><th>Large Buy $</th><th>Large Sell $</th><th>Net Large $</th><th>Net Whale $</th><th>5D $</th><th>20D $</th><th>Confidence</th></tr></thead>
+        <thead><tr><th>Date</th><th>Feed</th><th>Large Buy $</th><th>Large Sell $</th><th>Net Large $</th><th>Net Whale $</th><th>5D sample $</th><th>20D sample $</th><th>Confidence</th></tr></thead>
         <tbody>{% for r in tape_series.institutional_flow|reverse %}<tr><td>{{ r.date }}</td><td>{{ r.feed|upper }}</td><td>{{ notional(r.large_buy) }}</td><td>{{ notional(r.large_sell) }}</td><td>{{ notional(r.net_large) }}</td><td>{{ notional(r.net_whale) }}</td><td>{{ notional(r.cumulative_5d) }}</td><td>{{ notional(r.cumulative_20d) }}</td><td>{{ '%.0f'|format(r.flow_confidence_pct) if r.flow_confidence_pct is not none else '—' }}%</td></tr>{% endfor %}</tbody>
       </table>
     </div>
