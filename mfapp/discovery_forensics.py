@@ -623,7 +623,11 @@ def _valuation_from_history(
     )
     scenarios = result.get("scenarios") or {}
     base_row = scenarios.get("BASE") or {}
-    methods = int(base_row.get("method_count") or sum(1 for key in ("pe", "p_sales", "ev_sales", "ev_ebitda", "fcf_yield", "dcf") if _num(base_row.get(key)) is not None))
+    methods = int(
+        base_row.get("independent_method_count")
+        or base_row.get("method_count")
+        or sum(1 for key in ("pe", "p_sales", "ev_sales", "ev_ebitda", "fcf_yield", "dcf") if _num(base_row.get(key)) is not None)
+    )
     base = base_row.get("fair_value")
     gap = ((float(base) / price - 1.0) * 100.0) if base is not None and price else None
     return {
@@ -633,6 +637,7 @@ def _valuation_from_history(
         "gap_pct": gap,
         "quality": result.get("quality"),
         "valuation_methods": methods,
+        "valuation_method_families": list(base_row.get("independent_method_families") or []),
         "metrics": metrics,
         "warnings": list(result.get("warnings") or []) + (
             ["TTM net-margin evidence has a tax/non-operating distortion flag; P/E assumptions retain the multi-year filed basis."]
