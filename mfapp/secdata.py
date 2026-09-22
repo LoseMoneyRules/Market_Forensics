@@ -16,7 +16,7 @@ from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_T
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.3"
+SEC_NORMALIZER_VERSION = "0.3.3-financial-completeness"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
@@ -1437,6 +1437,26 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             fallback_rows = _annual_instant(companyfacts, tags, namespace=namespace, fiscal_year_end=fiscal_year_end)
             _merge_missing(instant[field], _mark_semantic_records(fallback_rows, namespace))
 
+    # Generic statement-algebra inputs. SGA is only promoted to total operating
+    # expense when it independently reconciles to pretax/non-operating evidence.
+    sga_annual = _annual_duration(companyfacts, SGA_CANDIDATE_TAGS, fiscal_year_end)
+    for namespace, tags in _semantic_tag_groups_for_aliases(companyfacts, SGA_LABEL_ALIASES).items():
+        _merge_missing(
+            sga_annual,
+            _mark_semantic_records(_annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace), namespace),
+        )
+    nonoperating_total_annual = _annual_duration(companyfacts, NONOPERATING_TOTAL_TAGS, fiscal_year_end)
+    nonoperating_components_annual = {
+        tag: _annual_duration(companyfacts, [tag], fiscal_year_end)
+        for tag in NONOPERATING_COMPONENT_TAGS
+    }
+    _apply_annual_statement_bridges(
+        duration,
+        sga=sga_annual,
+        nonoperating_total=nonoperating_total_annual,
+        nonoperating_components=nonoperating_components_annual,
+    )
+
     debt_current_annual = _annual_instant(companyfacts, DEBT_CURRENT_TAGS, fiscal_year_end=fiscal_year_end)
     debt_noncurrent_annual = _annual_instant(companyfacts, DEBT_NONCURRENT_TAGS, fiscal_year_end=fiscal_year_end)
     debt_short_annual = _annual_instant(companyfacts, DEBT_SHORT_TERM_TAGS, fiscal_year_end=fiscal_year_end)
@@ -1552,6 +1572,38 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             )
             _merge_missing(quarter_duration[field], _mark_semantic_records(semantic_quarters, namespace))
 
+    # Repair operating statement fields before creating quarter periods. This uses
+    # the same generic, reconciliation-gated ladder for every issuer.
+    sga_quarter = _quarter_duration_values(
+        companyfacts, SGA_CANDIDATE_TAGS, sga_annual, fiscal_year_end=fiscal_year_end
+    )
+    for namespace, tags in _semantic_tag_groups_for_aliases(companyfacts, SGA_LABEL_ALIASES).items():
+        semantic_sga_annual = _annual_duration(companyfacts, tags, fiscal_year_end, namespace=namespace)
+        semantic_sga_quarter = _quarter_duration_values(
+            companyfacts, tags, semantic_sga_annual,
+            fiscal_year_end=fiscal_year_end, namespace=namespace,
+        )
+        _merge_missing(sga_quarter, _mark_semantic_records(semantic_sga_quarter, namespace))
+
+    nonoperating_total_quarter = _quarter_duration_values(
+        companyfacts, NONOPERATING_TOTAL_TAGS, nonoperating_total_annual,
+        fiscal_year_end=fiscal_year_end,
+    )
+    nonoperating_components_quarter = {
+        tag: _quarter_duration_values(
+            companyfacts, [tag], nonoperating_components_annual[tag],
+            fiscal_year_end=fiscal_year_end,
+        )
+        for tag in NONOPERATING_COMPONENT_TAGS
+    }
+    _apply_quarter_statement_bridges(
+        quarter_duration,
+        annual_duration=duration,
+        sga=sga_quarter,
+        nonoperating_total=nonoperating_total_quarter,
+        nonoperating_components=nonoperating_components_quarter,
+    )
+
     quarter_instant = {field: _quarter_instants(companyfacts, tags, fiscal_year_end=fiscal_year_end) for field, tags in INSTANT_TAGS.items()}
     for field in INSTANT_TAGS:
         for namespace, semantic_tags in _semantic_tag_groups(companyfacts, field).items():
@@ -1646,6 +1698,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         quarter_saved += 1
 
     fallback = _alpha_vantage_fill_missing(company, security, user_id)
+    fy_end_instant_bridges = _bridge_fy_end_instants_to_q4(company)
     annual_history = _reconcile_annual_history_issues(company, target_years=10)
 
     company.legal_name = meta["name"] or company.legal_name
@@ -1662,6 +1715,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "years": years[-16:], "quarter_periods": [f"FY{fy}-{fp}" for fy, fp in quarter_keys[-24:]],
         "source_id": source.id,
         "normalizer_version": SEC_NORMALIZER_VERSION,
+        "fy_end_instant_bridges": fy_end_instant_bridges,
         "fundamental_fallback": fallback,
         "annual_history": annual_history,
     }
