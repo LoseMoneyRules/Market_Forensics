@@ -256,6 +256,12 @@ def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any
     for field in FLOW_FIELDS:
         values = [n(row.get(field)) for row in rows]
         out[field] = sum(values) if all(value is not None for value in values) else None
+    # A structurally consecutive quarter set is not automatically a usable TTM.
+    # Revenue is the operating anchor for Current Financial Anatomy, Expectations
+    # and Financial Flows. Returning an all-empty TTM here would hide a valid FY
+    # fallback and cascade blank surfaces across Research.
+    if n(out.get("revenue")) is None:
+        return None
     latest = rows[-1]
     for field in INSTANT_FIELDS:
         out[field] = n(latest.get(field))
