@@ -182,6 +182,10 @@ def test_029_old_tape_cache_is_forward_compatible():
     upgraded = _cached_tape_for_months(old, 12)
     assert upgraded["metrics"]["rank"] == "—"
     assert upgraded["metrics"]["forensic_regime"] == "LOW DATA"
+    assert upgraded["metrics"]["flow_coverage_status"] == ""
+    assert upgraded["metrics"]["flow_observation_usable"] is False
+    assert upgraded["metrics"]["flow_decision_usable"] is False
+    assert upgraded["metrics"]["flow_sample_volume_pct"] is None
     assert upgraded["institutional_flow"] == []
     assert upgraded["ats"] == []
     assert upgraded["tape_daily"] == []
