@@ -17,7 +17,7 @@ from .sec_inline_facts import extract_extension_concepts
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.3-financial-basis-integrity-r2"
+SEC_NORMALIZER_VERSION = "0.3.3-production-data-truth-r3"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
@@ -1028,18 +1028,35 @@ def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) ->
     ))
 
 
+def _period_family_query(company_id: int, end_date: date, period_type: str):
+    query = FinancialPeriod.query.filter_by(company_id=company_id, end_date=end_date)
+    if period_type == "FY":
+        return query.filter(FinancialPeriod.period_type.in_(["FY", "SUPERSEDED_FY"]))
+    return query.filter(FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4", "SUPERSEDED_Q1", "SUPERSEDED_Q2", "SUPERSEDED_Q3", "SUPERSEDED_Q4"]))
+
+
+def _supersede_period_identity(period: FinancialPeriod) -> None:
+    original = str(period.period_type or "")
+    if original.startswith("SUPERSEDED_"):
+        return
+    period.period_type = f"SUPERSEDED_{original}"[:16]
+    normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
+    if normalized is not None:
+        quality = dict(normalized.quality or {})
+        quality["period_identity_state"] = "SUPERSEDED"
+        quality["superseded_period_type"] = original
+        normalized.quality = quality
+
+
 def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal_year: int, end_date: date, anchor: dict[str, Any] | None) -> FinancialPeriod:
     period = FinancialPeriod.query.filter_by(company_id=company.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date).first()
+    family = _period_family_query(company.id, end_date, period_type).order_by(FinancialPeriod.id.desc()).all()
+
     if period is None:
-        # Parser migrations may correct the fiscal-year or quarter label for an
-        # already-stored end date. Repair that period in place rather than keeping
-        # a stale mislabeled duplicate that can poison history and valuation.
-        same_end = FinancialPeriod.query.filter_by(company_id=company.id, end_date=end_date)
-        if period_type == "FY":
-            same_end = same_end.filter(FinancialPeriod.period_type == "FY")
-        else:
-            same_end = same_end.filter(FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"]))
-        period = same_end.order_by(FinancialPeriod.id.desc()).first()
+        # Reuse the richest/current family member when a parser revision corrects
+        # the period identity. Do not create another same-date active duplicate.
+        active_family = [row for row in family if not str(row.period_type or "").startswith("SUPERSEDED_")]
+        period = active_family[0] if active_family else None
         if period is not None:
             period.period_type = period_type
             period.fiscal_year = fiscal_year
@@ -1047,6 +1064,15 @@ def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal
             period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
             db.session.add(period)
             db.session.flush()
+
+    # The old bug survived when the corrected row already existed: stale same-end
+    # siblings stayed active and higher-id reads could still select them. Preserve
+    # those rows for audit/provenance, but remove them from the live FY/Q identity
+    # namespace so all downstream consumers see one canonical represented period.
+    for sibling in family:
+        if sibling.id != period.id and not str(sibling.period_type or "").startswith("SUPERSEDED_"):
+            _supersede_period_identity(sibling)
+
     period.source_id = source.id
     if anchor:
         period.filed_at = date.fromisoformat(str(anchor.get("filed"))[:10]) if anchor.get("filed") else period.filed_at
