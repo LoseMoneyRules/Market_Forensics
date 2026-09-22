@@ -17,7 +17,7 @@ from .macro_context import macro_context
 from .research_basis import latest_financial_basis
 from .valuation_engine import detect_operating_regime
 
-ENGINE_VERSION = "0.3.2-integrity-v1"
+ENGINE_VERSION = "0.3.2-integrity-v2"
 
 # These coefficients deliberately create a bounded explanatory bridge, not a
 # fitted valuation model. They are visible in the output so the analyst can
