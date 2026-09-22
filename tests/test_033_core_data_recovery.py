@@ -109,6 +109,11 @@ def test_033_empty_quarter_shells_do_not_hide_valid_annual_current_basis(tmp_pat
         assert current["comparison_basis"] == "FY_FALLBACK"
         assert current["revenue"] == 500.0
 
+        from mfapp.current_financials import forecast_rows
+        forecasts = forecast_rows(company.id, None, 3)
+        assert len(forecasts) == 3
+        assert all(row["revenue"] is not None for row in forecasts)
+
 def test_033_failed_job_rolls_back_partial_business_writes(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "atomic")
     with app.app_context():
