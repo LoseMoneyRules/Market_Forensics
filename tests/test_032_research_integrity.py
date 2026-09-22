@@ -567,6 +567,7 @@ def test_032_current_financial_coalesces_complementary_same_period_evidence(tmp_
 
         current = current_row(company.id)
         assert current is not None
+        assert current["period_id"] == active.id
         assert current["revenue"] == 1100.0
         assert current["inventory"] == 125.0
         assert abs(float(current["metrics"]["revenue_growth_pct"]) - 10.0) < 1e-9
