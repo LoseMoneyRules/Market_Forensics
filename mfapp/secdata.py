@@ -355,7 +355,8 @@ def _fiscal_quarter_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> 
 
 def _mark_last_good_retained(source_map: dict[str, Any], field: str) -> None:
     """Keep a previously sourced same-period value when a refresh cannot resolve it."""
-    prior = dict(source_map.get(field) or {})
+    raw = source_map.get(field)
+    prior = dict(raw) if isinstance(raw, dict) else ({"prior_source": str(raw)} if raw else {})
     prior["refresh_state"] = "LAST_GOOD_RETAINED"
     prior["refresh_note"] = "Current provider refresh missed this same-period fact; prior sourced value retained."
     source_map[field] = prior
@@ -1154,8 +1155,10 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
             }
         elif str((instant.get("debt", {}).get(fy) or {}).get("tag") or "") == "LongTermDebt":
-            normalized.debt = None
-            source_map.pop("debt", None)
+            if normalized.debt is not None:
+                _mark_last_good_retained(source_map, "debt")
+            else:
+                source_map.pop("debt", None)
         economic_facts, economic_sources = _economic_fact_bundle(
             economic_duration_annual, economic_instant_annual, fy
         )
@@ -1169,7 +1172,24 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             normalized, source_map, period_type="FY", economic_reality=economic_snapshot
         )
         for field, ref in source_map.items():
-            db.session.add(Provenance(source_id=source.id, object_type="normalized_financial", object_id=str(period.id), field_name=field, raw_or_normalized="NORMALIZED", financial_period_id=period.id, provider="SEC", freshness_at=utcnow(), calculation_version=CALCULATION_VERSION, notes=f"{ref.get('tag','')} / {ref.get('accession','')} / {ref.get('method','')}"))
+            ref = ref if isinstance(ref, dict) else {"prior_source": str(ref)}
+            provenance_source_id = int(ref.get("source_id") or source.id)
+            provenance_provider = str(ref.get("provider") or "SEC")
+            provenance_note = " / ".join(str(part) for part in (
+                ref.get("tag", ""), ref.get("accession", ""), ref.get("method", ""), ref.get("refresh_state", "")
+            ) if part)
+            db.session.add(Provenance(
+                source_id=provenance_source_id,
+                object_type="normalized_financial",
+                object_id=str(period.id),
+                field_name=field,
+                raw_or_normalized="NORMALIZED",
+                financial_period_id=period.id,
+                provider=provenance_provider,
+                freshness_at=utcnow(),
+                calculation_version=CALCULATION_VERSION,
+                notes=provenance_note,
+            ))
         missing_revenue_issue = DataQualityIssue.query.filter_by(
             company_id=company.id, object_type="financial_period", object_id=str(period.id),
             code="MISSING_REVENUE", status="OPEN",
@@ -1268,8 +1288,10 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 "filed": next((raw.get("filed") for raw in debt_records if raw.get("filed")), None),
             }
         elif str((quarter_instant.get("debt", {}).get((fy, fp)) or {}).get("tag") or "") == "LongTermDebt":
-            normalized.debt = None
-            source_map.pop("debt", None)
+            if normalized.debt is not None:
+                _mark_last_good_retained(source_map, "debt")
+            else:
+                source_map.pop("debt", None)
         economic_facts, economic_sources = _economic_fact_bundle(
             economic_duration_quarter, economic_instant_quarter, (fy, fp)
         )
