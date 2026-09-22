@@ -7,6 +7,7 @@ from typing import Any
 
 from .core_models import FinancialPeriod, NormalizedFinancial, Source
 from .extensions import db
+from .current_financials import canonical_annual_pairs, canonical_quarter_pairs
 
 
 FINANCIAL_REVIEW_GATES = {
@@ -46,36 +47,37 @@ def _empty_basis() -> dict[str, Any]:
 
 
 def latest_financial_basis(company_id: int | None) -> dict[str, Any]:
-    """Deterministic current Research basis with a bounded material-evidence fingerprint.
+    """Deterministic current Research basis from canonical stored financial periods.
 
-    The displayed basis is the latest normalized FY/Q period. The token and
-    materialized_at also include recent normalized periods, so a later restatement
-    or materially re-normalized filing reopens dependent Research even when the
-    headline quarter itself did not change. No provider work occurs here.
+    Legacy parser revisions may have left multiple DB identities for the same
+    represented end date. They remain auditable, but only the canonical FY/Q
+    candidates selected by current_financials may define Research readiness,
+    valuation basis or evidence fingerprints. FY wins a same-date Q4 tie.
     """
     if not company_id:
         return _empty_basis()
-    rows = (
-        FinancialPeriod.query
-        .join(NormalizedFinancial, NormalizedFinancial.financial_period_id == FinancialPeriod.id)
-        .filter(
-            FinancialPeriod.company_id == int(company_id),
-            FinancialPeriod.period_type.in_(["FY", "Q1", "Q2", "Q3", "Q4"]),
-        )
-        .order_by(FinancialPeriod.end_date.desc(), FinancialPeriod.filed_at.desc(), FinancialPeriod.id.desc())
-        .limit(12)
-        .all()
-    )
-    if not rows:
+
+    pairs = canonical_annual_pairs(int(company_id)) + canonical_quarter_pairs(int(company_id))
+    if not pairs:
         return _empty_basis()
 
-    period = rows[0]
+    pairs.sort(
+        key=lambda pair: (
+            pair[0].end_date,
+            1 if str(pair[0].period_type or "") == "FY" else 0,
+            pair[0].filed_at or datetime.min.date(),
+            pair[0].id,
+        ),
+        reverse=True,
+    )
+    pairs = pairs[:12]
+    period = pairs[0][0]
     source = db.session.get(Source, period.source_id) if period.source_id else None
     source_meta = dict((source.meta or {}) if source else {})
     fingerprint = []
     materialized_times = []
-    for row in rows:
-        normalized = getattr(row, "normalized", None)
+
+    for row, normalized in pairs:
         row_source = db.session.get(Source, row.source_id) if row.source_id else None
         created = _utc_naive(row.created_at)
         updated = _utc_naive(normalized.updated_at) if normalized is not None else None
@@ -92,6 +94,7 @@ def latest_financial_basis(company_id: int | None) -> dict[str, Any]:
             "source_hash": str(row_source.content_hash or "") if row_source else "",
             "normalized_updated_at": updated.isoformat() if updated else None,
         })
+
     materialized_at = max(materialized_times) if materialized_times else None
     accession = str(period.accession_no or (source.accession_no if source else "") or "")
     return {
