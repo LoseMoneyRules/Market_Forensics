@@ -840,6 +840,19 @@ def test_033_live_read_prefers_rich_correct_row_over_newer_sparse_duplicate(tmp_
         assert current["period_id"] == correct.id
         assert current["inventory"] == 7501.0
 
+        audit = _reconcile_financial_field_issues(company)
+        assert "inventory" not in audit["missing_expected_fields"]
+
+        from mfapp.secdata import _reconcile_annual_history_issues
+        history_audit = _reconcile_annual_history_issues(company, target_years=1)
+        assert history_audit["years"] == [2026]
+
+        from mfapp.services import financial_rows
+        published_rows = financial_rows(company.id, 5)
+        assert len(published_rows) == 1
+        assert published_rows[0]["period_id"] == correct.id
+        assert published_rows[0]["inventory"] == 7501.0
+
 
 def test_033_exact_correct_period_quarantines_existing_same_end_stale_sibling(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "quarantine_duplicate_identity")
