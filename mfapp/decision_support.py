@@ -320,31 +320,51 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
         event_type="ALPACA_POSITIONING",
     ).order_by(Event.event_date.desc(), Event.id.desc()).limit(120).all()
     positioning = dict((positioning_events[0].payload or {}) if positioning_events else {})
-    flow_by_date: dict[str, dict[str, Any]] = {}
-    flow_rejections: list[dict[str, Any]] = []
+
+    # Keep the newest observation for each session, then distinguish what may be
+    # displayed from what may influence Tape scoring. Valid reconciled SIP samples
+    # stay visible even when coverage is too small for the rank; legacy or factual
+    # integrity failures remain withheld.
+    raw_flow_by_date: dict[str, dict[str, Any]] = {}
     for event in reversed(positioning_events):
         payload = dict(event.payload or {})
         for row in ((payload.get("flow") or {}).get("rows") or []):
             day = str(row.get("date") or "")[:10]
-            if not day or day < cutoff.isoformat():
-                continue
-            usable = (
-                str(row.get("method_version") or "") == FLOW_METHOD_VERSION
-                and str(row.get("sanity_status") or "") == "PASS"
-                and bool(row.get("decision_usable"))
-            )
-            if usable:
-                flow_by_date[day] = dict(row)
-            else:
-                flow_rejections.append({
-                    "date": day,
-                    "method_version": row.get("method_version") or "LEGACY",
-                    "sanity_status": row.get("sanity_status") or "LEGACY_UNVERIFIED",
-                    "sanity_reasons": list(row.get("sanity_reasons") or ["LEGACY_OR_UNVERIFIED_FLOW"]),
-                    "source_status": row.get("source_status") or "",
-                    "feed": row.get("feed") or "",
-                })
-    flow_rows = [flow_by_date[key] for key in sorted(flow_by_date)]
+            if day and day >= cutoff.isoformat():
+                raw_flow_by_date[day] = dict(row)
+
+    flow_display_by_date: dict[str, dict[str, Any]] = {}
+    flow_score_by_date: dict[str, dict[str, Any]] = {}
+    flow_rejections: list[dict[str, Any]] = []
+    for day in sorted(raw_flow_by_date):
+        row = raw_flow_by_date[day]
+        current_method = str(row.get("method_version") or "") == FLOW_METHOD_VERSION
+        observable = (
+            current_method
+            and str(row.get("sanity_status") or "") == "PASS"
+            and bool(row.get("observation_usable"))
+        )
+        scorable = observable and bool(row.get("decision_usable"))
+        if observable:
+            flow_display_by_date[day] = row
+        if scorable:
+            flow_score_by_date[day] = row
+        if not scorable:
+            flow_rejections.append({
+                "date": day,
+                "method_version": row.get("method_version") or "LEGACY",
+                "sanity_status": row.get("sanity_status") or "LEGACY_UNVERIFIED",
+                "sanity_reasons": list(
+                    row.get("decision_reasons")
+                    or row.get("sanity_reasons")
+                    or ["LEGACY_OR_UNVERIFIED_FLOW"]
+                ),
+                "source_status": row.get("source_status") or "",
+                "feed": row.get("feed") or "",
+                "displayed": observable,
+            })
+
+    flow_rows = [flow_display_by_date[key] for key in sorted(flow_display_by_date)]
 
     for idx, row in enumerate(flow_rows):
         recent5 = flow_rows[max(0, idx - 4):idx + 1]
@@ -377,7 +397,7 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     borrow_fee_pct = n(borrow_fee_payload.get("annualized_fee_pct"))
 
     short_map = {str(row.get("date")): n(row.get("short_pct")) for row in short_volume if row.get("date")}
-    flow_map = {str(row.get("date")): row for row in flow_rows if row.get("date")}
+    flow_map = {str(row.get("date")): row for row in flow_score_by_date.values() if row.get("date")}
     latest_interest = finra.get("latest_short_interest") or {}
     si_change = n(latest_interest.get("change_percent"))
 
@@ -460,6 +480,20 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
     short_5 = mean(sv[-5:]) if sv else None
     short_20 = mean(sv[-20:]) if sv else None
     latest_flow = flow_rows[-1] if flow_rows else {}
+    display_flow_signal = None
+    if latest_flow:
+        display_flow_signal = score_tape_day(
+            return_pct=0.0,
+            volume_ratio=1.0,
+            close_location=50.0,
+            net_large_ratio=latest_flow.get("net_large_ratio"),
+            net_whale_ratio=latest_flow.get("net_whale_ratio"),
+            flow_confidence=latest_flow.get("flow_confidence_pct"),
+            has_market=False,
+            has_short_volume=False,
+            has_flow=True,
+            has_positioning=False,
+        ).get("institutional_flow")
 
     confidence_score = n(latest_score.get("data_confidence")) or 0.0
     confidence = "HIGH" if confidence_score >= 75 else "MEDIUM" if confidence_score >= 55 else "LOW"
@@ -504,7 +538,7 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "shortable": borrow.get("shortable"),
             "locate_price": n(locate.get("price")),
             "locate_available_qty": n(locate.get("available_qty")),
-            "institutional_flow": latest_score.get("institutional_flow"),
+            "institutional_flow": latest_score.get("institutional_flow") if latest_score.get("institutional_flow") is not None else display_flow_signal,
             "absorption": latest_score.get("absorption"),
             "price_resilience": latest_score.get("price_resilience"),
             "long_demand": latest_score.get("long_demand"),
@@ -526,6 +560,12 @@ def tape_series(security: Security, months: int = 12) -> dict[str, Any]:
             "flow_method_version": FLOW_METHOD_VERSION,
             "flow_withheld_count": len(flow_rejections),
             "flow_sanity_status": latest_flow.get("sanity_status") or ("WITHHELD" if flow_rejections else "NO_DATA"),
+            "flow_coverage_status": latest_flow.get("coverage_status") or "",
+            "flow_observation_usable": bool(latest_flow.get("observation_usable")) if latest_flow else False,
+            "flow_decision_usable": bool(latest_flow.get("decision_usable")) if latest_flow else False,
+            "flow_sample_volume_pct": n(latest_flow.get("sample_volume_pct")),
+            "flow_eligible_volume_pct": n(latest_flow.get("eligible_volume_pct")),
+            "flow_reference_volume": n(latest_flow.get("reference_volume")),
             "large_threshold": n(latest_flow.get("large_threshold")),
             "very_large_threshold": n(latest_flow.get("very_large_threshold")),
             "whale_threshold": n(latest_flow.get("whale_threshold")),

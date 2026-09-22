@@ -102,7 +102,7 @@ def test_029_large_whale_flow_uses_adaptive_thresholds_and_proxy_language():
     assert row["large_threshold"] >= 100_000
     assert row["very_large_threshold"] >= 250_000
     assert row["whale_threshold"] >= 500_000
-    assert row["classification_method"] == "REGULAR_SESSION_FILTERED_TICK_RULE_PROXY"
+    assert row["classification_method"] == "REGULAR_SESSION_RECONCILED_TICK_RULE_PROXY"
     assert row["feed_scope"] == "CONSOLIDATED_SIP"
     assert row["trade_rows"] == len(trades)
     assert row["method_version"] == FLOW_METHOD_VERSION
@@ -182,6 +182,10 @@ def test_029_old_tape_cache_is_forward_compatible():
     upgraded = _cached_tape_for_months(old, 12)
     assert upgraded["metrics"]["rank"] == "—"
     assert upgraded["metrics"]["forensic_regime"] == "LOW DATA"
+    assert upgraded["metrics"]["flow_coverage_status"] == ""
+    assert upgraded["metrics"]["flow_observation_usable"] is False
+    assert upgraded["metrics"]["flow_decision_usable"] is False
+    assert upgraded["metrics"]["flow_sample_volume_pct"] is None
     assert upgraded["institutional_flow"] == []
     assert upgraded["ats"] == []
     assert upgraded["tape_daily"] == []
@@ -256,26 +260,72 @@ def test_029_flow_fails_closed_when_sample_volume_exceeds_daily_reference():
     assert row["flow_confidence_pct"] == 0
 
 
-def test_029_partial_or_iex_flow_never_drives_tape_decision():
+def test_029_reconciled_partial_sip_is_visible_but_never_drives_rank():
+    trades = [
+        {"p": 100.0, "s": 1_000, "t": "2026-09-18T14:00:00Z", "i": 1, "c": []},
+        {"p": 100.1, "s": 1_000, "t": "2026-09-18T14:00:01Z", "i": 2, "c": []},
+    ]
+    row = _aggregate_trade_flow(
+        __import__("datetime").date(2026, 9, 18),
+        {
+            "rows": trades,
+            "feed": "sip",
+            "feed_scope": "CONSOLIDATED_SIP",
+            "complete": False,
+            "sampled": True,
+            "reference_bar": {"available": True, "volume": 10_000, "reference_price": 100.0},
+            "errors": [],
+        },
+    )
+    assert row["sanity_status"] == "PASS"
+    assert row["observation_usable"] is True
+    assert row["decision_usable"] is False
+    assert "PARTIAL_SAMPLE_CONTEXT_ONLY" in row["decision_reasons"]
+    assert row["coverage_status"] == "SAMPLED"
+    assert row["sample_volume_pct"] == 20.0
+    assert 0 < row["flow_confidence_pct"] <= 60.0
+
+
+def test_029_low_coverage_partial_sip_stays_visible_but_cannot_drive_rank():
+    trades = [
+        {"p": 100.0, "s": 100, "t": "2026-09-18T14:00:00Z", "i": 1, "c": []},
+        {"p": 100.1, "s": 100, "t": "2026-09-18T14:00:01Z", "i": 2, "c": []},
+    ]
+    row = _aggregate_trade_flow(
+        __import__("datetime").date(2026, 9, 18),
+        {
+            "rows": trades,
+            "feed": "sip",
+            "feed_scope": "CONSOLIDATED_SIP",
+            "complete": False,
+            "sampled": True,
+            "reference_bar": {"available": True, "volume": 10_000, "reference_price": 100.0},
+            "errors": [],
+        },
+    )
+    assert row["sanity_status"] == "PASS"
+    assert row["observation_usable"] is True
+    assert row["decision_usable"] is False
+    assert "PARTIAL_SAMPLE_CONTEXT_ONLY" in row["decision_reasons"]
+
+
+def test_029_iex_flow_is_never_observation_or_decision_usable():
     trade = {"p": 100.0, "s": 1_000, "t": "2026-09-18T14:00:00Z", "i": 1, "c": []}
-    for feed, complete, expected_reason in (
-        ("sip", False, "INCOMPLETE_TRADE_WINDOW"),
-        ("iex", True, "CONSOLIDATED_SIP_REQUIRED"),
-    ):
-        row = _aggregate_trade_flow(
-            __import__("datetime").date(2026, 9, 18),
-            {
-                "rows": [trade],
-                "feed": feed,
-                "feed_scope": "CONSOLIDATED_SIP" if feed == "sip" else "IEX_PARTIAL_MARKET",
-                "complete": complete,
-                "sampled": not complete,
-                "reference_bar": {"available": True, "volume": 1_000, "reference_price": 100.0},
-                "errors": [],
-            },
-        )
-        assert row["decision_usable"] is False
-        assert expected_reason in row["sanity_reasons"]
+    row = _aggregate_trade_flow(
+        __import__("datetime").date(2026, 9, 18),
+        {
+            "rows": [trade],
+            "feed": "iex",
+            "feed_scope": "IEX_PARTIAL_MARKET",
+            "complete": True,
+            "sampled": False,
+            "reference_bar": {"available": True, "volume": 1_000, "reference_price": 100.0},
+            "errors": [],
+        },
+    )
+    assert row["observation_usable"] is False
+    assert row["decision_usable"] is False
+    assert "CONSOLIDATED_SIP_REQUIRED" in row["sanity_reasons"]
 
 
 def test_029_tape_ui_labels_large_whale_values_as_dollar_notionals():
@@ -284,7 +334,9 @@ def test_029_tape_ui_labels_large_whale_values_as_dollar_notionals():
     assert "Large Sell $" in template
     assert "Net Large $" in template
     assert "Net Whale $" in template
-    assert "FLOW EVIDENCE WITHHELD" in template
+    assert "FLOW QUALITY RESTRICTION" in template
+    assert "sampled volume" in template
+    assert "Large Buy $" in template
 
 
 def test_029_legacy_flow_cache_is_forced_stale():

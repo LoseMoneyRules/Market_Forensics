@@ -7,6 +7,7 @@ import hashlib
 from typing import Any, Iterable
 
 import requests
+from sqlalchemy import or_
 
 from .extensions import db
 from .data_providers import get_secret
@@ -17,7 +18,7 @@ from .sec_inline_facts import extract_extension_concepts
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.3-production-data-truth-r3"
+SEC_NORMALIZER_VERSION = "0.3.4-data-surface-integrity-r1"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
@@ -1031,8 +1032,40 @@ def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) ->
 def _period_family_query(company_id: int, end_date: date, period_type: str):
     query = FinancialPeriod.query.filter_by(company_id=company_id, end_date=end_date)
     if period_type == "FY":
-        return query.filter(FinancialPeriod.period_type == "FY")
-    return query.filter(FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"]))
+        family_types = ("FY",)
+    else:
+        family_types = ("Q1", "Q2", "Q3", "Q4")
+    clauses = []
+    for family_type in family_types:
+        clauses.extend((
+            FinancialPeriod.period_type == family_type,
+            FinancialPeriod.period_type == f"SUPERSEDED_{family_type}",
+            FinancialPeriod.period_type.like(f"SUP_{family_type}_%"),
+        ))
+    return query.filter(or_(*clauses))
+
+
+_PERIOD_RECOVERY_FIELDS = (
+    "revenue", "cogs", "gross_profit", "operating_expenses", "operating_income",
+    "pretax_income", "income_tax", "net_income", "cfo", "capex", "fcf",
+    "cash", "debt", "receivables", "inventory", "payables", "assets",
+    "liabilities", "equity", "shares_outstanding", "diluted_shares",
+    "buybacks", "dividends",
+)
+
+
+def _period_evidence_score(period: FinancialPeriod, *, period_type: str, fiscal_year: int) -> tuple:
+    normalized = NormalizedFinancial.query.filter_by(financial_period_id=period.id).first()
+    populated = 0
+    sourced = 0
+    if normalized is not None:
+        populated = sum(1 for field in _PERIOD_RECOVERY_FIELDS if getattr(normalized, field, None) is not None)
+        source_map = dict(normalized.source_map or {})
+        sourced = sum(1 for field in _PERIOD_RECOVERY_FIELDS if source_map.get(field))
+    exact_identity = int(str(period.period_type or "") == period_type and int(period.fiscal_year or 0) == int(fiscal_year))
+    active = int(not str(period.period_type or "").startswith(("SUPERSEDED_", "SUP_")))
+    filed = period.filed_at.toordinal() if period.filed_at else 0
+    return (populated, sourced, exact_identity, active, filed, int(period.id or 0))
 
 
 def _supersede_period_identity(period: FinancialPeriod) -> None:
@@ -1058,28 +1091,27 @@ def _supersede_period_identity(period: FinancialPeriod) -> None:
 
 
 def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal_year: int, end_date: date, anchor: dict[str, Any] | None) -> FinancialPeriod:
-    period = FinancialPeriod.query.filter_by(company_id=company.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date).first()
     family = _period_family_query(company.id, end_date, period_type).order_by(FinancialPeriod.id.desc()).all()
 
+    # A parser revision must never promote a sparse shell merely because it is the
+    # newest/active row. Pick the richest factual identity across the full same-end
+    # family (including audit-preserved superseded rows), then make that row the
+    # single active canonical identity for the represented period.
+    period = max(
+        family,
+        key=lambda row: _period_evidence_score(row, period_type=period_type, fiscal_year=fiscal_year),
+        default=None,
+    )
     if period is None:
-        # Reuse the richest/current family member when a parser revision corrects
-        # the period identity. Do not create another same-date active duplicate.
-        active_family = [row for row in family if not str(row.period_type or "").startswith("SUPERSEDED_")]
-        period = active_family[0] if active_family else None
-        if period is not None:
-            period.period_type = period_type
-            period.fiscal_year = fiscal_year
-        else:
-            period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
-            db.session.add(period)
-            db.session.flush()
+        period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
+        db.session.add(period)
+        db.session.flush()
+    else:
+        period.period_type = period_type
+        period.fiscal_year = fiscal_year
 
-    # The old bug survived when the corrected row already existed: stale same-end
-    # siblings stayed active and higher-id reads could still select them. Preserve
-    # those rows for audit/provenance, but remove them from the live FY/Q identity
-    # namespace so all downstream consumers see one canonical represented period.
     for sibling in family:
-        if sibling.id != period.id and not str(sibling.period_type or "").startswith("SUPERSEDED_"):
+        if sibling.id != period.id and not str(sibling.period_type or "").startswith(("SUPERSEDED_", "SUP_")):
             _supersede_period_identity(sibling)
 
     period.source_id = source.id

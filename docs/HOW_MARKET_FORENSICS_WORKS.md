@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.3  
+**Current product line:** 0.3.4  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -118,6 +118,10 @@ After fundamentals ingestion, MF performs an applicability-aware field-integrity
 0.3.3 adds a permanent **canonical period-identity rule**. Exactly one active FY identity and one active fiscal-quarter identity may represent a company/end-date within each period family. Historical parser mistakes or migrations may leave duplicate database rows for audit, raw facts and provenance, but those rows are not allowed to compete in live Research. The canonical read model collapses same-end-date duplicates by correct represented fiscal identity, normalized field richness and source coverage; a subsequent SEC ingest marks stale siblings as `SUPERSEDED_*` instead of deleting their history. No downstream analytical surface may bypass this canonical read model merely by sorting `FinancialPeriod.id`.
 
 This canonical period rule is end-to-end: Fundamentals, Current Financial Anatomy, Current Strip, Expectations inputs, Financial Flows, Research readiness/basis, Valuation/forensics, Reports/Publications and recalculation jobs consume the same canonical FY/Q evidence. A duplicate legacy row may remain visible in Audit, but it may not create or remove a fiscal year, hide Inventory/Operating Income/Revenue, generate duplicate flows, or affect fair value / validation inputs.
+
+0.3.4 strengthens that rule into a **represented-period evidence rule**. Audit-preserved `SUPERSEDED_*` / `SUP_*` identities remain eligible as recovery evidence when they contain richer normalized facts than a newer active shell for the same represented end date. Live reads choose the richest factual member of the period family and normalize its logical FY/Q identity for presentation. On the next SEC ingest, the richest family member is reactivated as the single canonical identity instead of promoting the newest database row. Valid historical facts therefore cannot disappear from Current Financial Anatomy or the Fundamentals current strip because of parser-history bookkeeping.
+
+Current FY derived metrics must keep enough history for their comparator. In particular, Revenue Growth and share-count growth are calculated with the prior FY still in the read window; fetching only the newest FY and then recomputing growth is prohibited.
 
 ### 3.3 Reported accounting is not automatically economic reality
 
@@ -1387,7 +1391,7 @@ Tape is market-plumbing context, not intrinsic value and not beneficial-owner id
 0.2.9 restores the accepted Local Tape Engine as **Tape Engine V2**, implemented as a web-native background/materialized capability.
 
 
-**Tape flow integrity is fail-closed.** Large / Very Large / Whale values are dollar-notional trade-size proxies, not share counts and never beneficial-owner identity. Directional print-flow may enter Tape rank/regime only when the stored observation uses the current flow-method version, covers the regular U.S. equity session, comes from consolidated SIP, completes the bounded trade window, filters non-price-forming/out-of-sequence conditions, and passes a same-feed daily-volume/notional sanity check. Partial samples, IEX-only samples, legacy method rows, missing reference volume, or observations whose sampled volume/notional is inconsistent with the daily bar remain auditable but are withheld from Tape scoring. A method-version change invalidates the materialized Research Tape cache automatically.
+**Tape flow integrity is fail-closed.** Large / Very Large / Whale values are dollar-notional trade-size proxies, not share counts and never beneficial-owner identity. Current-method consolidated-SIP observations that pass factual sanity may remain visible in charts/tables even when the bounded fetch is partial, but partial/page-capped samples are explicitly labeled sampled context and never enter Tape rank/regime because the beginning/end sample is not a representative whole-day tape. Directional print-flow may enter Tape scoring only when the observation is complete, covers the regular U.S. equity session, filters non-price-forming/out-of-sequence conditions, and reconciles to same-feed daily volume/notional. IEX-only, legacy-method, missing-reference, impossible-volume or otherwise integrity-failed observations are withheld entirely. A method-version change invalidates the materialized Research Tape cache automatically.
 
 Inputs can include:
 
@@ -1454,9 +1458,9 @@ The source is always visible:
 
 IEX evidence receives a material Data Confidence penalty.
 
-Partial/page-capped samples are labeled PARTIAL_SAMPLED and also reduce confidence.
+Partial/page-capped consolidated-SIP samples are labeled PARTIAL_SAMPLED, show their sampled-volume coverage, and are context-only: they may be charted but never drive Tape rank/regime. IEX evidence is not accepted as institutional-flow evidence.
 
-The system must never present IEX/partial evidence as if it represented the full US consolidated tape.
+The system must never present IEX/partial evidence as if it represented the full US consolidated tape or a complete daily flow total.
 
 ### 16.3 Tape scores
 

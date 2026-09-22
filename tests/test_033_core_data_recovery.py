@@ -936,3 +936,139 @@ def test_033_research_basis_ignores_legacy_duplicate_identity(tmp_path, monkeypa
         assert basis["period_id"] == correct.id
         assert basis["fiscal_year"] == 2026
         assert basis["period_end"] == "2026-07-31"
+
+
+def test_034_current_fy_keeps_prior_year_for_revenue_growth(tmp_path, monkeypatch):
+    from mfapp.current_financials import current_row
+
+    app = make_app(tmp_path, monkeypatch, "034_current_growth")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Growth Co", display_name="Growth Co")
+        db.session.add(company); db.session.flush()
+
+        for fiscal_year, end_date, revenue in (
+            (2025, date(2025, 9, 27), Decimal("100")),
+            (2026, date(2026, 9, 26), Decimal("110")),
+        ):
+            period = FinancialPeriod(
+                company_id=company.id, period_type="FY", fiscal_year=fiscal_year,
+                end_date=end_date, filed_at=date(fiscal_year, 11, 1), currency="USD",
+            )
+            db.session.add(period); db.session.flush()
+            db.session.add(NormalizedFinancial(
+                financial_period_id=period.id, revenue=revenue,
+                source_map={"revenue": {"provider": "SEC"}}, quality={},
+            ))
+        db.session.commit()
+
+        current = current_row(company.id)
+        assert current["period_label"] == "FY2026"
+        assert current["revenue"] == 110.0
+        assert round(current["metrics"]["revenue_growth_pct"], 2) == 10.0
+
+
+def test_034_live_read_recovers_rich_superseded_same_period(tmp_path, monkeypatch):
+    from mfapp.current_financials import annual_rows, current_row
+
+    app = make_app(tmp_path, monkeypatch, "034_superseded_read")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Recovered Co", display_name="Recovered Co")
+        db.session.add(company); db.session.flush()
+
+        rich = FinancialPeriod(
+            company_id=company.id, period_type="SUPERSEDED_FY", fiscal_year=2026,
+            end_date=date(2026, 7, 31), filed_at=date(2026, 9, 1), currency="USD",
+        )
+        db.session.add(rich); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=rich.id,
+            revenue=Decimal("21448"), gross_profit=Decimal("17000"),
+            operating_income=Decimal("5884"), net_income=Decimal("4500"),
+            cfo=Decimal("6200"), capex=Decimal("500"), fcf=Decimal("5700"),
+            cash=Decimal("4000"), debt=Decimal("6000"),
+            source_map={
+                "revenue": {"provider": "SEC"},
+                "operating_income": {"provider": "SEC"},
+                "cfo": {"provider": "SEC"},
+            },
+            quality={"period_identity_state": "SUPERSEDED"},
+        ))
+
+        sparse = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2026,
+            end_date=date(2026, 7, 31), filed_at=date(2026, 9, 1), currency="USD",
+        )
+        db.session.add(sparse); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=sparse.id, revenue=None, source_map={}, quality={},
+        ))
+        db.session.commit()
+
+        rows = annual_rows(company.id, 5)
+        assert len(rows) == 1
+        assert rows[0]["period_id"] == rich.id
+        assert rows[0]["period_type"] == "FY"
+        assert rows[0]["revenue"] == 21448.0
+        assert rows[0]["operating_income"] == 5884.0
+        assert rows[0]["quality"]["canonical_read_recovered_identity"] == "SUPERSEDED_FY"
+
+        current = current_row(company.id)
+        assert current["period_label"] == "FY2026"
+        assert current["revenue"] == 21448.0
+        assert current["fcf"] == 5700.0
+
+
+def test_034_upsert_reactivates_richest_same_period_identity(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "034_reactivate_rich")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Reactivate Co", display_name="Reactivate Co")
+        db.session.add(company); db.session.flush()
+        source = Source(
+            company_id=company.id, provider="SEC", source_type="COMPANYFACTS",
+            title="test", url="https://example.test", retrieved_at=datetime.utcnow(),
+            content_hash="034-reactivate", meta={},
+        )
+        db.session.add(source); db.session.flush()
+
+        rich = FinancialPeriod(
+            company_id=company.id, source_id=source.id, period_type="SUPERSEDED_FY",
+            fiscal_year=2026, end_date=date(2026, 7, 31), currency="USD",
+        )
+        db.session.add(rich); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=rich.id, revenue=Decimal("21448"),
+            operating_income=Decimal("5884"), cfo=Decimal("6200"),
+            source_map={
+                "revenue": {"provider": "SEC"},
+                "operating_income": {"provider": "SEC"},
+                "cfo": {"provider": "SEC"},
+            }, quality={"period_identity_state": "SUPERSEDED"},
+        ))
+
+        sparse = FinancialPeriod(
+            company_id=company.id, source_id=source.id, period_type="FY",
+            fiscal_year=2026, end_date=date(2026, 7, 31), currency="USD",
+        )
+        db.session.add(sparse); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=sparse.id, source_map={}, quality={},
+        ))
+        db.session.commit()
+
+        chosen = _upsert_period(
+            company, source, period_type="FY", fiscal_year=2026,
+            end_date=date(2026, 7, 31),
+            anchor={"end": "2026-07-31", "filed": "2026-09-01", "accn": "TEST-INTU-2026"},
+        )
+        db.session.flush()
+
+        assert chosen.id == rich.id
+        assert chosen.period_type == "FY"
+        assert chosen.fiscal_year == 2026
+        assert chosen.normalized.revenue == Decimal("21448")
+        assert chosen.normalized.operating_income == Decimal("5884")
+        sparse = db.session.get(FinancialPeriod, sparse.id)
+        assert sparse.period_type.startswith(("SUPERSEDED_", "SUP_"))

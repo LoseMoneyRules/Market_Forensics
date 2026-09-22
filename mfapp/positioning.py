@@ -16,7 +16,7 @@ FLOW_MAX_PAGES_PER_SESSION = 8
 LARGE_FLOOR = 100_000.0
 VERY_LARGE_FLOOR = 250_000.0
 WHALE_FLOOR = 500_000.0
-FLOW_METHOD_VERSION = "0.3.3-volume-sanity-v2"
+FLOW_METHOD_VERSION = "0.3.4-reconciled-sample-v1"
 MARKET_TZ = ZoneInfo("America/New_York")
 NON_DIRECTIONAL_CONDITIONS = {"B", "C", "G", "H", "I", "M", "N", "P", "Q", "R", "T", "U", "V", "W", "Z", "4", "7", "9"}
 
@@ -310,32 +310,48 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         else None
     )
 
-    sanity_reasons: list[str] = []
+    # Separate factual integrity from sampling coverage. A partial SIP sample is
+    # still observable evidence and should remain visible in charts, but it only
+    # enters Tape scoring when its share-volume coverage is material. This avoids
+    # the 0.3.3 failure mode where nearly every liquid stock disappeared because
+    # an eight-page cap could not fetch the entire trading day.
+    integrity_reasons: list[str] = []
     if sample.get("feed") != "sip":
-        sanity_reasons.append("CONSOLIDATED_SIP_REQUIRED")
-    if not sample.get("complete"):
-        sanity_reasons.append("INCOMPLETE_TRADE_WINDOW")
+        integrity_reasons.append("CONSOLIDATED_SIP_REQUIRED")
     if reference_volume in (None, 0):
-        sanity_reasons.append("REFERENCE_VOLUME_MISSING")
+        integrity_reasons.append("REFERENCE_VOLUME_MISSING")
     else:
         if sample_share_volume > reference_volume * 1.05:
-            sanity_reasons.append("SAMPLE_VOLUME_EXCEEDS_REFERENCE")
-        if sample.get("complete") and sample_share_volume < reference_volume * 0.70:
-            sanity_reasons.append("COMPLETE_SAMPLE_COVERS_TOO_LITTLE_VOLUME")
+            integrity_reasons.append("SAMPLE_VOLUME_EXCEEDS_REFERENCE")
     if reference_notional not in (None, 0) and sample_total_notional > reference_notional * 1.15:
-        sanity_reasons.append("SAMPLE_NOTIONAL_EXCEEDS_REFERENCE")
+        integrity_reasons.append("SAMPLE_NOTIONAL_EXCEEDS_REFERENCE")
     if not eligible:
-        sanity_reasons.append("NO_DIRECTION_ELIGIBLE_TRADES")
+        integrity_reasons.append("NO_DIRECTION_ELIGIBLE_TRADES")
     elif eligible_volume_pct is not None and eligible_volume_pct < 50.0:
-        sanity_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
+        integrity_reasons.append("DIRECTION_ELIGIBLE_VOLUME_TOO_LOW")
 
-    sanity_status = "PASS" if not sanity_reasons else "FAIL"
-    decision_usable = sanity_status == "PASS"
-    feed_factor = 1.0 if sample.get("feed") == "sip" else .0
-    completeness_factor = 1.0 if sample.get("complete") else 0.0
-    flow_confidence = (directional_share or 0.0) * feed_factor * completeness_factor
-    if not decision_usable:
-        flow_confidence = 0.0
+    sanity_status = "PASS" if not integrity_reasons else "FAIL"
+    observation_usable = sanity_status == "PASS"
+
+    decision_reasons: list[str] = []
+    if observation_usable:
+        if not sample.get("complete"):
+            # The current bounded Alpaca fetch takes the beginning/end of a
+            # session when pagination is truncated. That is useful context but
+            # not a statistically representative whole-day sample, so it may
+            # never move Tape rank/regime regardless of apparent coverage.
+            decision_reasons.append("PARTIAL_SAMPLE_CONTEXT_ONLY")
+        elif sample_volume_pct is None or sample_volume_pct < 70.0:
+            decision_reasons.append("COMPLETE_SAMPLE_COVERS_TOO_LITTLE_VOLUME")
+    else:
+        decision_reasons.extend(integrity_reasons)
+
+    decision_usable = observation_usable and not decision_reasons
+    coverage_status = "COMPLETE" if sample.get("complete") else "SAMPLED"
+    coverage_factor = min(1.0, max(0.0, (sample_volume_pct or 0.0) / 20.0))
+    flow_confidence = (directional_share or 0.0) * coverage_factor if observation_usable else 0.0
+    if not sample.get("complete"):
+        flow_confidence = min(flow_confidence, 60.0)
 
     return {
         "date": day.isoformat(),
@@ -367,11 +383,14 @@ def _aggregate_trade_flow(day: date, sample: dict[str, Any]) -> dict[str, Any]:
         "flow_confidence_pct": min(100.0, flow_confidence),
         "feed": sample.get("feed"),
         "feed_scope": sample.get("feed_scope"),
-        "classification_method": "REGULAR_SESSION_FILTERED_TICK_RULE_PROXY",
+        "classification_method": "REGULAR_SESSION_RECONCILED_TICK_RULE_PROXY",
         "source_quality": "T2",
         "source_status": "COMPLETE" if sample.get("complete") else "PARTIAL_SAMPLED" if sample.get("sampled") else "NO_DATA",
+        "coverage_status": coverage_status,
         "sanity_status": sanity_status,
-        "sanity_reasons": sanity_reasons,
+        "sanity_reasons": integrity_reasons,
+        "decision_reasons": decision_reasons,
+        "observation_usable": observation_usable,
         "decision_usable": decision_usable,
         "errors": list(sample.get("errors") or []),
     }
@@ -397,7 +416,7 @@ def refresh_institutional_flow(ticker: str, user_id: int) -> dict[str, Any]:
         "ticker": symbol,
         "rows": rows,
         "errors": list(dict.fromkeys(errors)),
-        "method": "REGULAR_SESSION_VOLUME_SANITY_TICK_RULE_PROXY",
+        "method": "REGULAR_SESSION_RECONCILED_SAMPLE_TICK_RULE_PROXY",
         "method_version": FLOW_METHOD_VERSION,
         "threshold_policy": {
             "large": "max(P75, $100k)",
