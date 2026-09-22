@@ -1671,6 +1671,14 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
     duration = {key: _annual_duration(companyfacts, tags, fiscal_year_end) for key, tags in DURATION_TAGS.items()}
     instant = {key: _annual_instant(companyfacts, tags, fiscal_year_end=fiscal_year_end) for key, tags in INSTANT_TAGS.items()}
 
+    extension_fallback = {
+        "attempted": False, "filings_scanned": 0, "concepts_added": 0, "facts_added": 0,
+    }
+    if _extension_fallback_needed(duration, instant, companyfacts, fiscal_year_end):
+        extension_fallback = _augment_companyfacts_with_recent_filing_extensions(
+            company, companyfacts, meta, user_agent
+        )
+
     # Companyfacts can expose a perfectly valid consolidated statement concept
     # under the filer's own taxonomy. Use exact statement-label matches only when
     # the canonical US-GAAP mapping did not resolve that fiscal period.
@@ -1729,7 +1737,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
             value = _as_decimal((rec or {}).get("val"))
             if rec and value is not None:
                 setattr(normalized, field, value)
-                source_map[field] = {"tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap", "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY")}
+                source_map[field] = {"tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap", "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": int(rec.get("_mf_source_id") or source.id), "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY")}
             elif getattr(normalized, field, None) is not None:
                 _mark_last_good_retained(source_map, field)
         for field, records in instant.items():
@@ -1740,7 +1748,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
-                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
+                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": int(rec.get("_mf_source_id") or source.id),
                     "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY"),
                 }
             elif getattr(normalized, field, None) is not None:
@@ -1890,7 +1898,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": (record or {}).get("tag"), "accession": (record or {}).get("accn"),
-                    "filed": (record or {}).get("filed"), "source_id": source.id,
+                    "filed": (record or {}).get("filed"), "source_id": int((record or {}).get("_mf_source_id") or source.id),
                     "namespace": (record or {}).get("_mf_namespace") or (record or {}).get("namespace") or "us-gaap",
                     "method": (record or {}).get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method")),
                 }
@@ -1904,7 +1912,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
                 setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
-                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
+                    "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": int(rec.get("_mf_source_id") or source.id),
                     "method": rec.get("_mf_derived_method") or ("SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT"),
                 }
             elif getattr(normalized, field, None) is not None:
@@ -1964,6 +1972,7 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         "normalizer_version": SEC_NORMALIZER_VERSION,
         "fy_end_instant_bridges": fy_end_instant_bridges,
         "field_integrity": field_integrity,
+        "filing_extension_fallback": extension_fallback,
         "fundamental_fallback": fallback,
         "annual_history": annual_history,
     }
