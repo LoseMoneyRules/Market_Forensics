@@ -256,7 +256,7 @@ def test_029_flow_fails_closed_when_sample_volume_exceeds_daily_reference():
     assert row["flow_confidence_pct"] == 0
 
 
-def test_029_reconciled_partial_sip_can_be_visible_and_scored_when_coverage_is_material():
+def test_029_reconciled_partial_sip_is_visible_but_never_drives_rank():
     trades = [
         {"p": 100.0, "s": 1_000, "t": "2026-09-18T14:00:00Z", "i": 1, "c": []},
         {"p": 100.1, "s": 1_000, "t": "2026-09-18T14:00:01Z", "i": 2, "c": []},
@@ -275,7 +275,8 @@ def test_029_reconciled_partial_sip_can_be_visible_and_scored_when_coverage_is_m
     )
     assert row["sanity_status"] == "PASS"
     assert row["observation_usable"] is True
-    assert row["decision_usable"] is True
+    assert row["decision_usable"] is False
+    assert "PARTIAL_SAMPLE_CONTEXT_ONLY" in row["decision_reasons"]
     assert row["coverage_status"] == "SAMPLED"
     assert row["sample_volume_pct"] == 20.0
     assert 0 < row["flow_confidence_pct"] <= 60.0
@@ -301,7 +302,7 @@ def test_029_low_coverage_partial_sip_stays_visible_but_cannot_drive_rank():
     assert row["sanity_status"] == "PASS"
     assert row["observation_usable"] is True
     assert row["decision_usable"] is False
-    assert "SAMPLED_VOLUME_COVERAGE_TOO_LOW" in row["decision_reasons"]
+    assert "PARTIAL_SAMPLE_CONTEXT_ONLY" in row["decision_reasons"]
 
 
 def test_029_iex_flow_is_never_observation_or_decision_usable():
