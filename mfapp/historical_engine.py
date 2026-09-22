@@ -156,9 +156,22 @@ def _calibration_observations(security_id: int, history: list[dict[str, Any]], a
             continue
         economic = economic_from_row(row)
         economic_net_debt = economic_metric(economic, "economic_net_debt")
+        operating_income = n(row.get("operating_income"))
+        depreciation_amortization = economic_metric(economic, "depreciation_amortization")
+        ebitda = (
+            operating_income + depreciation_amortization
+            if operating_income is not None and depreciation_amortization is not None
+            else None
+        )
         out.append({
-            "price": raw_price, "shares": shares, "revenue": row.get("revenue"), "net_income": row.get("net_income"),
+            "fiscal_year": row.get("fiscal_year"),
+            "price": raw_price,
+            "shares": shares,
+            "revenue": row.get("revenue"),
+            "net_income": row.get("net_income"),
             "fcf": row.get("fcf"),
+            "ebitda": ebitda,
+            "equity": row.get("equity"),
             "net_debt": economic_net_debt if economic and not economic.get("material_unresolved") else None,
         })
     return out
@@ -256,7 +269,9 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         if not metrics.get("basis_usable"):
             continue
         observations = _calibration_observations(security.id, history, filing_date, provider)
-        calibration = calibrate_multiples(observations, company_type)
+        calibration = calibrate_multiples(
+            observations, company_type, metrics.get("regime_start_fiscal_year")
+        )
         policy = default_cases(metrics, company_type, calibration)
         raw_anchor = n(anchor_row.close_raw)
         basis_factor = n(anchor_row.split_basis_factor) or 1.0
@@ -282,12 +297,20 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
             "future_prices_used_in_model": False,
             "future_prices_used_for_validation_only": True,
             "historical_price_basis": "split-adjusted for outcome comparison; raw for contemporaneous valuation calibration",
+            "regime_detection_point_in_time": True,
+            "regime_start_fiscal_year": metrics.get("regime_start_fiscal_year"),
         }
         sample = HistoricalTestSample(
             run_id=run.id, anchor_date=anchor_row.trade_date, fiscal_year=fiscal_year, anchor_price=anchor_adjusted,
             bear_value=bear, base_value=base, bull_value=bull, expected_value=expected,
             inputs={"metrics": metrics, "calibration": calibration, "provider": provider, "raw_anchor_price": raw_anchor, "basis_factor": basis_factor},
-            assumptions={"cases": {key: policy[key] for key in ("BEAR", "BASE", "BULL")}, "weights": policy["weights"], "horizon_years": policy["horizon_years"], "company_type": company_type},
+            assumptions={
+                "cases": {key: policy[key] for key in ("BEAR", "BASE", "BULL")},
+                "weights": policy["weights"],
+                "horizon_years": policy["horizon_years"],
+                "company_type": company_type,
+                "operating_regime": metrics.get("operating_regime") or {},
+            },
             outcomes={"price_1y": future_1y, "price_3y": future_3y, "price_5y": future_5y, "realized_next_fy": realized},
             scores=scores, leakage_checks=leakage, status="DONE" if future_1y is not None else "PENDING_OUTCOME",
         )
