@@ -651,13 +651,16 @@ def test_020_market_wide_discovery_screen_is_only_a_funnel_for_forensic_value():
     forensic = Path("mfapp/discovery_forensics.py").read_text()
     assert "stage0_universe" in market
     assert "stage1_screen" in market
-    assert "FULL_MARKET_FORENSIC_DISCOVERY_V4" in market
-    assert "FORENSIC_ENRICH_LIMIT = 20" in forensic
+    assert "FULL_MARKET_MISPRICING_DISCOVERY_V5" in market
+    assert "FORENSIC_ENRICH_LIMIT = 52" in forensic
     assert "FORENSIC_WATCH_EDGE_PCT = 12.0" in forensic
     assert "discovery_opportunity" in forensic
     assert "allow_reference_fallback=False" in forensic
     assert "from .secdata" not in universe and "api/xbrl" not in universe.lower()
     assert "fill_quota" in market
+    assert "_market_mispricing_hypothesis" in market
+    assert '"stage15_liquidity_tiebreak_only": True' in market
+    assert '"stage15_price_move_ranked": False' in market
 
 
 def test_020_report_branding_is_persisted_and_rejects_non_https_logo(tmp_path, monkeypatch):

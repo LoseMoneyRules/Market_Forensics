@@ -21,7 +21,7 @@ FORENSIC_WATCH_EDGE_PCT = 12.0
 FORENSIC_EDGE_PCT = 20.0
 FORENSIC_STRONG_EDGE_PCT = 25.0
 FORENSIC_CONFIRM_SCORE = 14
-FORENSIC_ENRICH_LIMIT = 20
+FORENSIC_ENRICH_LIMIT = 52
 FORENSIC_ENRICH_PER_SIDE = 10  # compatibility alias; Stage 2 is capped by FORENSIC_ENRICH_LIMIT
 FORENSIC_TIMEOUT = (4, 10)
 
@@ -654,8 +654,8 @@ def enrich_forensic_candidates(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
     """Stage 2: enrich exactly the bounded Stage-1 finalists.
 
-    No mover/activity re-ranking happens here. SEC work is sequential, bounded,
-    and only performed for unknown finalists. Companyfacts is never called for
+    No mover/activity re-ranking happens here. SEC work is bounded and only
+    performed for evidence-selected unknown finalists. Companyfacts is never called for
     the Stage-0 universe or the full Stage-1 batch.
     """
     provider_calls = provider_calls if provider_calls is not None else {}

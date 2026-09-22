@@ -524,7 +524,7 @@ Discovery is an investigation funnel, not a BUY/SELL engine.
 
 Any ticker entering Coverage or Portfolio must be validated again before persistence. Unknown or unresolvable symbols are rejected rather than creating placeholders. Discovery candidates do not create Coverage, full Research, Portfolio positions or thesis mutations automatically; **Promote** remains an explicit CONTROL action.
 
-0.3.1 Discovery uses a full-market evidence-first funnel.
+0.3.2 Discovery uses a full-market mispricing-first funnel.
 
 ### Stage 0 — cached broad operating-equity universe
 
@@ -557,28 +557,34 @@ Stage 1 applies the same cheap rules to the whole universe:
 
 If the requested snapshot count is not equal to the Stage-0 universe size, Discovery health becomes critical rather than silently treating the scan as complete.
 
-### Stage 1.5 — market-wide SEC fundamental pre-screen
+### Stage 1.5 — full-market market-mispricing hypothesis
 
-Every liquid Stage-1 name is then evaluated against a comparable SEC XBRL Frames baseline before an unknown company is allowed to consume Stage-2 budget.
+Every liquid Stage-1 name is evaluated against the comparable SEC XBRL Frames baseline before an unknown company can consume Stage-2 budget.
 
-The pre-screen uses stored/cached market-wide filed evidence such as:
+This layer does **not** estimate fair value. Its only purpose is to decide where deep canonical valuation work is worth spending. A name must show a real tension between current market valuation and filed operating direction:
 
-- comparable revenue growth;
-- operating-margin direction;
-- cash-flow / FCF margin;
-- inventory versus revenue growth;
-- receivables versus revenue growth;
-- current-price P/E and FCF-yield proxies when a usable share denominator and annual facts exist.
+- LONG hypothesis: depressed valuation evidence plus improving/non-deteriorating filed operations;
+- SHORT hypothesis: stretched valuation evidence plus deteriorating filed operations;
+- valuation evidence may include current-price FCF-yield, P/E and P/S proxies when the required filed/share basis exists; current comparable filed shares are preferred and the prior comparable filed share frame is an explicit fallback rather than a guessed denominator;
+- operating evidence includes comparable revenue direction, operating-margin change, FCF margin and working-capital behavior;
+- contradictory evidence is explicitly penalized;
+- daily price movement is not ranked;
+- dollar liquidity is used only as a final tie-break after valuation tension, operating evidence, contradiction and evidence breadth;
+- there is no alphabetical, mover, quiet-stock or filler lane.
 
-The screen is directional and auditable: LONG and SHORT points come from named evidence signals. Missing SEC-frame evidence is explicitly marked MISSING/PARTIAL. A ticker with no usable fundamental screen is **not** selected for deep Stage 2 merely because it is active, liquid, volatile, quiet or alphabetically next.
+The Stage-1.5 output is an auditable hypothesis with separate valuation points, operating points, contradiction points and named evidence. It is **not** a fair-value conclusion and cannot itself create P1/P2.
 
-SEC frame data is cached for 24 hours; current market prices are refreshed every Discovery run, so price-dependent screening can change without redownloading the whole filed baseline.
+Missing SEC-frame evidence is explicitly marked MISSING/PARTIAL. A ticker with no usable evidence on both the price/valuation and operating sides is not selected for deep Stage 2 merely because it is liquid or has a strong generic fundamental score.
+
+SEC frame data is cached for 24 hours; current market prices are refreshed every Discovery run, so valuation-tension screening can change without redownloading the whole filed baseline.
+
+Discovery separately measures how many liquid names have usable market-valuation evidence. Below 65% coverage the run is WARN; below 40% it is CRITICAL. Missing valuation evidence remains unranked rather than being filled from price action or generic fundamentals.
 
 ### Stage 2 — bounded deep forensic enrichment
 
-Deep Companyfacts/valuation work remains bounded for provider and shared-hosting discipline, but the shortlist now comes from the **entire market-wide pre-screen**, not from a rotating slice.
+Deep Companyfacts/valuation work remains bounded for provider and shared-hosting discipline, but the shortlist now comes from the **full-market Stage-1.5 mispricing hypotheses**, not from generic signal strength, movers, a rotating slice or liquidity rank.
 
-Current deep-enrichment cap is 20 finalists per run. Capacity is balanced between LONG and SHORT market-wide pre-screen leads, with a bounded lane for already-covered names that have stored intrinsic/historical/peer-relative dislocations.
+Current deep-enrichment cap is 52 finalists per run. Up to four slots are reserved for already-covered names with stored intrinsic/historical/peer-relative dislocations; the remaining capacity is balanced LONG/SHORT across genuine full-market mispricing hypotheses. If one side has fewer valid hypotheses, unused capacity may go to the other side by evidence rank. No neutral name is added to fill quota.
 
 For external finalists:
 
@@ -612,7 +618,8 @@ Discovery remains background-only:
 - Stage 0 is cached;
 - Stage 1 checks the full eligible universe every successful run;
 - the market-wide SEC frame pre-screen is cached and refreshed on a bounded cadence;
-- Stage 2 remains capped at 20 deep finalists;
+- Stage 1.5 selects only valuation-versus-operating mispricing hypotheses;
+- Stage 2 remains capped at 52 deep finalists, including at most four reserved known-Coverage dislocations;
 - provider-call counts, full-market snapshot coverage, SEC fundamental coverage, Stage-2 counts, exclusions and job status are visible in the stored result/UI;
 - a stale prior successful result remains readable while a new scan is queued/running.
 
