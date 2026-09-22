@@ -365,7 +365,10 @@ def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any
 def current_row(company_id: int) -> dict[str, Any] | None:
     quarters = quarterly_rows(company_id, 8)
     ttm = _aggregate_quarters(quarters[:4], f"TTM · {quarters[0]['period_end']}" if quarters else "TTM")
-    annual = annual_rows(company_id, 1)
+    # Keep at least the prior FY in the calculation window. Asking annual_rows
+    # for only one row makes Revenue Growth / share growth deterministically blank
+    # on every FY current basis because financial_metrics has no comparator.
+    annual = annual_rows(company_id, 2)
     latest_fy = dict(annual[0]) if annual else None
 
     # "Current" means the freshest filed economic basis, not "TTM at any cost".
