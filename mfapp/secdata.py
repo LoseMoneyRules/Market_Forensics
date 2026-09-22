@@ -1678,36 +1678,35 @@ def _bridge_fy_end_instants_to_q4(company: Company) -> int:
 
 def _reconcile_financial_field_issues(company: Company) -> dict[str, Any]:
     """Turn silent current-basis holes into explicit issues on the canonical basis."""
-    from .current_financials import canonical_annual_pairs, current_row
+    from .current_financials import annual_rows, current_row
 
     current_view = current_row(company.id)
     if not current_view or not current_view.get("period_id"):
         return {"basis_period_id": None, "missing_expected_fields": [], "issue_count": 0}
 
     current_period = db.session.get(FinancialPeriod, int(current_view["period_id"]))
-    current = NormalizedFinancial.query.filter_by(financial_period_id=current_period.id).first() if current_period else None
-    if current_period is None or current is None:
+    if current_period is None:
         return {"basis_period_id": None, "missing_expected_fields": [], "issue_count": 0}
 
-    annual = canonical_annual_pairs(company.id)[:3]
-    historical_operating_income = any(row.operating_income is not None for _, row in annual)
+    annual = annual_rows(company.id, 3)
+    historical_operating_income = any(row.get("operating_income") is not None for row in annual)
     historical_presence = {
-        field: any(getattr(row, field, None) is not None for _, row in annual)
+        field: any(row.get(field) is not None for row in annual)
         for field in ("cash", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "shares_outstanding")
     }
 
     expected_missing: list[str] = []
     if (
-        current.operating_income is None
+        current_view.get("operating_income") is None
         and (
-            current.gross_profit is not None
-            or current.operating_expenses is not None
+            current_view.get("gross_profit") is not None
+            or current_view.get("operating_expenses") is not None
             or historical_operating_income
         )
     ):
         expected_missing.append("operating_income")
     for field, expected in historical_presence.items():
-        if expected and getattr(current, field, None) is None:
+        if expected and current_view.get(field) is None:
             expected_missing.append(field)
 
     active_codes = {f"MISSING_EXPECTED_{field.upper()}" for field in expected_missing}
@@ -1746,7 +1745,6 @@ def _reconcile_financial_field_issues(company: Company) -> dict[str, Any]:
         "missing_expected_fields": sorted(expected_missing),
         "issue_count": len(expected_missing),
     }
-
 
 
 def _reconcile_annual_history_issues(company: Company, target_years: int = 10) -> dict[str, Any]:
