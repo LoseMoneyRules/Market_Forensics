@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
-import hashlib
-import json
 from math import isfinite
-import random
+from random import Random
 from statistics import median, pstdev
 from typing import Any
 
@@ -12,6 +10,7 @@ from .economic_reality import economic_from_row, has_suppression, metric as econ
 from .company_quality import build_company_quality
 
 ENGINE_VERSION = "0.3.2"
+MONTE_CARLO_DRAWS = 10000
 
 DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
 QUALITY_ALIASES = {
@@ -91,191 +90,6 @@ def quantile(values: list[float], q: float) -> float | None:
     w = pos - lo
     return rows[lo] * (1 - w) + rows[hi] * w
 
-
-
-def _row_margin(row: dict[str, Any], field: str) -> float | None:
-    revenue = n(row.get("revenue"))
-    value = n(row.get(field))
-    return value / revenue if value is not None and revenue not in (None, 0) else None
-
-
-def _ccc_days(row: dict[str, Any]) -> float | None:
-    revenue, cogs = n(row.get("revenue")), n(row.get("cogs"))
-    if revenue in (None, 0) or cogs in (None, 0) or cogs <= 0:
-        return None
-    inventory, receivables, payables = n(row.get("inventory")), n(row.get("receivables")), n(row.get("payables"))
-    dso = receivables / revenue * 365.0 if receivables is not None else None
-    dio = inventory / cogs * 365.0 if inventory is not None else None
-    dpo = payables / cogs * 365.0 if payables is not None else None
-    if dso is None and dio is None and dpo is None:
-        return None
-    return (dso or 0.0) + (dio or 0.0) - (dpo or 0.0)
-
-
-def _history_profile(history: list[dict[str, Any]], company_type: str) -> dict[str, Any]:
-    rows = [dict(row) for row in history if n(row.get("revenue")) not in (None, 0)]
-    rows.sort(key=lambda row: (str(row.get("period_end") or ""), int(row.get("fiscal_year") or 0)))
-    growths, share_growths = [], []
-    for prior, current in zip(rows, rows[1:]):
-        pr, cr = n(prior.get("revenue")), n(current.get("revenue"))
-        if pr not in (None, 0) and cr is not None:
-            change = cr / pr - 1.0
-            if -.80 < change < 3.0: growths.append(change)
-        ps = n(prior.get("diluted_shares")) or n(prior.get("shares_outstanding"))
-        cs = n(current.get("diluted_shares")) or n(current.get("shares_outstanding"))
-        if ps not in (None, 0) and cs is not None:
-            share_growths.append(cs / ps - 1.0)
-
-    net_margins = [v for row in rows if (v := _row_margin(row, "net_income")) is not None]
-    op_margins = [v for row in rows if (v := _row_margin(row, "operating_income")) is not None]
-    fcf_margins = [v for row in rows if (v := _row_margin(row, "fcf")) is not None]
-    ccc = [v for row in rows if (v := _ccc_days(row)) is not None]
-    latest_economic = economic_from_row(rows[-1]) if rows else {}
-    growth_capex = economic_metric(latest_economic, "growth_capex_proxy")
-    latest_ni = n(rows[-1].get("net_income")) if rows else None
-    reinvestment = growth_capex / max(abs(latest_ni), 1.0) if growth_capex is not None and latest_ni not in (None, 0) else None
-    roics = [v for row in rows if (v := economic_metric(economic_from_row(row), "economic_roic_pct")) is not None]
-
-    recent_growth = median(growths[-3:]) if growths[-3:] else None
-    long_growth = median(growths[-7:]) if growths[-7:] else recent_growth
-    growth_vol = pstdev(growths[-7:]) if len(growths[-7:]) >= 2 else None
-    op_vol = pstdev(op_margins[-7:]) if len(op_margins[-7:]) >= 2 else None
-    if company_type == "Financial / REIT":
-        life_cycle = "SECTOR_SPECIFIC"
-    elif (growth_vol is not None and growth_vol >= .12) or (op_vol is not None and op_vol >= .06):
-        life_cycle = "CYCLICAL"
-    elif (recent_growth is not None and recent_growth >= .12) or (reinvestment is not None and reinvestment >= .50):
-        life_cycle = "GROWTH"
-    elif long_growth is not None and long_growth <= .06 and (reinvestment is None or reinvestment < .35) and (op_vol is None or op_vol <= .04):
-        life_cycle = "MATURE"
-    else:
-        life_cycle = "NORMAL"
-
-    def dist(values):
-        return {"p10": quantile(values, .10), "median": median(values) if values else None, "p90": quantile(values, .90),
-                "stdev": pstdev(values) if len(values) >= 2 else None, "sample_size": len(values)}
-
-    ccc_current = ccc[-1] if ccc else None
-    ccc_prior = ccc[-2] if len(ccc) >= 2 else None
-    ccc_delta = ccc_current - ccc_prior if ccc_current is not None and ccc_prior is not None else None
-    ccc_risk_bps, multiple_factor = 0, 1.0
-    if ccc_delta is not None:
-        if ccc_delta >= 30: ccc_risk_bps, multiple_factor = 100, .90
-        elif ccc_delta >= 15: ccc_risk_bps, multiple_factor = 50, .95
-        elif ccc_delta <= -30: ccc_risk_bps, multiple_factor = -35, 1.035
-        elif ccc_delta <= -15: ccc_risk_bps, multiple_factor = -20, 1.02
-
-    return {"life_cycle": life_cycle, "reinvestment_rate_proxy": reinvestment,
-            "roic_median_pct": median(roics[-7:]) if roics else None,
-            "growth": dist(growths[-10:]), "net_margin": dist(net_margins[-10:]),
-            "operating_margin": dist(op_margins[-10:]), "fcf_margin": dist(fcf_margins[-10:]),
-            "share_growth": dist(share_growths[-10:]), "ccc_days": ccc_current, "ccc_change_days": ccc_delta,
-            "ccc_risk_bps": ccc_risk_bps, "multiple_factor": multiple_factor}
-
-
-def _altman_z(metrics: dict[str, Any], current_price: Any, company_type: str) -> dict[str, Any]:
-    if company_type == "Financial / REIT":
-        return {"available": False, "zone": "NOT_APPLICABLE", "reason": "Altman industrial model is not applied to Financial / REIT companies."}
-    assets, liabilities = n(metrics.get("assets")), n(metrics.get("liabilities"))
-    ca, cl, retained = n(metrics.get("current_assets")), n(metrics.get("current_liabilities")), n(metrics.get("retained_earnings"))
-    ebit, revenue, shares, price = n(metrics.get("operating_income")), n(metrics.get("revenue")), n(metrics.get("shares")), n(current_price)
-    vals=(assets, liabilities, ca, cl, retained, ebit, revenue, shares, price)
-    if any(v is None for v in vals) or assets <= 0 or liabilities <= 0 or shares <= 0 or price <= 0:
-        return {"available": False, "zone": "UNAVAILABLE", "reason": "Filed Altman inputs or current market equity are incomplete."}
-    z = 1.2 * (ca-cl)/assets + 1.4*retained/assets + 3.3*ebit/assets + .6*(shares*price)/liabilities + revenue/assets
-    zone = "DISTRESS" if z < 1.81 else "GREY" if z < 2.99 else "SAFE"
-    return {"available": True, "score": z, "zone": zone, "basis": "ALTMAN_Z_PUBLIC_INDUSTRIAL"}
-
-
-def _triangular(rng: random.Random, values) -> float | None:
-    if not values or len(values) < 3: return None
-    a,m,b=(n(values[0]),n(values[1]),n(values[2]))
-    if a is None or m is None or b is None: return None
-    low,high=min(a,b),max(a,b); mode=min(high,max(low,m))
-    return rng.triangular(low,high,mode) if high>low else mode
-
-
-def _monte_carlo_distribution(metrics, cases, weights, years, current_price, iterations=10000) -> dict[str, Any]:
-    base=dict(cases.get("BASE") or {}); calibration=dict(base.get("_calibration") or {})
-    profile=dict(base.get("_history_profile") or metrics.get("history_profile") or {})
-    if any(n((cases.get(name) or {}).get("manual_override")) is not None for name in ("BEAR","BASE","BULL")):
-        return {"available":False,"reason":"Manual scenario override active.","iterations":0,"method_count":0}
-    if str(profile.get("life_cycle") or "")=="SECTOR_SPECIFIC":
-        return {"available":False,"reason":"Sector-specific valuation model required.","iterations":0,"method_count":0}
-    shares,revenue,net_debt,ebitda=n(metrics.get("shares")),n(metrics.get("revenue")),n(metrics.get("net_debt")),n(metrics.get("ebitda"))
-    if shares in (None,0) or revenue in (None,0):
-        return {"available":False,"reason":"Revenue/share basis incomplete.","iterations":0,"method_count":0}
-
-    usable=[]
-    for key in ("pe","ps","ev_ebitda","fcf_yield"):
-        values=calibration.get(key)
-        if isinstance(values,(tuple,list)) and len(values)==3 and all(n(x) is not None for x in values): usable.append(key)
-    if n(base.get("fcf_margin")) is not None and (n(weights.get("dcf")) or 0)>0: usable.append("dcf")
-    usable=list(dict.fromkeys(usable))
-    if len(usable)<2:
-        return {"available":False,"reason":"Fewer than two company-specific valuation methods have sufficient evidence.","iterations":0,"method_count":len(usable)}
-
-    payload={"revenue":revenue,"shares":shares,"net_debt":net_debt,"ebitda":ebitda,"calibration":calibration,"profile":profile,
-             "base":{k:v for k,v in base.items() if not str(k).startswith("_")}}
-    seed=int(hashlib.sha256(json.dumps(payload,sort_keys=True,default=str).encode()).hexdigest()[:16],16); rng=random.Random(seed)
-    growth_d=profile.get("growth") or {}; nm_d=profile.get("net_margin") or {}; fm_d=profile.get("fcf_margin") or {}; sg_d=profile.get("share_growth") or {}
-    growth_t=(growth_d.get("p10"),growth_d.get("median"),growth_d.get("p90"))
-    nm_t=(nm_d.get("p10"),nm_d.get("median"),nm_d.get("p90")); fm_t=(fm_d.get("p10"),fm_d.get("median"),fm_d.get("p90"))
-    sg_t=(sg_d.get("p10"),sg_d.get("median"),sg_d.get("p90"))
-    multiple_factor=n(profile.get("multiple_factor")) or 1.0
-    freshness=dict(metrics.get("freshness_shock") or {}); freshness_mult=n(freshness.get("uncertainty_multiplier")) or 1.0
-    solvency=_altman_z(metrics,current_price,str(metrics.get("company_type") or "Generic"))
-    solvency_bps=150 if solvency.get("zone")=="DISTRESS" else 75 if solvency.get("zone")=="GREY" else 0
-    solvency_multiple=.80 if solvency.get("zone")=="DISTRESS" else .90 if solvency.get("zone")=="GREY" else 1.0
-    raw_weights={key:max(0.0,n(weights.get(key)) or 0.0) for key in ("pe","ps","ev_ebitda","fcf_yield","dcf")}
-    outcomes=[]; target=max(1000,min(int(iterations),20000))
-    for _ in range(target):
-        growth=_triangular(rng,growth_t); growth=n(base.get("growth")) or 0.0 if growth is None else growth
-        nm=_triangular(rng,nm_t); nm=n(base.get("net_margin")) if nm is None else nm
-        fm=_triangular(rng,fm_t); fm=n(base.get("fcf_margin")) if fm is None else fm
-        sg=_triangular(rng,sg_t)
-        if sg is None: sg=0.0
-        sim_shares=shares*(1+clamp(sg,-.10,.30))
-        values={}
-        pe_mult=_triangular(rng,calibration.get("pe"))
-        if pe_mult is not None and nm is not None:
-            v=pe_value(revenue,growth,nm,pe_mult*multiple_factor*solvency_multiple,sim_shares)
-            if v is not None: values["pe"]=v
-        ps_mult=_triangular(rng,calibration.get("ps"))
-        if ps_mult is not None:
-            v=ps_value(revenue,growth,ps_mult*multiple_factor*solvency_multiple,sim_shares)
-            if v is not None: values["ps"]=v
-        ev_mult=_triangular(rng,calibration.get("ev_ebitda"))
-        if ev_mult is not None and ebitda is not None and net_debt is not None:
-            v=ev_ebitda_value(ebitda,growth,ev_mult*multiple_factor*solvency_multiple,net_debt,sim_shares)
-            if v is not None: values["ev_ebitda"]=v
-        yld=_triangular(rng,calibration.get("fcf_yield"))
-        if yld is not None and fm is not None:
-            v=fcf_yield_value(revenue,growth,fm,yld,sim_shares)
-            if v is not None: values["fcf_yield"]=v
-        dc=n(base.get("equity_discount_rate")) or .10
-        discount=rng.triangular(max(.04,dc-.0125),min(.25,dc+.0200+solvency_bps/10000.0),dc)
-        tl=n((cases.get("BEAR") or {}).get("terminal_growth")) or 0.0; th=n((cases.get("BULL") or {}).get("terminal_growth")) or .03
-        tm=n(base.get("terminal_growth")) or .02; lo,hi=min(tl,th),max(tl,th); tm=min(hi,max(lo,tm)); terminal=rng.triangular(lo,hi,tm)
-        if fm is not None:
-            v=dcf_value(revenue,growth,fm,discount,terminal,years,sim_shares,growth_end=terminal)
-            if v is not None: values["dcf"]=v
-        active={key:raw_weights.get(key,0.0) for key in values if raw_weights.get(key,0.0)>0}
-        if len(active)<2: continue
-        total=sum(active.values()); fair=sum(values[key]*active[key]/total for key in active)
-        if fair>0: outcomes.append(fair)
-    if len(outcomes)<max(500,target//4):
-        return {"available":False,"reason":"Monte Carlo produced too few multi-method outcomes.","iterations":len(outcomes),"method_count":len(usable),"solvency":solvency}
-    outcomes.sort(); p10,p50,p90=quantile(outcomes,.10),quantile(outcomes,.50),quantile(outcomes,.90)
-    if p10 is None or p50 is None or p90 is None:
-        return {"available":False,"reason":"Distribution quantiles unavailable.","iterations":len(outcomes),"method_count":len(usable),"solvency":solvency}
-    if freshness_mult>1.0:
-        p10=max(.01,p50-(p50-p10)*freshness_mult); p90=p50+(p90-p50)*freshness_mult
-    floor=n(metrics.get("liquidation_floor_per_share"))
-    if floor is not None and floor>0: p10,p50,p90=max(p10,floor),max(p50,floor),max(p90,floor)
-    return {"available":True,"bear":min(p10,p50,p90),"base":median([p10,p50,p90]),"bull":max(p10,p50,p90),
-            "iterations":len(outcomes),"method_count":len(usable),"methods":usable,"seed":seed,"solvency":solvency,
-            "freshness_shock":freshness,"basis":"DETERMINISTIC_MONTE_CARLO_P10_P50_P90"}
 
 
 def _median_growth(values: list[float | None]) -> float | None:
@@ -456,7 +270,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         ccc = _ccc_days(row)
         if ccc is not None:
             ccc_values.append(ccc)
-        shares_row = n(row.get("shares_outstanding")) or n(row.get("diluted_shares"))
+        shares_row = n(row.get("diluted_shares")) or n(row.get("shares_outstanding"))
         if shares_row not in (None, 0):
             share_values.append(shares_row)
         if (economic_metric(row_economic, "sbc_to_revenue_pct") or 0.0) >= 5.0:
@@ -473,11 +287,11 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
     shares = n(shares_override)
     resolved_source = str(share_source or "").strip().upper()
     if shares in (None, 0):
-        shares = n(latest.get("shares_outstanding"))
-        resolved_source = "SEC_FY_OUTSTANDING" if shares not in (None, 0) else resolved_source
-    if shares in (None, 0):
         shares = n(latest.get("diluted_shares"))
-        resolved_source = "DILUTED_WA_FALLBACK" if shares not in (None, 0) else resolved_source
+        resolved_source = "DILUTED_WA" if shares not in (None, 0) else resolved_source
+    if shares in (None, 0):
+        shares = n(latest.get("shares_outstanding"))
+        resolved_source = "SEC_FY_OUTSTANDING_FALLBACK" if shares not in (None, 0) else resolved_source
 
     latest_operating = n(latest.get("operating_income"))
     latest_da = economic_metric(economic, "depreciation_amortization")
@@ -1255,7 +1069,7 @@ def _monte_carlo_distribution(
         return {"available": False, "reason": "Fewer than two independent methods are usable.", "draws": 0}
 
     move = n(metrics.get("market_move_since_filing_pct"))
-    freshness_scale = 1.25 if move is not None and abs(move) >= 30.0 else 1.0
+    freshness_scale = (min(1.75, 1.25 + max(0.0, abs(move) - 30.0) / 100.0) if move is not None and abs(move) >= 30.0 else 1.0)
     rng = Random(20260921)
     values: list[float] = []
     assumption_keys = (
@@ -1355,7 +1169,10 @@ def evaluate(
             order_guard_applied = True
             for name, value in zip(("BEAR", "BASE", "BULL"), ordered):
                 scenarios[name]["fair_value"] = value
-                scenarios[name]["flags"] = list(scenarios[name].get("flags") or []) + ["Scenario-order integrity guard applied; auto scenarios cannot invert."]
+                scenarios[name]["quality"] = "DATA_WARNING"
+                scenarios[name]["flags"] = list(scenarios[name].get("flags") or []) + [
+                    "DATA WARNING: deterministic scenario inversion detected. Values were ordered for display only and are not decision-grade until the company-history distribution resolves the ordering."
+                ]
         # A floor can legitimately collapse Bear and Base to the same liquidation value.
         if scenarios["BASE"]["fair_value"] < scenarios["BEAR"]["fair_value"]:
             scenarios["BASE"]["fair_value"] = scenarios["BEAR"]["fair_value"]
@@ -1420,6 +1237,6 @@ def evaluate(
 __all__ = [
     "ENGINE_VERSION", "TYPE_PRIORS", "DECISION_GRADE_QUALITIES", "canonical_valuation_quality",
     "valuation_base_quality", "valuation_is_decision_grade", "stored_model_base_quality", "infer_company_type", "metrics_from_history", "calibrate_multiples",
-    "default_cases", "pe_value", "ps_value", "ev_ebitda_value", "ev_sales_value", "fcf_yield_value", "dcf_value", "robust_blend",
+    "default_cases", "pe_value", "p_sales_value", "ev_ebitda_value", "ev_sales_value", "fcf_yield_value", "dcf_value", "robust_blend",
     "scenario_value", "evaluate", "n", "clamp", "quantile",
 ]
