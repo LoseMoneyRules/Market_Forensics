@@ -77,7 +77,12 @@ def _intelligence_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 
-def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], company_type: str) -> dict[str, Any]:
+def _point_in_time_calibration(
+    security_id: int,
+    history: list[dict[str, Any]],
+    company_type: str,
+    regime_start_fiscal_year: int | None = None,
+) -> dict[str, Any]:
     """Build company-specific multiple history from filing-date market anchors."""
     provider = preferred_provider(security_id)
     observations: list[dict[str, Any]] = []
@@ -125,7 +130,7 @@ def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], 
             if latest_anchor_date is None or market.trade_date.isoformat() > latest_anchor_date:
                 latest_anchor_date = market.trade_date.isoformat()
                 latest_anchor_price = n(market.close_raw)
-    result = calibrate_multiples(observations, company_type)
+    result = calibrate_multiples(observations, company_type, regime_start_fiscal_year)
     result["latest_filing_anchor_price"] = latest_anchor_price
     result["latest_filing_anchor_date"] = latest_anchor_date
     result["observation_count"] = len(observations)
@@ -287,7 +292,9 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
     metrics = metrics_from_history(history, current_shares, share_source, company_type)
     if current_shares in (None, "") and metrics.get("shares") is not None:
         current_shares = metrics["shares"]; share_source = metrics.get("share_source") or share_source
-    calibration = _point_in_time_calibration(security.id, history, company_type)
+    calibration = _point_in_time_calibration(
+        security.id, history, company_type, metrics.get("regime_start_fiscal_year")
+    )
     defaults = default_cases(metrics, company_type, calibration)
     weights = dict(saved.get("weights") or defaults["weights"]) if saved_engine_current else dict(defaults["weights"])
     horizon_years = int(saved.get("horizon_years") or defaults["horizon_years"])
