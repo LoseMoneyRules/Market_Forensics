@@ -1083,7 +1083,16 @@ def company_section(ticker, section):
         ).order_by(Event.event_date.desc()).limit(30).all()
         extra["finra_summary"] = finra_stored_summary(company.id)
         extra["finra_api_ready"] = provider_status(g.user.id).get("finra_api", False)
-        extra["tape_series"] = _cached_tape_for_months(dict(cache.get("tape") or {}), months)
+        cached_tape = _cached_tape_for_months(dict(cache.get("tape") or {}), months)
+        visible_series = ("daily_market", "market", "short_interest", "short_volume", "institutional_flow", "ats", "tape_daily")
+        if not any(cached_tape.get(key) for key in visible_series):
+            # Display fails open to already-materialized evidence while decision
+            # logic continues to fail closed. tape_series performs DB-only reads;
+            # it never calls SEC, Alpaca, FINRA or any other provider.
+            stored_tape = tape_series(security, months)
+            if any(stored_tape.get(key) for key in visible_series):
+                cached_tape = stored_tape
+        extra["tape_series"] = cached_tape
     elif section == "monitoring":
         rules = MonitoringRule.query.filter_by(coverage_id=coverage.id, is_active=True).order_by(MonitoringRule.updated_at.desc()).all()
         histories = {r.id: MonitoringHistory.query.filter_by(rule_id=r.id).order_by(MonitoringHistory.observed_at.desc()).limit(5).all() for r in rules}
