@@ -524,7 +524,7 @@ def _valuation_from_history(
 ) -> dict[str, Any]:
     """Reuse the canonical valuation engine; Discovery owns no duplicate valuation model."""
     quality_history = list(annual) + ([current_ttm] if current_ttm else [])
-    metrics = metrics_from_history(quality_history, company_type=company_type)
+    metrics = metrics_from_history(quality_history) if company_type == "Generic" else metrics_from_history(quality_history, company_type=company_type)
     if current_ttm and _num(current_ttm.get("revenue")) is not None:
         revenue = _num(current_ttm.get("revenue"))
         net_income = _num(current_ttm.get("net_income"))
@@ -603,7 +603,8 @@ def _valuation_from_history(
             metrics["latest_filing_anchor_price"] = anchor_price
             metrics["latest_filing_anchor_date"] = (anchor or {}).get("trade_date").isoformat() if anchor else None
 
-    defaults = default_cases(metrics, company_type, calibration)
+    metrics["historical_calibration"] = calibration
+    defaults = default_cases(metrics, company_type)
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
     result = evaluate(
         metrics, cases, defaults["weights"], defaults["horizon_years"],
