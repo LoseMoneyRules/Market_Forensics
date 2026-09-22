@@ -769,7 +769,6 @@ def _execute(job: Job) -> dict[str, Any]:
         result = refresh_company_fundamentals(company, security, job.user_id); result["recalculation"] = recalculate_company(company.id, coverage_id)
         if coverage_id:
             result["autofill"] = (result.get("recalculation") or {}).get("autofill")
-        result["recalculate_job_id"] = _queue_recalculate_after_evidence(job, security, coverage_id)
         management_job = enqueue_job(
             "MANAGEMENT_SCAN",
             user_id=job.user_id,
@@ -803,17 +802,6 @@ def _execute(job: Job) -> dict[str, Any]:
             result["economic_reality_state"] = "REFRESH_QUEUED"
         elif current and economic:
             result["economic_reality_state"] = "MATERIALIZED"
-        if coverage_id:
-            # RECALCULATE is the canonical materialization boundary. Rebuilding
-            # company calculations without refreshing the Research cache leaves
-            # Tape, Fundamentals Forensics, Decision Lenses and overview surfaces
-            # reading stale evidence even though the underlying rows are current.
-            from .research_cache import refresh_research_cache
-            cache = refresh_research_cache(coverage_id)
-            result["research_cache"] = {
-                "event_id": cache.get("_event_id"),
-                "generated_at": cache.get("_generated_at"),
-            }
         return result
     if kind == "RESEARCH_PREFILL":
         if not coverage_id: raise RuntimeError("coverage_id is required")
