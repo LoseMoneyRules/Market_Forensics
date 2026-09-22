@@ -14,8 +14,9 @@ from .secdata import (
     _annual_duration, _annual_instant, _as_decimal,
     _quarter_duration_values, _quarter_instants,
 )
-from .valuation_engine import default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
+from .valuation_engine import calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, valuation_base_quality
 from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality, economic_from_row, has_suppression, metric as economic_metric
+from .historical_data import fetch_point_in_time_history
 
 FORENSIC_WATCH_EDGE_PCT = 12.0
 FORENSIC_EDGE_PCT = 20.0
@@ -179,7 +180,7 @@ def _annual_history(companyfacts: dict[str, Any], fiscal_year_end: str = "", com
 
     years = sorted(set().union(*(set(rows) for rows in duration.values()), *(set(rows) for rows in instant.values())))
     out: list[dict[str, Any]] = []
-    for fy in years[-8:]:
+    for fy in years[-12:]:
         revenue = _value(duration["revenue"].get(fy))
         if revenue is None:
             continue
@@ -189,6 +190,7 @@ def _annual_history(companyfacts: dict[str, Any], fiscal_year_end: str = "", com
             "fiscal_year": fy,
             "filed_at": (duration["revenue"].get(fy) or {}).get("filed"),
             "revenue": revenue,
+            "cogs": _value(duration["cogs"].get(fy)),
             "gross_profit": _value(duration["gross_profit"].get(fy)),
             "operating_income": _value(duration["operating_income"].get(fy)),
             "net_income": _value(duration["net_income"].get(fy)),
@@ -253,7 +255,9 @@ def _quarter_history(companyfacts: dict[str, Any], fiscal_year_end: str = "", co
             "fiscal_year": fy,
             "period_type": fp,
             "period_end": str(record.get("end") or ""),
+            "filed_at": str(record.get("filed") or ""),
             "revenue": revenue,
+            "cogs": _num((q_duration.get("cogs", {}).get((fy, fp)) or {}).get("value")),
             "gross_profit": _num((q_duration.get("gross_profit", {}).get((fy, fp)) or {}).get("value")),
             "operating_income": _num((q_duration.get("operating_income", {}).get((fy, fp)) or {}).get("value")),
             "net_income": _num((q_duration.get("net_income", {}).get((fy, fp)) or {}).get("value")),
@@ -303,7 +307,7 @@ def _ttm(rows: list[dict[str, Any]], offset: int = 0) -> dict[str, Any] | None:
     if span < 240 or span > 370:
         return None
 
-    flow_fields = ("revenue", "gross_profit", "operating_income", "net_income", "cfo", "capex", "fcf")
+    flow_fields = ("revenue", "cogs", "gross_profit", "operating_income", "net_income", "cfo", "capex", "fcf")
     out: dict[str, Any] = {}
     for field in flow_fields:
         values = [_num(row.get(field)) for row in block]
@@ -318,6 +322,7 @@ def _ttm(rows: list[dict[str, Any]], offset: int = 0) -> dict[str, Any] | None:
     shares = [_num(row.get("diluted_shares")) for row in block if _num(row.get("diluted_shares")) is not None]
     out["diluted_shares"] = mean(shares) if shares else _num(latest.get("shares_outstanding"))
     out["period_end"] = latest.get("period_end")
+    out["filed_at"] = latest.get("filed_at")
     out["quarter_ends"] = [item.isoformat() for item in ends]
     economic = _ttm_economic(block, out)
     if economic is not None:
@@ -452,34 +457,96 @@ def _signals(snapshot: dict[str, Any], day_move: float | None) -> tuple[list[dic
     return signals, long_score, short_score
 
 
+
+def _price_on_or_after_rows(rows: list[dict[str, Any]], target: date, max_days: int = 14) -> dict[str, Any] | None:
+    eligible = [
+        row for row in rows
+        if isinstance(row.get("trade_date"), date)
+        and target <= row["trade_date"] <= target + timedelta(days=max_days)
+        and _num(row.get("close_raw")) not in (None, 0)
+    ]
+    return min(eligible, key=lambda row: row["trade_date"]) if eligible else None
+
+
+def _external_calibration(
+    annual: list[dict[str, Any]],
+    historical_prices: list[dict[str, Any]],
+    company_type: str,
+) -> dict[str, Any]:
+    observations: list[dict[str, Any]] = []
+    for row in annual:
+        filed = row.get("filed_at")
+        try:
+            filing_date = date.fromisoformat(str(filed)[:10]) if filed else None
+        except Exception:
+            filing_date = None
+        if filing_date is None:
+            continue
+        market = _price_on_or_after_rows(historical_prices, filing_date)
+        shares = _num(row.get("shares_outstanding")) or _num(row.get("diluted_shares"))
+        if market is None or shares in (None, 0):
+            continue
+        economic = economic_from_row(row)
+        economic_net_debt = economic_metric(economic, "economic_net_debt")
+        operating_income = _num(row.get("operating_income"))
+        depreciation_amortization = economic_metric(economic, "depreciation_amortization")
+        ebitda = (
+            operating_income + depreciation_amortization
+            if operating_income is not None and depreciation_amortization is not None
+            else None
+        )
+        observations.append({
+            "fiscal_year": row.get("fiscal_year"),
+            "price": _num(market.get("close_raw")),
+            "shares": shares,
+            "revenue": row.get("revenue"),
+            "net_income": row.get("net_income"),
+            "fcf": row.get("fcf"),
+            "ebitda": ebitda,
+            "net_debt": (
+                economic_net_debt
+                if economic and not economic.get("material_unresolved")
+                else None
+            ),
+        })
+    result = calibrate_multiples(observations, company_type)
+    result["observation_count"] = len(observations)
+    return result
+
+
 def _valuation_from_history(
     annual: list[dict[str, Any]],
     current_ttm: dict[str, Any] | None,
     prior_ttm: dict[str, Any] | None,
     price: float,
     company_type: str = "Generic",
+    historical_prices: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Reuse the canonical valuation engine; Discovery owns no duplicate valuation model."""
     quality_history = list(annual) + ([current_ttm] if current_ttm else [])
-    metrics = metrics_from_history(quality_history) if company_type == "Generic" else metrics_from_history(quality_history, company_type=company_type)
+    metrics = metrics_from_history(quality_history, company_type=company_type)
     if current_ttm and _num(current_ttm.get("revenue")) is not None:
         revenue = _num(current_ttm.get("revenue"))
         net_income = _num(current_ttm.get("net_income"))
         fcf = _num(current_ttm.get("fcf"))
         economic = economic_from_row(current_ttm)
         economic_net_debt = economic_metric(economic, "economic_net_debt")
-        valuation_fcf = fcf
-        if has_suppression(economic, "FCF_POSITIVE_UNADJUSTED"):
-            after_sbc = economic_metric(economic, "fcf_after_sbc")
-            if after_sbc is not None and fcf is not None:
-                valuation_fcf = min(fcf, after_sbc)
         economic_ready = bool(economic) and not bool(economic.get("material_unresolved")) and economic_net_debt is not None
         current_net_debt = economic_net_debt if economic_ready else None
         shares = _num(current_ttm.get("shares_outstanding")) or _num(current_ttm.get("diluted_shares")) or _num(metrics.get("shares"))
+        operating_income = _num(current_ttm.get("operating_income"))
+        depreciation_amortization = economic_metric(economic, "depreciation_amortization")
+        ebitda = (
+            operating_income + depreciation_amortization
+            if operating_income is not None and depreciation_amortization is not None
+            else None
+        )
         metrics.update({
             "revenue": revenue,
             "net_income": net_income,
             "fcf": fcf,
+            "operating_income": operating_income,
+            "ebitda": ebitda,
             "net_debt": current_net_debt,
             "net_debt_basis": (
                 str(economic.get("debt_basis") or "ECONOMIC_REALITY")
@@ -501,11 +568,42 @@ def _valuation_from_history(
                 if has_suppression(economic, "PE_EARNINGS_NORMALIZATION_REVIEW")
                 else _ratio(net_income, revenue, 1.0)
             ),
-            "fcf_margin": _ratio(valuation_fcf, revenue, 1.0),
-            "fcf_margin_basis": "FCF_AFTER_SBC_WHEN_MATERIAL" if valuation_fcf != fcf else "REPORTED_FCF",
-            "operating_margin": _ratio(current_ttm.get("operating_income"), revenue, 1.0),
+            "fcf_margin": _ratio(fcf, revenue, 1.0),
+            "fcf_margin_basis": "REPORTED_FCF_WITH_DILUTION_DENOMINATOR",
+            "operating_margin": _ratio(operating_income, revenue, 1.0),
+            "ebitda_margin": _ratio(ebitda, revenue, 1.0),
+            "gross_margin": _ratio(current_ttm.get("gross_profit"), revenue, 1.0),
+            "capex_to_revenue": (
+                abs(_num(current_ttm.get("capex"))) / revenue
+                if _num(current_ttm.get("capex")) is not None and revenue not in (None, 0) else metrics.get("capex_to_revenue")
+            ),
+            "economic_roic_pct": economic_metric(economic, "economic_roic_pct"),
+            "rd_to_revenue_pct": economic_metric(economic, "rd_to_revenue_pct"),
+            "sbc_to_revenue_pct": economic_metric(economic, "sbc_to_revenue_pct"),
+            "interest_coverage_x": economic_metric(economic, "interest_coverage_x"),
+            "fixed_charge_coverage_x": economic_metric(economic, "fixed_charge_coverage_proxy_x"),
+            "net_debt_to_ebitda": (
+                current_net_debt / ebitda
+                if current_net_debt is not None and ebitda not in (None, 0) and ebitda > 0 else None
+            ),
         })
-    defaults = default_cases(metrics, company_type)
+
+    historical_prices = list(historical_prices or [])
+    calibration = _external_calibration(annual, historical_prices, company_type) if historical_prices else calibrate_multiples([], company_type)
+    if current_ttm and historical_prices:
+        filed = current_ttm.get("filed_at")
+        try:
+            filing_date = date.fromisoformat(str(filed)[:10]) if filed else None
+        except Exception:
+            filing_date = None
+        anchor = _price_on_or_after_rows(historical_prices, filing_date) if filing_date else None
+        anchor_price = _num((anchor or {}).get("close_raw"))
+        if anchor_price not in (None, 0) and price not in (None, 0):
+            metrics["market_move_since_filing_pct"] = (price / anchor_price - 1.0) * 100.0
+            metrics["latest_filing_anchor_price"] = anchor_price
+            metrics["latest_filing_anchor_date"] = (anchor or {}).get("trade_date").isoformat() if anchor else None
+
+    defaults = default_cases(metrics, company_type, calibration)
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
     result = evaluate(
         metrics, cases, defaults["weights"], defaults["horizon_years"],
@@ -513,7 +611,7 @@ def _valuation_from_history(
     )
     scenarios = result.get("scenarios") or {}
     base_row = scenarios.get("BASE") or {}
-    methods = sum(1 for key in ("pe", "ev_sales", "fcf_yield") if _num(base_row.get(key)) is not None)
+    methods = int(base_row.get("method_count") or 0)
     base = base_row.get("fair_value")
     gap = ((float(base) / price - 1.0) * 100.0) if base is not None and price else None
     return {
@@ -531,6 +629,11 @@ def _valuation_from_history(
         "company_quality": result.get("company_quality") or metrics.get("company_quality") or {},
         "valuation_policy": result.get("valuation_policy") or metrics.get("valuation_policy") or {},
         "valuation_impact_ledger": result.get("valuation_impact_ledger") or [],
+        "calibration": calibration,
+        "monte_carlo": result.get("monte_carlo") or {},
+        "life_cycle": result.get("life_cycle"),
+        "solvency_state": result.get("solvency_state"),
+        "scenario_order_guard_applied": bool(result.get("scenario_order_guard_applied")),
     }
 
 def _local_forensics(
@@ -592,6 +695,7 @@ def _external_forensics(
     day_move: float | None,
     meta: dict[str, str],
     headers: dict[str, str],
+    user_id: int,
     provider_calls: dict[str, int] | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     provider_calls = provider_calls if provider_calls is not None else {}
@@ -611,7 +715,13 @@ def _external_forensics(
     if current is None or prior is None:
         return None, "TTM INVALID / INCOMPLETE"
 
-    valuation = _valuation_from_history(annual, current, prior, price, company_type)
+    historical_prices, historical_errors = fetch_point_in_time_history(symbol, user_id, 10)
+    valuation = _valuation_from_history(
+        annual, current, prior, price, company_type,
+        historical_prices=historical_prices,
+    )
+    if historical_errors:
+        valuation["warnings"] = list(valuation.get("warnings") or []) + historical_errors
     if valuation.get("base") is None or valuation.get("gap_pct") is None:
         return None, "BASE / GAP UNAVAILABLE"
 
@@ -720,12 +830,13 @@ def enrich_forensic_candidates(
     # already happened from the full-market fundamental pre-screen.
     provider_calls["sec_submissions"] = int(provider_calls.get("sec_submissions") or 0) + len(external_tasks)
     provider_calls["sec_companyfacts"] = int(provider_calls.get("sec_companyfacts") or 0) + len(external_tasks)
+    provider_calls["historical_point_in_time"] = int(provider_calls.get("historical_point_in_time") or 0) + len(external_tasks)
 
     def enrich_external(task: tuple[dict[str, Any], str, float, dict[str, str]]):
         row, symbol, price, meta = task
         try:
             result, reason = _external_forensics(
-                symbol, price, _num(row.get("move_pct")), meta, headers, None,
+                symbol, price, _num(row.get("move_pct")), meta, headers, user_id, None,
             )
             return symbol, meta, result, reason, ""
         except Exception as exc:
