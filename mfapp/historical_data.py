@@ -225,6 +225,52 @@ def fetch_history(ticker: str, user_id: int, lookback_years: int = 10) -> tuple[
     return [], errors
 
 
+def fetch_point_in_time_history(ticker: str, user_id: int, lookback_years: int = 10) -> tuple[list[dict[str, Any]], list[str]]:
+    """Fetch raw point-in-time prices for valuation calibration without persisting a new Security.
+
+    Discovery uses this only for its bounded Stage-2 finalists. Raw historical
+    closes are deliberately paired with the share count reported at that same
+    historical filing basis, so split-adjusting one side without the other
+    cannot manufacture a multiple.
+    """
+    years = max(1, min(int(lookback_years), 15))
+    end = date.today()
+    start = end - timedelta(days=366 * years + 45)
+    errors: list[str] = []
+    try:
+        raw = _alpaca_pages(ticker, user_id, start, end, "raw")
+        rows = []
+        for item in raw:
+            day, close = _iso_day(item.get("t")), _num(item.get("c"))
+            if day is None or close is None or close <= 0:
+                continue
+            rows.append({
+                "trade_date": day,
+                "provider": "Alpaca IEX historical",
+                "close_raw": close,
+                "quality": "OBSERVED",
+            })
+        if rows:
+            return rows, errors
+    except Exception as exc:
+        errors.append(f"Alpaca point-in-time: {type(exc).__name__}: {exc}")
+
+    try:
+        public = _public_history(ticker, start, end)
+        rows = [{
+            "trade_date": row["trade_date"],
+            "provider": row["provider"],
+            "close_raw": row["close_raw"],
+            "quality": row.get("quality") or "PUBLIC_FALLBACK",
+        } for row in public if row.get("trade_date") and _num(row.get("close_raw")) not in (None, 0)]
+        if rows:
+            errors.append("Using public raw historical prices because Alpaca point-in-time history was unavailable.")
+            return rows, errors
+    except Exception as exc:
+        errors.append(f"Public point-in-time: {type(exc).__name__}: {exc}")
+    return [], errors
+
+
 def refresh_historical_prices(security: Security, user_id: int, lookback_years: int = 10) -> dict[str, Any]:
     rows, errors = fetch_history(security.ticker, user_id, lookback_years)
     if not rows:
@@ -283,4 +329,4 @@ def price_on_or_before(security_id: int, target: date, max_days: int = 14, *, pr
     return query.order_by(HistoricalPrice.trade_date.desc()).first()
 
 
-__all__ = ["refresh_historical_prices", "fetch_history", "preferred_provider", "price_on_or_after", "price_on_or_before"]
+__all__ = ["refresh_historical_prices", "fetch_history", "fetch_point_in_time_history", "preferred_provider", "price_on_or_after", "price_on_or_before"]

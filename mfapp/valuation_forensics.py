@@ -16,7 +16,7 @@ from .historical_data import preferred_provider, price_on_or_after
 from .macro_context import macro_context
 from .research_basis import latest_financial_basis
 
-ENGINE_VERSION = "0.3.1"
+ENGINE_VERSION = "0.3.2-integrity-v1"
 
 # These coefficients deliberately create a bounded explanatory bridge, not a
 # fitted valuation model. They are visible in the output so the analyst can
@@ -74,12 +74,10 @@ def _primary_security(company_id: int) -> Security | None:
 
 
 def _effective_fcf(row: dict[str, Any]) -> float | None:
-    metrics = dict(row.get("metrics") or {})
-    reported = _n(row.get("fcf"))
-    after_sbc = _n(metrics.get("fcf_after_sbc"))
-    if reported is not None and after_sbc is not None:
-        return min(reported, after_sbc)
-    return reported
+    # 0.3.2 integrity rule: SBC is handled through observed diluted-share
+    # growth in the canonical valuation denominator. Do not subtract it again
+    # from reported FCF in relative-value evidence.
+    return _n(row.get("fcf"))
 
 
 def _economics_from_row(row: dict[str, Any], *, price: float | None = None) -> dict[str, Any]:
@@ -89,7 +87,10 @@ def _economics_from_row(row: dict[str, Any], *, price: float | None = None) -> d
     operating_income = _n(row.get("operating_income"))
     net_income = _n(row.get("net_income"))
     fcf = _effective_fcf(row)
-    shares = _n(row.get("shares_outstanding")) or _n(row.get("diluted_shares"))
+    economic = dict((row.get("quality") or {}).get("economic_reality") or {})
+    depreciation_amortization = _n(economic.get("depreciation_amortization"))
+    ebitda = (operating_income + depreciation_amortization) if operating_income is not None and depreciation_amortization is not None else None
+    shares = _n(row.get("diluted_shares")) or _n(row.get("shares_outstanding"))
     net_debt = _n(metrics.get("economic_net_debt"))
     if net_debt is None and not bool(metrics.get("economic_reality_unresolved")):
         debt = _n(row.get("debt"))
@@ -115,6 +116,7 @@ def _economics_from_row(row: dict[str, Any], *, price: float | None = None) -> d
         "revenue": revenue,
         "gross_profit": gross_profit,
         "operating_income": operating_income,
+        "ebitda": ebitda,
         "net_income": net_income,
         "fcf": fcf,
         "revenue_growth_pct": _n(metrics.get("revenue_growth_pct")),
@@ -134,7 +136,7 @@ def _economics_from_row(row: dict[str, Any], *, price: float | None = None) -> d
         "net_debt": net_debt,
         "pe": market_cap / net_income if market_cap not in (None, 0) and net_income is not None and net_income > 0 else None,
         "ev_ebit": ev / operating_income if ev not in (None, 0) and operating_income is not None and operating_income > 0 else None,
-        "ev_ebitda": None,  # EBITDA is not a canonical normalized field. Missing stays missing.
+        "ev_ebitda": ev / ebitda if ev not in (None, 0) and ebitda is not None and ebitda > 0 else None,
         "ev_sales": ev / revenue if ev not in (None, 0) and revenue not in (None, 0) else None,
         "p_fcf": market_cap / fcf if market_cap not in (None, 0) and fcf is not None and fcf > 0 else None,
         "fcf_yield_pct": fcf / market_cap * 100.0 if market_cap not in (None, 0) and fcf is not None else None,
@@ -200,8 +202,10 @@ def _multiple_stats(observations: list[dict[str, Any]], current: dict[str, Any])
                 "median": median(vals) if vals else None,
                 "low": min(vals) if vals else None,
                 "high": max(vals) if vals else None,
+                "p10": _quantile(vals, .10),
                 "p25": _quantile(vals, .25),
                 "p75": _quantile(vals, .75),
+                "p90": _quantile(vals, .90),
             }
         reference = horizons["5y"] if horizons["5y"]["sample_size"] >= 3 else horizons["10y"]
         vals = [
@@ -254,10 +258,20 @@ def _multiple_bridge(
     observations: list[dict[str, Any]],
     macro: dict[str, Any],
 ) -> dict[str, Any]:
-    # Prefer P/E, then EV/EBIT, EV/Sales and P/FCF. FCF Yield is inverse and
-    # stays a corroborating statistic rather than being mixed into an x bridge.
+    # Thin-margin businesses are not anchored to sales multiples. Prefer
+    # EV/EBITDA / cash-flow evidence when EBITDA is available; otherwise use
+    # the first company-specific multiple with sufficient point-in-time history.
+    thin_margin = (
+        _n(current.get("operating_margin_pct")) is not None
+        and abs(_n(current.get("operating_margin_pct")) or 0.0) <= 4.0
+    )
+    order = (
+        ("ev_ebitda", "p_fcf", "pe", "ev_ebit", "ev_sales")
+        if thin_margin
+        else ("pe", "ev_ebitda", "ev_ebit", "ev_sales", "p_fcf")
+    )
     preferred = next((
-        key for key in ("pe", "ev_ebit", "ev_sales", "p_fcf")
+        key for key in order
         if _n((multiple_stats.get(key) or {}).get("current")) is not None
         and _n((multiple_stats.get(key) or {}).get("reference_median")) is not None
     ), None)
@@ -667,7 +681,7 @@ def build_peer_analysis(company_id: int, user_id: int | None = None, limit: int 
             "peer_median": median(vals) if vals else None, "sample_size": len(vals),
         })
 
-    primary = next((key for key in ("pe", "ev_ebit", "ev_sales", "p_fcf") if _n(target.get(key)) is not None and sum(1 for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"} and _n(p.get(key)) is not None) >= 2), "pe")
+    primary = next((key for key in ("pe", "ev_ebitda", "ev_ebit", "ev_sales", "p_fcf") if _n(target.get(key)) is not None and sum(1 for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"} and _n(p.get(key)) is not None) >= 2), "pe")
     adjusted = _peer_adjustment(target, peers, primary)
     eligible_count = sum(1 for p in peers if p.get("comparability") in {"CLOSE PEER", "PARTIAL PEER"})
     return {
@@ -684,7 +698,7 @@ def build_peer_analysis(company_id: int, user_id: int | None = None, limit: int 
         "limitations": [
             "Only companies with stored normalized fundamentals and a stored market snapshot can be compared.",
             "Recurring-revenue mix, customer concentration and competitive position are not scored unless structured evidence exists.",
-            "EV/EBITDA stays missing because EBITDA is not a canonical normalized financial field.",
+            "EV/EBITDA is available only when filed D&A and the economic debt bridge are both usable.",
         ],
     }
 
@@ -700,6 +714,9 @@ def _multiple_to_equity_value(current: dict[str, Any], multiple_key: str, multip
     if multiple_key == "ev_ebit":
         op = _n(current.get("operating_income")); net_debt = _n(current.get("net_debt"))
         return ((op * multiple - net_debt) / shares) if op is not None and op > 0 and net_debt is not None else None
+    if multiple_key == "ev_ebitda":
+        ebitda = _n(current.get("ebitda")); net_debt = _n(current.get("net_debt"))
+        return ((ebitda * multiple - net_debt) / shares) if ebitda is not None and ebitda > 0 and net_debt is not None else None
     if multiple_key == "ev_sales":
         revenue = _n(current.get("revenue")); net_debt = _n(current.get("net_debt"))
         return ((revenue * multiple - net_debt) / shares) if revenue is not None and revenue > 0 and net_debt is not None else None

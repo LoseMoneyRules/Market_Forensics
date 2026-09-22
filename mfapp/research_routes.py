@@ -41,6 +41,25 @@ def _reference_price(ctx: dict) -> tuple[float | None, str, bool]:
     return None, "No stored price reference", True
 
 
+
+def _attach_valuation_market_context(metrics: dict, calibration: dict, current_price: float | None) -> None:
+    metrics["current_price"] = current_price
+    anchor_price = n(calibration.get("latest_filing_anchor_price"))
+    if current_price not in (None, 0) and anchor_price not in (None, 0):
+        metrics["market_move_since_filing_pct"] = (current_price / anchor_price - 1.0) * 100.0
+        metrics["latest_filing_anchor_price"] = anchor_price
+        metrics["latest_filing_anchor_date"] = calibration.get("latest_filing_anchor_date")
+    equity = n(metrics.get("equity"))
+    shares = n(metrics.get("shares"))
+    pb_history = calibration.get("p_b") or (None, None, None)
+    historical_pb_median = n(pb_history[1]) if len(pb_history) >= 2 else None
+    if current_price not in (None, 0) and equity not in (None, 0) and equity > 0 and shares not in (None, 0):
+        current_pb = current_price * shares / equity
+        metrics["current_p_b"] = current_pb
+        if historical_pb_median not in (None, 0):
+            metrics["pb_deviation_from_history_pct"] = (current_pb / historical_pb_median - 1.0) * 100.0
+
+
 def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
     # Valuation plots the recent 2Y window, but the core cache must retain a 10Y
     # history for calibration, validation, portfolio correlation and audit.
@@ -140,37 +159,60 @@ def _price_history_context(ctx: dict) -> tuple[list[dict], dict]:
     return history, status
 
 
+
 def _current_model_context(ctx: dict) -> dict:
     model = ctx["model"]
     saved = dict(model.assumptions or {})
     history = _financial_history(ctx["company"].id)
     company_type = str(saved.get("company_type") or infer_company_type(ctx["company"].sector, ctx["company"].industry))
     metrics = metrics_from_history(history, saved.get("current_shares"), str(saved.get("share_source") or ""), company_type)
-    calibration = dict(saved.get("calibration") or _point_in_time_calibration(ctx["security"].id, history, company_type))
+    calibration = _point_in_time_calibration(ctx["security"].id, history, company_type)
+    current_price, reference_price_source, reference_price_stale = _reference_price(ctx)
+    _attach_valuation_market_context(metrics, calibration, current_price)
     defaults = default_cases(metrics, company_type, calibration)
-    weights = dict(saved.get("weights") or defaults["weights"])
+
+    same_engine = str(saved.get("engine_version") or "") == VALUATION_ENGINE_VERSION
+    weights = dict(saved.get("weights") or {}) if same_engine else {}
+    weights = weights or dict(defaults["weights"])
+    for method, default_weight in defaults["weights"].items():
+        weights.setdefault(method, default_weight)
     years = int(saved.get("horizon_years") or defaults["horizon_years"])
     scenario_rows = {row.name.upper(): row for row in model.scenarios}
     cases = {}
     fallback_values = {}
+
     for name in ("BEAR", "BASE", "BULL"):
         row = scenario_rows.get(name)
         inputs = dict((row.inputs or {}) if row else {})
+        if bool(inputs.get("auto_prefill")) and not same_engine:
+            # Old auto-generated assumptions are invalid under the integrity
+            # engine. Manual analyst assumptions survive the engine upgrade.
+            inputs = {}
         fallback = defaults[name]
         fallback_values[name] = n(row.equity_value_per_share) if row else None
         cases[name] = {
             "growth": n(inputs.get("growth")) if n(inputs.get("growth")) is not None else fallback["growth"],
             "net_margin": n(inputs.get("net_margin")) if n(inputs.get("net_margin")) is not None else fallback["net_margin"],
             "fcf_margin": n(inputs.get("fcf_margin")) if n(inputs.get("fcf_margin")) is not None else fallback["fcf_margin"],
+            "ebitda_margin": n(inputs.get("ebitda_margin")) if n(inputs.get("ebitda_margin")) is not None else fallback["ebitda_margin"],
+            "share_growth": n(inputs.get("share_growth")) if n(inputs.get("share_growth")) is not None else fallback["share_growth"],
             "pe": n(inputs.get("pe")) if n(inputs.get("pe")) is not None else fallback["pe"],
+            "p_sales": n(inputs.get("p_sales")) if n(inputs.get("p_sales")) is not None else fallback["p_sales"],
             "ev_sales": n(inputs.get("ev_sales")) if n(inputs.get("ev_sales")) is not None else fallback["ev_sales"],
+            "ev_ebitda": n(inputs.get("ev_ebitda")) if n(inputs.get("ev_ebitda")) is not None else fallback["ev_ebitda"],
             "target_fcf_yield": n(inputs.get("target_fcf_yield")) if n(inputs.get("target_fcf_yield")) is not None else fallback["target_fcf_yield"],
             "equity_discount_rate": n(inputs.get("equity_discount_rate")) if n(inputs.get("equity_discount_rate")) is not None else fallback["equity_discount_rate"],
             "terminal_growth": n(inputs.get("terminal_growth")) if n(inputs.get("terminal_growth")) is not None else fallback["terminal_growth"],
-            "probability": n(row.probability) if row and row.probability is not None else fallback["probability"],
+            "probability": n(row.probability) if row and row.probability is not None and not (bool((row.inputs or {}).get("auto_prefill")) and not same_engine) else fallback["probability"],
             "manual_override": n(inputs.get("manual_override")),
+            "method_exclusions": fallback.get("method_exclusions") or [],
+            "life_cycle": fallback.get("life_cycle"),
+            "solvency_state": fallback.get("solvency_state"),
+            "integrity_notes": fallback.get("integrity_notes") or [],
+            "scenario_multiplier": fallback.get("scenario_multiplier"),
+            "liquidation_floor": fallback.get("liquidation_floor"),
         }
-    current_price, reference_price_source, reference_price_stale = _reference_price(ctx)
+
     price_history, price_history_status = _price_history_context(ctx)
     result = evaluate(metrics, cases, weights, years, current_price=current_price, fallback_values=fallback_values)
     return {
@@ -209,8 +251,11 @@ def save_valuation_company(ticker):
     share_note = str(request.form.get("share_basis_note") or "").strip()
     weights = {
         "pe": max(0.0, n(request.form.get("weight_pe")) or 0.0),
+        "p_sales": max(0.0, n(request.form.get("weight_p_sales")) or 0.0),
         "ev_sales": max(0.0, n(request.form.get("weight_ev_sales")) or 0.0),
+        "ev_ebitda": max(0.0, n(request.form.get("weight_ev_ebitda")) or 0.0),
         "fcf_yield": max(0.0, n(request.form.get("weight_fcf_yield")) or 0.0),
+        "dcf": max(0.0, n(request.form.get("weight_dcf")) or 0.0),
     }
     years = max(1, min(int(n(request.form.get("horizon_years")) or 5), 20))
     history = _financial_history(ctx["company"].id)
@@ -218,7 +263,9 @@ def save_valuation_company(ticker):
     if current_shares in (None, 0) and metrics.get("shares") is not None:
         current_shares = metrics["shares"]
         share_source = metrics.get("share_source") or share_source
-    calibration = dict(saved.get("calibration") or _point_in_time_calibration(ctx["security"].id, history, company_type))
+    calibration = _point_in_time_calibration(ctx["security"].id, history, company_type)
+    current_price, _, _ = _reference_price(ctx)
+    _attach_valuation_market_context(metrics, calibration, current_price)
     defaults = default_cases(metrics, company_type, calibration)
     cases = {}
     for name in ("BEAR", "BASE", "BULL"):
@@ -227,17 +274,26 @@ def save_valuation_company(ticker):
             "growth": _fraction(request.form.get(f"{key}_growth"), fallback["growth"]),
             "net_margin": _fraction(request.form.get(f"{key}_net_margin"), fallback["net_margin"]),
             "fcf_margin": _fraction(request.form.get(f"{key}_fcf_margin"), fallback["fcf_margin"]),
-            "pe": n(request.form.get(f"{key}_pe")) or fallback["pe"],
-            "ev_sales": n(request.form.get(f"{key}_ev_sales")) or fallback["ev_sales"],
+            "ebitda_margin": _fraction(request.form.get(f"{key}_ebitda_margin"), fallback["ebitda_margin"]),
+            "share_growth": _fraction(request.form.get(f"{key}_share_growth"), fallback["share_growth"]),
+            "pe": n(request.form.get(f"{key}_pe")) if n(request.form.get(f"{key}_pe")) is not None else fallback["pe"],
+            "p_sales": n(request.form.get(f"{key}_p_sales")) if n(request.form.get(f"{key}_p_sales")) is not None else fallback["p_sales"],
+            "ev_sales": n(request.form.get(f"{key}_ev_sales")) if n(request.form.get(f"{key}_ev_sales")) is not None else fallback["ev_sales"],
+            "ev_ebitda": n(request.form.get(f"{key}_ev_ebitda")) if n(request.form.get(f"{key}_ev_ebitda")) is not None else fallback["ev_ebitda"],
             "target_fcf_yield": _fraction(request.form.get(f"{key}_target_fcf_yield"), fallback["target_fcf_yield"]),
             "equity_discount_rate": _fraction(request.form.get(f"{key}_equity_discount_rate"), fallback["equity_discount_rate"]),
             "terminal_growth": _fraction(request.form.get(f"{key}_terminal_growth"), fallback["terminal_growth"]),
             "probability": _fraction(request.form.get(f"{key}_probability"), fallback["probability"]),
             "manual_override": n(request.form.get(f"{key}_manual_override")),
+            "method_exclusions": fallback.get("method_exclusions") or [],
+            "life_cycle": fallback.get("life_cycle"),
+            "solvency_state": fallback.get("solvency_state"),
+            "integrity_notes": fallback.get("integrity_notes") or [],
+            "scenario_multiplier": fallback.get("scenario_multiplier"),
+            "liquidation_floor": fallback.get("liquidation_floor"),
         }
     rows = {row.name.upper(): row for row in model.scenarios}
     fallback_values = {name: n(rows[name].equity_value_per_share) if name in rows else None for name in ("BEAR", "BASE", "BULL")}
-    current_price, _, _ = _reference_price(ctx)
     result = evaluate(metrics, cases, weights, years, current_price=current_price, fallback_values=fallback_values)
     for name in ("BEAR", "BASE", "BULL"):
         row = rows.get(name)

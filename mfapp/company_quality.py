@@ -523,9 +523,9 @@ def _valuation_policy(dimensions: list[dict[str, Any]], state: str, economic: di
     if "FCF_POSITIVE_UNADJUSTED" in suppressions:
         ledger.append({
             "item": "Share-based compensation",
-            "effect": "FCF_BASIS",
-            "impact": "FCF-after-SBC used where available",
-            "reason": "Material SBC is treated as an economic shareholder cost in FCF valuation evidence.",
+            "effect": "DILUTED_SHARE_DENOMINATOR",
+            "impact": "Observed diluted-share growth is projected in per-share valuation; reported FCF is not reduced a second time",
+            "reason": "Material SBC is an economic shareholder cost, but subtracting SBC from cash flow and also projecting dilution would double count it.",
         })
 
     operating_leases = economic_metric(economic, "operating_lease_liability")

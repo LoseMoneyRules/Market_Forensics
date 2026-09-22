@@ -163,20 +163,49 @@ Business, Tape, Journal and Audit do not reopen merely because a quarter arrived
 
 The audit trail must preserve old approval hash/basis → new financial basis → re-reviewed gates → review completed.
 
-### 3.6 Re-rating, historical regimes and implied expectations
+### 3.6 Canonical intrinsic valuation and historical regimes
 
-Valuation must answer why the market assigns today's multiple, not merely compare current P/E with an old median.
+The automatic intrinsic engine must adapt to the economics and history of the individual company rather than impose a fixed multiple for a generic company type.
 
-The canonical 0.3.1 `valuation_forensics` output uses stored evidence only and materializes:
+Permanent 0.3.2 valuation-integrity rules:
 
-- current P/E, EV/EBIT, EV/Sales, P/FCF and FCF Yield; EV/EBITDA stays missing until EBITDA is a canonical fact or deterministic derivation;
-- 3Y / 5Y / 10Y point-in-time post-filing anchors, medians, ranges and percentile/regime;
+- fixed sector/company-type multiple proxies are forbidden in automatic fair value;
+- P/E, P/S, EV/Sales, EV/EBITDA and FCF Yield can be used only when the company has its own point-in-time historical evidence for that method;
+- each method uses the company's 5Y P10 / median / P90 when at least four comparable filing-price anchors exist, otherwise the company's own 10Y history; unsupported methods remain unavailable;
+- FCF Yield is economically inverted across scenarios: Bear requires the higher historical yield and Bull the lower yield;
+- DCF is a real valuation method in the canonical blend when cash-flow evidence is usable, not merely a decorative cross-check;
+- a single valid method is explicitly non-decision-grade;
+- thin-margin/high-revenue companies disable P/S and EV/Sales so revenue scale cannot manufacture value;
+- high-leverage companies suppress equity-only shortcuts and require enterprise-value/cash-flow evidence with a bounded discount-rate penalty;
+- cyclicals use their longer operating distributions and de-emphasize spot P/E rather than extrapolating a peak/trough TTM;
+- asset-light/high-margin businesses may place more evidence weight on DCF and shareholder cash flow when the filed capital-efficiency evidence supports it;
+- banks/insurers/REITs do not inherit an industrial model. The generic engine fails closed until sector-specific P/B-ROE, AFFO/NAV or equivalent evidence is implemented.
+
+Automatic scenarios are distributional. A deterministic seeded 10,000-draw simulation varies only explicit Bear/Base/Bull evidence ranges. Bear is the P10 outcome, Base P50 and Bull P90. Recalculating the same evidence must reproduce the same answer. A final integrity guard forbids automatic scenario inversion even if an individual method becomes unavailable inside a scenario.
+
+SBC is an owner cost but must not be double counted. The canonical 0.3.2 automatic path keeps reported FCF and projects observed diluted-share growth in the per-share denominator. Economic Reality continues to surface SBC intensity and capital-allocation consequences separately.
+
+Other bounded integrity controls include:
+
+- company life-cycle classification from growth volatility, reinvestment/retention and ROIC evidence;
+- Cash Conversion Cycle change as a bounded discount-rate risk adjustment;
+- net-debt/EBITDA and fixed-charge/interest coverage as leverage/tail-risk controls;
+- a conservative net-cash liquidation floor after current cash burn and a liquidation haircut when applicable;
+- classic public-company Altman Z only when its required inputs and sector applicability are valid; it is a tail-risk guard, not a fair-value method;
+- a data-desynchronization shield when price since the filing anchor or current P/B versus the company's own history moves by at least 30%, widening the simulation range rather than pretending stale fundamentals explain the move.
+
+Goodwill is not mechanically subtracted from DCF in distress because goodwill is not an additive DCF asset. Distress affects cash-flow assumptions, discount rate, scenario weighting/floor logic and review state instead.
+
+The separate `valuation_forensics` layer still explains why today's market multiple differs from history and materializes:
+
+- current P/E, EV/EBIT, EV/EBITDA, EV/Sales, P/FCF and FCF Yield when their accounting bridges are usable;
+- 3Y / 5Y / 10Y point-in-time post-filing anchors, medians, P10/P90 context and percentile/regime;
 - a transparent Historical Multiple Bridge using bounded directional translations of observed growth, margins, ROIC, cash conversion, leverage, dilution, working capital and available stored macro context;
 - Re-rating Conditions with MET / PARTIALLY MET / NOT MET / DETERIORATING;
 - an explicit old-multiple defensibility read rather than assuming mean reversion;
 - reverse-engineered Market-Implied Expectations, explicitly not sell-side consensus.
 
-The bridge is explanatory, not a causal regression. Its coefficients, inputs and uncertainty must be visible. If a variable cannot be supported, it is qualitative/missing rather than invented.
+The forensic bridge is explanatory, not a second intrinsic valuation engine or a causal regression. Its coefficients, inputs and uncertainty must be visible. If a variable cannot be supported, it is qualitative/missing rather than invented.
 
 ### 3.7 True peer triangulation
 
@@ -210,9 +239,11 @@ No event date may be invented. Urgency cannot be derived from price movement alo
 
 ### 3.9 Canonical reuse
 
-`mfapp/valuation_forensics.py` is the single canonical engine for historical regimes, multiple bridge, implied expectations, peer triangulation, re-rating conditions and decision-window intelligence. It runs in RECALCULATE/background materialization.
+`mfapp/valuation_engine.py` is the single canonical intrinsic Bear/Base/Bull engine. Research/Valuation and Discovery Stage 2 must call that same logic; Discovery may not maintain a second fair-value formula.
 
-Valuation Web, Reports and Discovery Stage 2 read the same materialized output. Compatibility adapters may reshape the payload for older views but must not calculate a second answer.
+`mfapp/valuation_forensics.py` is the canonical stored interpretation layer for historical regimes, the multiple bridge, implied expectations, peer triangulation, re-rating conditions and decision-window intelligence. It may triangulate and challenge intrinsic value, but it does not create a second automatic intrinsic answer.
+
+Heavy historical/provider work stays outside normal GET navigation. Covered companies use stored point-in-time price history during recalculation. Unknown Discovery names may fetch bounded historical price data only after evidence-based Stage-1.5 selection and within the Stage-2 deep budget. Reports consume the resulting materialized data only.
 
 ### 3.10 Fundamentals is the accounting evidence room
 
@@ -1062,77 +1093,59 @@ Sector/industry text is used to infer a starting family, but the user can review
 
 ### 12.3 Starting assumptions
 
-The engine estimates recent:
+The automatic engine derives operating ranges from the company's own filed history:
 
 - revenue growth;
-- net margin;
-- FCF margin;
-- operating margin;
-- net debt;
-- shares.
+- net / operating / EBITDA / FCF margins;
+- diluted-share growth;
+- leverage and fixed-charge evidence;
+- cash-conversion-cycle evidence;
+- ROIC / reinvestment context;
+- net debt and conservative net-cash floor where applicable.
 
-Historical multiples may be point-in-time calibrated when enough valid observations exist.
+Automatic valuation multiples do **not** fall back to fixed company-type or sector proxies. Each method must have the company's own comparable point-in-time filing/price history: use 5Y P10 / median / P90 when at least four comparable anchors exist, otherwise the company's own 10Y history. If that evidence is insufficient, the method remains unavailable.
 
-Otherwise company-type priors are used.
+### 12.4 Bear / Base / Bull distribution policy
 
-Important distinction:
+Default probabilities remain Bear 25%, Base 50%, Bull 25% for expected-value presentation; default explicit horizon remains 5 years.
 
-**Type priors and default growth/margin values are model assumptions, not sourced facts.**
+The automatic price scenarios themselves are distributional rather than fixed ± point adjustments:
 
-This is a current modeling convenience and must remain clearly labeled.
+- Bear = P10 of a deterministic 10,000-draw valuation distribution;
+- Base = P50 / median;
+- Bull = P90.
 
-### 12.4 Bear / Base / Bull default policy
+The simulation ranges come from the company's own historical operating and multiple distributions. Growth companies decay toward terminal economics over the forecast horizon; mature businesses are bounded by conservative long-run growth; cyclicals use longer historical operating distributions rather than extrapolating one TTM peak/trough.
 
-Default probabilities:
+A final integrity guard requires Bear ≤ Base ≤ Bull. If deterministic pre-simulation components invert, the result is downgraded to DATA WARNING rather than silently treating the reordered display as decision-grade evidence.
 
-- Bear 25%;
-- Base 50%;
-- Bull 25%.
+### 12.5 Intrinsic methods and applicability
 
-Default horizon: 5 years.
-
-Current policy starts from Base operating assumptions and applies bounded Bear/Bull changes.
-
-Examples include approximately:
-
-- Bear growth: Base − 5 pts;
-- Bull growth: Base + 5 pts;
-- Bear net margin: Base − 2.5 pts;
-- Bull net margin: Base + 2.5 pts;
-- Bear FCF margin: Base − 3 pts;
-- Bull FCF margin: Base + 3 pts.
-
-Discount/terminal assumptions differ by case.
-
-### 12.5 Intrinsic methods
-
-Primary blended methods:
+The canonical engine can use:
 
 - P/E;
+- P/S;
 - EV / Sales;
-- FCF Yield.
+- EV / EBITDA;
+- FCF Yield;
+- DCF.
 
-DCF is calculated as an independent cross-check, not part of the default three-method blend.
+Method applicability is economic, not cosmetic:
 
-Default weights:
+- thin-margin/high-revenue businesses disable P/S and EV/Sales;
+- high leverage suppresses equity-only shortcuts and increases the discount rate;
+- asset-light/high-margin businesses can weight DCF/cash-flow evidence more heavily;
+- cyclicals de-emphasize spot P/E and prefer normalized EBITDA/cash-flow evidence;
+- unresolved enterprise-value bridges disable affected EV methods;
+- generic Financial / REIT industrial valuation fails closed until sector-specific P/B-ROE, AFFO/NAV or equivalent evidence exists.
 
-- P/E 40%;
-- EV / Sales 25%;
-- FCF Yield 35%.
+Two formulas using the same economic denominator are not two independent confirmations. P1/P2 and decision-grade INTRINSIC require at least two independent valuation families among Earnings, Sales, EBITDA and Cash Flow. FCF Yield + DCF alone therefore remains single-family evidence.
 
-If earnings are non-positive/unavailable, P/E weight goes to zero.
+### 12.6 Robust blend and scenario controls
 
-If FCF is non-positive/unavailable, FCF-yield weight goes to zero.
+Applicable methods remain individually visible. When at least three valid method values exist, a method more than 45% away from the cross-method median has its weight reduced by 70%.
 
-Financial/REIT currently uses P/E only in the default policy.
-
-### 12.6 Robust blend
-
-When at least three methods are valid:
-
-- a method more than 45% away from the cross-method median has its weight reduced by 70%.
-
-This prevents one extreme method from dominating the target.
+SBC is not double counted: the automatic path keeps reported FCF and projects observed diluted-share growth in the per-share denominator. A conservative net-cash floor can bound Bear after current burn and liquidation haircuts. CCC deterioration, leverage, Company Quality and applicable Altman solvency evidence can widen downside / increase discounting; improving capital efficiency can only reduce discounting within explicit bounded limits.
 
 ### 12.7 Manual override
 
@@ -1949,13 +1962,11 @@ After a successful production health check, the deploy workflow synchronizes the
 
 This section is deliberately candid. A tool becomes stronger when the limits are explicit.
 
-### 24.1 Model priors can hide weak source coverage
+### 24.1 Sparse company history can reduce valuation coverage
 
-When growth or margins are unavailable, the valuation policy may use default priors.
+Automatic fixed type/sector multiple priors are no longer allowed. When the company lacks at least four comparable point-in-time anchors in both the 5Y and 10Y windows, that valuation method remains unavailable. This is safer than inventing a proxy, but newer listings and companies with discontinuous accounting history can therefore have fewer usable valuation families.
 
-That is acceptable only as an explicit model assumption.
-
-**Improvement:** surface assumption provenance per driver: FILED / HISTORICAL CALIBRATION / TYPE PRIOR / MANUAL.
+**Improvement:** surface assumption provenance per driver and method: FILED / COMPANY HISTORICAL CALIBRATION / DYNAMIC POLICY / MANUAL, together with the sample size and horizon that support each historical range.
 
 ### 24.2 Readiness approval is monotonic even if evidence deteriorates
 
@@ -2025,11 +2036,11 @@ Tape combines useful context, but it is not an institutional market-microstructu
 
 **Improvement:** improve options/borrow/liquidity evidence and validate Tape heuristics historically before increasing their influence.
 
-### 24.10 Financial / REIT valuation is simplified
+### 24.10 Financial / REIT valuation is fail-closed
 
-The default Financial / REIT policy is currently P/E-centric.
+The generic industrial valuation engine does not produce decision-grade automatic intrinsic value for banks, insurers or REITs. Their balance sheets and cash-flow definitions require sector-specific valuation evidence such as P/B-ROE, excess capital, AFFO/NAV or equivalent frameworks.
 
-**Improvement:** add sector-specific valuation frameworks where economically appropriate.
+**Improvement:** implement those sector-specific engines before allowing Financial / REIT names to qualify through intrinsic P1/P2 valuation.
 
 ### 24.11 Research Conclusion thresholds need empirical calibration
 

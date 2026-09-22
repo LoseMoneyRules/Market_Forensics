@@ -55,7 +55,11 @@ def _valuation_method_count(model: ValuationModel | None) -> int:
             base = dict(scenario.outputs or {}) if scenario is not None else {}
         except Exception:
             base = {}
-    return sum(1 for key in ("pe", "ev_sales", "fcf_yield") if _n(base.get(key)) is not None)
+    if int(base.get("independent_method_count") or 0) > 0:
+        return int(base.get("independent_method_count") or 0)
+    if int(base.get("method_count") or 0) > 0:
+        return int(base.get("method_count") or 0)
+    return sum(1 for key in ("pe", "p_sales", "ev_sales", "ev_ebitda", "fcf_yield", "dcf") if _n(base.get(key)) is not None)
 
 
 def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str, Any]]:
@@ -130,6 +134,7 @@ def _coverage_context_map(user_id: int, symbols: set[str]) -> dict[str, dict[str
                 "base_quality": valuation.get("base_quality"),
                 "decision_grade": valuation.get("decision_grade"),
                 "warnings": list(valuation.get("warnings") or []),
+                "engine_version": valuation.get("engine_version") or dict((model.assumptions or {}).get("latest_engine_result") or {}).get("engine_version") if model else valuation.get("engine_version"),
             },
             "valuation_methods": _valuation_method_count(model),
             "valuation_forensics": {

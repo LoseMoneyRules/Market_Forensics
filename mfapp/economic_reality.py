@@ -60,6 +60,9 @@ INSTANT_TAGS: dict[str, tuple[str, ...]] = {
         "IntangibleAssetsNetExcludingGoodwill",
     ),
     "treasury_stock": ("TreasuryStockValue", "TreasuryStockCommonValue"),
+    "current_assets": ("AssetsCurrent",),
+    "current_liabilities": ("LiabilitiesCurrent",),
+    "retained_earnings": ("RetainedEarningsAccumulatedDeficit",),
 }
 
 DURATION_TAGS: dict[str, tuple[str, ...]] = {
@@ -180,6 +183,9 @@ def build_economic_reality(
     goodwill = n(facts.get("goodwill"))
     intangibles = n(facts.get("intangibles"))
     treasury_stock = n(facts.get("treasury_stock"))
+    current_assets = n(facts.get("current_assets"))
+    current_liabilities = n(facts.get("current_liabilities"))
+    retained_earnings = n(facts.get("retained_earnings"))
 
     classified_financing = any(
         n(facts.get(key)) is not None
@@ -477,6 +483,9 @@ def build_economic_reality(
         "goodwill": goodwill,
         "intangibles": intangibles,
         "treasury_stock": treasury_stock,
+        "current_assets": current_assets,
+        "current_liabilities": current_liabilities,
+        "retained_earnings": retained_earnings,
         "depreciation_amortization": da,
         "maintenance_capex_proxy": maintenance_capex_proxy,
         "growth_capex_proxy": growth_capex_proxy,

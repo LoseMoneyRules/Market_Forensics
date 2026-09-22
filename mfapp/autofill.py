@@ -76,12 +76,16 @@ def _intelligence_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(reversed(chronological))
 
 
+
 def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], company_type: str) -> dict[str, Any]:
+    """Build company-specific multiple history from filing-date market anchors."""
     provider = preferred_provider(security_id)
     observations: list[dict[str, Any]] = []
     annual = [row for row in history if str(row.get("period_type") or "FY") == "FY"]
+    latest_anchor_price = None
+    latest_anchor_date = None
     if provider:
-        for row in annual[:-1]:
+        for row in annual:
             filed = row.get("filed_at")
             try:
                 filing_date = datetime.fromisoformat(str(filed)[:10]).date() if filed else None
@@ -90,22 +94,42 @@ def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], 
             if filing_date is None:
                 continue
             market = price_on_or_after(security_id, filing_date, 14, provider=provider)
-            shares = n(row.get("shares_outstanding")) or n(row.get("diluted_shares"))
+            shares = n(row.get("diluted_shares")) or n(row.get("shares_outstanding"))
             if not market or shares in (None, 0):
                 continue
             economic = economic_from_row(row)
             economic_net_debt = economic_metric(economic, "economic_net_debt")
+            operating_income = n(row.get("operating_income"))
+            depreciation_amortization = economic_metric(economic, "depreciation_amortization")
+            ebitda = (
+                operating_income + depreciation_amortization
+                if operating_income is not None and depreciation_amortization is not None
+                else None
+            )
             observations.append({
-                "price": n(market.close_raw), "shares": shares, "revenue": row.get("revenue"),
-                "net_income": row.get("net_income"), "fcf": row.get("fcf"),
+                "fiscal_year": row.get("fiscal_year"),
+                "anchor_date": market.trade_date.isoformat(),
+                "price": n(market.close_raw),
+                "shares": shares,
+                "revenue": row.get("revenue"),
+                "net_income": row.get("net_income"),
+                "fcf": row.get("fcf"),
+                "ebitda": ebitda,
+                "equity": row.get("equity"),
                 "net_debt": (
                     economic_net_debt
                     if economic and not economic.get("material_unresolved")
                     else None
                 ),
             })
-    return calibrate_multiples(observations, company_type)
-
+            if latest_anchor_date is None or market.trade_date.isoformat() > latest_anchor_date:
+                latest_anchor_date = market.trade_date.isoformat()
+                latest_anchor_price = n(market.close_raw)
+    result = calibrate_multiples(observations, company_type)
+    result["latest_filing_anchor_price"] = latest_anchor_price
+    result["latest_filing_anchor_date"] = latest_anchor_date
+    result["observation_count"] = len(observations)
+    return result
 
 def _case_from_row(row: ValuationScenario | None, fallback: dict[str, Any], force: bool) -> tuple[dict[str, Any], bool]:
     if row is None:
@@ -115,11 +139,26 @@ def _case_from_row(row: ValuationScenario | None, fallback: dict[str, Any], forc
     if force or auto_owned or row.equity_value_per_share is None:
         return dict(fallback), True
     return {
-        "growth": n(inputs.get("growth")), "net_margin": n(inputs.get("net_margin")),
-        "fcf_margin": n(inputs.get("fcf_margin")), "pe": n(inputs.get("pe")),
-        "ev_sales": n(inputs.get("ev_sales")), "target_fcf_yield": n(inputs.get("target_fcf_yield")),
-        "equity_discount_rate": n(inputs.get("equity_discount_rate")), "terminal_growth": n(inputs.get("terminal_growth")),
-        "probability": n(row.probability), "manual_override": n(inputs.get("manual_override")),
+        "growth": n(inputs.get("growth")),
+        "net_margin": n(inputs.get("net_margin")),
+        "fcf_margin": n(inputs.get("fcf_margin")),
+        "ebitda_margin": n(inputs.get("ebitda_margin")),
+        "share_growth": n(inputs.get("share_growth")),
+        "pe": n(inputs.get("pe")),
+        "p_sales": n(inputs.get("p_sales")),
+        "ev_sales": n(inputs.get("ev_sales")),
+        "ev_ebitda": n(inputs.get("ev_ebitda")),
+        "target_fcf_yield": n(inputs.get("target_fcf_yield")),
+        "equity_discount_rate": n(inputs.get("equity_discount_rate")),
+        "terminal_growth": n(inputs.get("terminal_growth")),
+        "probability": n(row.probability),
+        "manual_override": n(inputs.get("manual_override")),
+        "scenario_multiplier": n(inputs.get("scenario_multiplier")) or 1.0,
+        "liquidation_floor": n(inputs.get("liquidation_floor")),
+        "method_exclusions": list(inputs.get("method_exclusions") or []),
+        "life_cycle": str(inputs.get("life_cycle") or ""),
+        "solvency_state": str(inputs.get("solvency_state") or ""),
+        "integrity_notes": list(inputs.get("integrity_notes") or []),
     }, False
 
 
@@ -139,8 +178,10 @@ def _case_line(case: dict[str, Any]) -> str:
         value = n(case.get(key))
         if value is not None:
             bits.append(f"{label} {value * 100:.1f}%")
-    pe = n(case.get("pe")); evs = n(case.get("ev_sales")); yld = n(case.get("target_fcf_yield"))
+    pe = n(case.get("pe")); ps = n(case.get("p_sales")); evs = n(case.get("ev_sales")); eve = n(case.get("ev_ebitda")); yld = n(case.get("target_fcf_yield"))
     if pe is not None: bits.append(f"P/E {pe:.1f}x")
+    if ps is not None: bits.append(f"P/S {ps:.2f}x")
+    if eve is not None: bits.append(f"EV/EBITDA {eve:.1f}x")
     if evs is not None: bits.append(f"EV/Sales {evs:.2f}x")
     if yld is not None: bits.append(f"FCF yield {yld * 100:.1f}%")
     return ", ".join(bits) if bits else "insufficient operating inputs"
@@ -239,16 +280,33 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
     saved = dict(model.assumptions or {})
     auto_hashes = dict(saved.get("auto_text_hashes") or {})
     company_type = str(saved.get("company_type") or infer_company_type(company.sector, company.industry))
-    current_shares = saved.get("current_shares")
-    share_source = str(saved.get("share_source") or "")
+    saved_engine_current = str(saved.get("engine_version") or "") == ENGINE_VERSION
+    preserve_verified_share_basis = bool(saved.get("share_basis_verified", False))
+    current_shares = saved.get("current_shares") if (saved_engine_current or preserve_verified_share_basis) else None
+    share_source = str(saved.get("share_source") or "") if (saved_engine_current or preserve_verified_share_basis) else ""
     metrics = metrics_from_history(history, current_shares, share_source, company_type)
     if current_shares in (None, "") and metrics.get("shares") is not None:
         current_shares = metrics["shares"]; share_source = metrics.get("share_source") or share_source
     calibration = _point_in_time_calibration(security.id, history, company_type)
     defaults = default_cases(metrics, company_type, calibration)
-    weights = dict(saved.get("weights") or defaults["weights"])
+    weights = dict(saved.get("weights") or defaults["weights"]) if saved_engine_current else dict(defaults["weights"])
     horizon_years = int(saved.get("horizon_years") or defaults["horizon_years"])
     current_price = _reference_price(security.id)
+    metrics["current_price"] = current_price
+    current_equity = n(metrics.get("equity"))
+    current_shares_for_pb = n(metrics.get("shares"))
+    pb_history = calibration.get("p_b") or (None, None, None)
+    historical_pb_median = n(pb_history[1]) if len(pb_history) >= 2 else None
+    if current_price not in (None, 0) and current_equity not in (None, 0) and current_equity > 0 and current_shares_for_pb not in (None, 0):
+        current_pb = current_price * current_shares_for_pb / current_equity
+        metrics["current_p_b"] = current_pb
+        if historical_pb_median not in (None, 0):
+            metrics["pb_deviation_from_history_pct"] = (current_pb / historical_pb_median - 1.0) * 100.0
+    anchor_price = n(calibration.get("latest_filing_anchor_price"))
+    if current_price not in (None, 0) and anchor_price not in (None, 0):
+        metrics["market_move_since_filing_pct"] = (current_price / anchor_price - 1.0) * 100.0
+        metrics["latest_filing_anchor_price"] = anchor_price
+        metrics["latest_filing_anchor_date"] = calibration.get("latest_filing_anchor_date")
 
     scenario_rows = {row.name.upper(): row for row in model.scenarios}
     case_inputs: dict[str, dict[str, Any]] = {}; auto_flags: dict[str, bool] = {}
@@ -266,7 +324,7 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
         if auto_flags[name]:
             if output.get("fair_value") is not None: row.equity_value_per_share = output.get("fair_value")
             row.probability = case_inputs[name].get("probability") or 0
-            row.confidence = "MEDIUM" if output.get("quality") == "INTRINSIC" and calibration.get("source") == "POINT_IN_TIME_CALIBRATION" else "LOW"
+            row.confidence = "MEDIUM" if output.get("quality") == "INTRINSIC" and calibration.get("source") == "COMPANY_POINT_IN_TIME_5Y_10Y" else "LOW"
             row.inputs = {"auto_prefill": True, **case_inputs[name]}; row.outputs = output; row.calculated_at = utcnow(); changed_scenarios.append(name)
 
     latest_period = history[-1] if history else {}
@@ -284,6 +342,12 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
             "current_price_role": "COMPARISON_ONLY_UNLESS_REQUIRED_AS_EXPLICIT_PROVISIONAL_FALLBACK",
             "generated_at": utcnow().isoformat(), "basis_usable": metrics.get("basis_usable"),
             "valuation_quality": result.get("quality"), "warnings": result.get("warnings") or [],
+            "monte_carlo": result.get("monte_carlo") or {},
+            "life_cycle": result.get("life_cycle"),
+            "solvency_state": result.get("solvency_state"),
+            "altman_z": result.get("altman_z") or {},
+            "scenario_order_guard_applied": bool(result.get("scenario_order_guard_applied")),
+            "integrity_notes": result.get("integrity_notes") or [],
             "company_quality_state": ((result.get("company_quality") or {}).get("state")),
             "valuation_policy": result.get("valuation_policy") or {},
             "valuation_impact_ledger": result.get("valuation_impact_ledger") or [],
