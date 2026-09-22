@@ -20,6 +20,13 @@ FLOW_FIELDS = (
 INSTANT_FIELDS = ("cash", "debt", "receivables", "inventory", "payables", "assets", "liabilities", "equity", "shares_outstanding")
 NORMALIZED_FIELDS = FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",)
 
+CURRENT_BASIS_GUARD_FIELDS = (
+    "revenue", "cogs", "gross_profit", "operating_expenses", "operating_income",
+    "pretax_income", "income_tax", "net_income", "cfo", "capex", "fcf",
+    "cash", "debt", "receivables", "inventory", "payables", "assets",
+    "liabilities", "equity", "shares_outstanding", "diluted_shares",
+)
+
 
 def _normalized_richness(normalized: NormalizedFinancial) -> tuple[int, int]:
     populated = sum(1 for field in NORMALIZED_FIELDS if getattr(normalized, field, None) is not None)
@@ -482,6 +489,28 @@ def _aggregate_quarters(rows: list[dict[str, Any]], label: str) -> dict[str, Any
     return out
 
 
+def _ttm_missing_expected_fields(ttm: dict[str, Any], latest_fy: dict[str, Any] | None) -> list[str]:
+    """Return fields a newer TTM lost relative to the latest complete filed FY.
+
+    A reconstructed TTM is a derived basis, not automatically a better basis. If
+    the latest filed FY proves that a decision-surface field is applicable and
+    populated, a newer TTM that drops that field is too sparse to replace the FY
+    as the canonical current basis. We never carry the FY value into the TTM:
+    instead we keep the complete FY visible until the quarterly evidence can
+    support the newer basis on its own date.
+    """
+    if not latest_fy:
+        return []
+    expected = [
+        field for field in CURRENT_BASIS_GUARD_FIELDS
+        if n(latest_fy.get(field)) is not None
+    ]
+    return [
+        field for field in expected
+        if n(ttm.get(field)) is None
+    ]
+
+
 def current_row(company_id: int) -> dict[str, Any] | None:
     quarters = quarterly_rows(company_id, 8)
     ttm = _aggregate_quarters(quarters[:4], f"TTM · {quarters[0]['period_end']}" if quarters else "TTM")
@@ -491,22 +520,47 @@ def current_row(company_id: int) -> dict[str, Any] | None:
     annual = annual_rows(company_id, 2)
     latest_fy = dict(annual[0]) if annual else None
 
-    # "Current" means the freshest filed economic basis, not "TTM at any cost".
+    # "Current" means the freshest usable economic basis, not "TTM at any cost".
     # A newly filed 10-K can be newer than the latest reconstructable TTM when Q4
-    # quarter synthesis is incomplete. On the same end date, FY is also preferred:
-    # its duration totals are equivalent to the fiscal-year TTM while its audited
-    # balance-sheet instants are usually richer and more authoritative.
+    # synthesis is incomplete. On the same end date, FY is preferred because its
+    # audited balance-sheet instants are usually richer and more authoritative.
+    #
+    # A newer TTM also may not replace a complete FY merely because Revenue exists.
+    # If fields that are demonstrably applicable on the latest FY disappear from
+    # the reconstructed TTM, selecting that TTM would make Current Financial
+    # Anatomy/current-strip blank while the stored history directly below remains
+    # populated. In that case we keep the FY as the canonical current basis and
+    # explicitly record why the newer TTM was withheld. No cross-date carry-forward
+    # is performed.
+    fy_end = None
+    ttm_end = None
     if latest_fy:
         try:
             fy_end = date.fromisoformat(str(latest_fy.get("period_end") or "")[:10])
         except (TypeError, ValueError):
             fy_end = None
+    if ttm:
         try:
-            ttm_end = date.fromisoformat(str((ttm or {}).get("period_end") or "")[:10]) if ttm else None
+            ttm_end = date.fromisoformat(str(ttm.get("period_end") or "")[:10])
         except (TypeError, ValueError):
             ttm_end = None
-        if ttm is None or (fy_end is not None and (ttm_end is None or fy_end >= ttm_end)):
-            latest_fy["comparison_basis"] = "LATEST_FILED_FY"
+
+    if latest_fy and (ttm is None or (fy_end is not None and (ttm_end is None or fy_end >= ttm_end))):
+        latest_fy["comparison_basis"] = "LATEST_FILED_FY"
+        return latest_fy
+
+    if ttm and latest_fy and ttm_end is not None and (fy_end is None or ttm_end > fy_end):
+        missing_expected = _ttm_missing_expected_fields(ttm, latest_fy)
+        if missing_expected:
+            quality = dict(latest_fy.get("quality") or {})
+            quality.update({
+                "newer_ttm_withheld": True,
+                "withheld_ttm_period_end": ttm.get("period_end"),
+                "withheld_ttm_missing_fields": missing_expected,
+                "withheld_ttm_reason": "NEWER_TTM_LOST_FILED_FIELDS",
+            })
+            latest_fy["quality"] = quality
+            latest_fy["comparison_basis"] = "LATEST_COMPLETE_FY_TTM_WITHHELD"
             return latest_fy
 
     if ttm:
