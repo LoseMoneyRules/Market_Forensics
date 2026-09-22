@@ -275,7 +275,14 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         policy = default_cases(metrics, company_type, calibration)
         raw_anchor = n(anchor_row.close_raw)
         basis_factor = n(anchor_row.split_basis_factor) or 1.0
-        result = evaluate(metrics, policy, policy["weights"], int(policy["horizon_years"]), current_price=raw_anchor)
+        result = evaluate(
+            metrics,
+            policy,
+            policy["weights"],
+            int(policy["horizon_years"]),
+            current_price=raw_anchor,
+            allow_reference_fallback=False,
+        )
         scenario = result["scenarios"]
         bear_raw, base_raw, bull_raw = scenario["BEAR"].get("fair_value"), scenario["BASE"].get("fair_value"), scenario["BULL"].get("fair_value")
         expected_raw = result.get("expected_value")
@@ -288,7 +295,17 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         future_3y = _future_price(security.id, anchor_row.trade_date, 3, provider)
         future_5y = _future_price(security.id, anchor_row.trade_date, 5, provider)
         realized = _next_realized(full_history, fiscal_year)
-        scores = _score_sample(anchor_adjusted, bear, base, bull, expected, future_1y, policy["BASE"], realized)
+        base_output = scenario.get("BASE") or {}
+        independent_families = list(base_output.get("independent_method_families") or [])
+        model_decision_grade = (
+            str(base_output.get("quality") or "").upper() == "INTRINSIC"
+            and int(base_output.get("independent_method_count") or 0) >= 2
+        )
+        scores = (
+            _score_sample(anchor_adjusted, bear, base, bull, expected, future_1y, policy["BASE"], realized)
+            if model_decision_grade
+            else {}
+        )
         leakage = {
             "cutoff": filing_date.isoformat(),
             "latest_input_filed_at": max((str(row.get("filed_at") or "") for row in history), default=""),
@@ -299,6 +316,10 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
             "historical_price_basis": "split-adjusted for outcome comparison; raw for contemporaneous valuation calibration",
             "regime_detection_point_in_time": True,
             "regime_start_fiscal_year": metrics.get("regime_start_fiscal_year"),
+            "decision_grade_snapshot": model_decision_grade,
+            "independent_valuation_families": independent_families,
+            "reference_fallback_allowed": False,
+            "engine_version": ENGINE_VERSION,
         }
         sample = HistoricalTestSample(
             run_id=run.id, anchor_date=anchor_row.trade_date, fiscal_year=fiscal_year, anchor_price=anchor_adjusted,
@@ -312,10 +333,18 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
                 "operating_regime": metrics.get("operating_regime") or {},
             },
             outcomes={"price_1y": future_1y, "price_3y": future_3y, "price_5y": future_5y, "realized_next_fy": realized},
-            scores=scores, leakage_checks=leakage, status="DONE" if future_1y is not None else "PENDING_OUTCOME",
+            scores=scores,
+            leakage_checks=leakage,
+            status=(
+                "DONE"
+                if future_1y is not None and model_decision_grade
+                else "MODEL_LIMITED"
+                if not model_decision_grade
+                else "PENDING_OUTCOME"
+            ),
         )
         db.session.add(sample)
-        if scores.get("reliability") is not None:
+        if model_decision_grade and scores.get("reliability") is not None:
             reliability_rows.append(scores)
 
     run.sample_size = len(reliability_rows)
@@ -330,8 +359,13 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         sample_size=run.sample_size,
         reliability=run.reliability_score,
     )
+    limited_samples = (
+        HistoricalTestSample.query.filter_by(run_id=run.id, status="MODEL_LIMITED").count()
+    )
     run.summary = {
-        "anchors_considered": len(anchors), "completed_samples": run.sample_size,
+        "anchors_considered": len(anchors),
+        "completed_samples": run.sample_size,
+        "model_limited_samples": limited_samples,
         "anti_leakage": "Future filings and prices are excluded from each model snapshot. Future prices enter validation only.",
         "provider": provider, "company_type": company_type,
     }
