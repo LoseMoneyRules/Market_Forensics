@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from cryptography.fernet import Fernet
 
 from mfapp import create_app
-from mfapp.core_models import Company, Job, RefreshRun
+from mfapp.core_models import Company, FinancialPeriod, Job, NormalizedFinancial, RefreshRun
 from mfapp.extensions import db
 from mfapp.jobs import dismiss_terminal_jobs, enqueue_job, run_jobs
 from mfapp.models import User
@@ -63,6 +64,50 @@ def test_033_march_year_end_quarters_are_consecutive_for_lpg_shape():
     ]
     assert [_fiscal_quarter_from_end(row, "0331") for row, _ in samples] == [expected for _, expected in samples]
 
+
+
+def test_033_empty_quarter_shells_do_not_hide_valid_annual_current_basis(tmp_path, monkeypatch):
+    from mfapp.current_financials import current_row
+
+    app = make_app(tmp_path, monkeypatch, "ttm_fallback")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Fiscal Co", display_name="Fiscal Co")
+        db.session.add(company); db.session.flush()
+
+        annual = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2025,
+            start_date=date(2024, 8, 1), end_date=date(2025, 7, 31), currency="USD",
+        )
+        db.session.add(annual); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=annual.id,
+            revenue=Decimal("500"), operating_income=Decimal("80"),
+            net_income=Decimal("60"), cfo=Decimal("75"), capex=Decimal("20"),
+            fcf=Decimal("55"), source_map={"revenue": {"provider": "SEC"}}, quality={},
+        ))
+
+        for period_type, fiscal_year, end_date in (
+            ("Q4", 2025, date(2025, 7, 31)),
+            ("Q1", 2026, date(2025, 10, 31)),
+            ("Q2", 2026, date(2026, 1, 31)),
+            ("Q3", 2026, date(2026, 4, 30)),
+        ):
+            period = FinancialPeriod(
+                company_id=company.id, period_type=period_type, fiscal_year=fiscal_year,
+                end_date=end_date, currency="USD",
+            )
+            db.session.add(period); db.session.flush()
+            db.session.add(NormalizedFinancial(
+                financial_period_id=period.id, source_map={}, quality={},
+            ))
+        db.session.commit()
+
+        current = current_row(company.id)
+        assert current is not None
+        assert current["period_type"] == "FY"
+        assert current["comparison_basis"] == "FY_FALLBACK"
+        assert current["revenue"] == 500.0
 
 def test_033_failed_job_rolls_back_partial_business_writes(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "atomic")
