@@ -366,6 +366,10 @@ def validate_company(ticker):
         runs=runs,
         latest_run=latest,
         latest_validation_state=state_for_run(latest),
+        latest_validation_engine_current=(
+            bool(latest) and str(latest.engine_version or "") == VALUATION_ENGINE_VERSION
+        ),
+        current_validation_engine_version=VALUATION_ENGINE_VERSION,
         validation_states=validation_states,
         samples=samples,
         **ctx,
