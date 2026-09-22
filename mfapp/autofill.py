@@ -76,12 +76,16 @@ def _intelligence_rows(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(reversed(chronological))
 
 
+
 def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], company_type: str) -> dict[str, Any]:
+    """Build company-specific multiple history from filing-date market anchors."""
     provider = preferred_provider(security_id)
     observations: list[dict[str, Any]] = []
     annual = [row for row in history if str(row.get("period_type") or "FY") == "FY"]
+    latest_anchor_price = None
+    latest_anchor_date = None
     if provider:
-        for row in annual[:-1]:
+        for row in annual:
             filed = row.get("filed_at")
             try:
                 filing_date = datetime.fromisoformat(str(filed)[:10]).date() if filed else None
@@ -95,17 +99,36 @@ def _point_in_time_calibration(security_id: int, history: list[dict[str, Any]], 
                 continue
             economic = economic_from_row(row)
             economic_net_debt = economic_metric(economic, "economic_net_debt")
+            operating_income = n(row.get("operating_income"))
+            depreciation_amortization = economic_metric(economic, "depreciation_amortization")
+            ebitda = (
+                operating_income + depreciation_amortization
+                if operating_income is not None and depreciation_amortization is not None
+                else None
+            )
             observations.append({
-                "price": n(market.close_raw), "shares": shares, "revenue": row.get("revenue"),
-                "net_income": row.get("net_income"), "fcf": row.get("fcf"),
+                "fiscal_year": row.get("fiscal_year"),
+                "anchor_date": market.trade_date.isoformat(),
+                "price": n(market.close_raw),
+                "shares": shares,
+                "revenue": row.get("revenue"),
+                "net_income": row.get("net_income"),
+                "fcf": row.get("fcf"),
+                "ebitda": ebitda,
                 "net_debt": (
                     economic_net_debt
                     if economic and not economic.get("material_unresolved")
                     else None
                 ),
             })
-    return calibrate_multiples(observations, company_type)
-
+            if latest_anchor_date is None or market.trade_date.isoformat() > latest_anchor_date:
+                latest_anchor_date = market.trade_date.isoformat()
+                latest_anchor_price = n(market.close_raw)
+    result = calibrate_multiples(observations, company_type)
+    result["latest_filing_anchor_price"] = latest_anchor_price
+    result["latest_filing_anchor_date"] = latest_anchor_date
+    result["observation_count"] = len(observations)
+    return result
 
 def _case_from_row(row: ValuationScenario | None, fallback: dict[str, Any], force: bool) -> tuple[dict[str, Any], bool]:
     if row is None:
@@ -249,6 +272,11 @@ def prefill_coverage(coverage_id: int, user_id: int, force: bool = False) -> dic
     weights = dict(saved.get("weights") or defaults["weights"])
     horizon_years = int(saved.get("horizon_years") or defaults["horizon_years"])
     current_price = _reference_price(security.id)
+    anchor_price = n(calibration.get("latest_filing_anchor_price"))
+    if current_price not in (None, 0) and anchor_price not in (None, 0):
+        metrics["market_move_since_filing_pct"] = (current_price / anchor_price - 1.0) * 100.0
+        metrics["latest_filing_anchor_price"] = anchor_price
+        metrics["latest_filing_anchor_date"] = calibration.get("latest_filing_anchor_date")
 
     scenario_rows = {row.name.upper(): row for row in model.scenarios}
     case_inputs: dict[str, dict[str, Any]] = {}; auto_flags: dict[str, bool] = {}
