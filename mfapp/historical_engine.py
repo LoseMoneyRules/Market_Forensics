@@ -9,7 +9,7 @@ from .extensions import db
 from .historical_data import preferred_provider, price_on_or_after, refresh_historical_prices
 from .secdata import DURATION_TAGS, INSTANT_TAGS, SEC_DATA, _facts, _json, _ticker_meta, _ua
 from .economic_reality import DURATION_TAGS as ECONOMIC_DURATION_TAGS, INSTANT_TAGS as ECONOMIC_INSTANT_TAGS, build_economic_reality, economic_from_row, metric as economic_metric
-from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, evaluate, infer_company_type, metrics_from_history, n
+from .valuation_engine import ENGINE_VERSION, calibrate_multiples, default_cases, detect_structural_regime, evaluate, infer_company_type, metrics_from_history, n, valuation_base_quality
 from .validation_policy import validation_state
 
 
@@ -144,21 +144,36 @@ def _first_filing_anchors(companyfacts: dict[str, Any], start: date) -> list[tup
 
 
 def _calibration_observations(security_id: int, history: list[dict[str, Any]], anchor: date, provider: str | None) -> list[dict[str, Any]]:
+    """Mirror live point-in-time calibration using only evidence known by anchor."""
     out = []
-    for row in history[:-1]:
+    for row in history:
         filed = _day(row.get("filed_at"))
-        if filed is None or filed >= anchor:
+        if filed is None or filed > anchor:
             continue
         price = price_on_or_after(security_id, filed, 14, provider=provider)
-        shares = n(row.get("shares_outstanding")) or n(row.get("diluted_shares"))
+        shares = n(row.get("diluted_shares")) or n(row.get("shares_outstanding"))
         raw_price = n(price.close_raw) if price else None
         if raw_price is None or shares in (None, 0):
             continue
         economic = economic_from_row(row)
         economic_net_debt = economic_metric(economic, "economic_net_debt")
+        operating_income = n(row.get("operating_income"))
+        depreciation_amortization = economic_metric(economic, "depreciation_amortization")
+        ebitda = (
+            operating_income + depreciation_amortization
+            if operating_income is not None and depreciation_amortization is not None
+            else None
+        )
         out.append({
-            "price": raw_price, "shares": shares, "revenue": row.get("revenue"), "net_income": row.get("net_income"),
+            "fiscal_year": row.get("fiscal_year"),
+            "anchor_date": price.trade_date.isoformat() if price else None,
+            "price": raw_price,
+            "shares": shares,
+            "revenue": row.get("revenue"),
+            "net_income": row.get("net_income"),
             "fcf": row.get("fcf"),
+            "ebitda": ebitda,
+            "equity": row.get("equity"),
             "net_debt": economic_net_debt if economic and not economic.get("material_unresolved") else None,
         })
     return out
@@ -244,6 +259,9 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
     )
     db.session.add(run); db.session.flush()
     reliability_rows: list[dict[str, Any]] = []
+    attempted_samples = 0
+    decision_grade_samples = 0
+    regime_filtered_samples = 0
 
     for fiscal_year, filing_date in anchors:
         history = annual_history_asof(companyfacts, filing_date, company_type)
@@ -255,13 +273,39 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         metrics = metrics_from_history(history, company_type=company_type)
         if not metrics.get("basis_usable"):
             continue
+        attempted_samples += 1
+        structural_regime = dict(metrics.get("structural_regime") or detect_structural_regime(history))
         observations = _calibration_observations(security.id, history, filing_date, provider)
-        calibration = calibrate_multiples(observations, company_type)
-        policy = default_cases(metrics, company_type, calibration)
+        calibration = calibrate_multiples(observations, company_type, structural_regime)
+        metrics["historical_calibration"] = calibration
         raw_anchor = n(anchor_row.close_raw)
         basis_factor = n(anchor_row.split_basis_factor) or 1.0
-        result = evaluate(metrics, policy, policy["weights"], int(policy["horizon_years"]), current_price=raw_anchor)
+        metrics["current_price"] = raw_anchor
+        metrics["market_move_since_filing_pct"] = 0.0
+        metrics["latest_filing_anchor_price"] = raw_anchor
+        metrics["latest_filing_anchor_date"] = anchor_row.trade_date.isoformat()
+        current_equity = n(metrics.get("equity"))
+        current_shares = n(metrics.get("shares"))
+        pb_history = calibration.get("p_b") or (None, None, None)
+        historical_pb_median = n(pb_history[1]) if len(pb_history) >= 2 else None
+        if raw_anchor not in (None, 0) and current_equity not in (None, 0) and current_equity > 0 and current_shares not in (None, 0):
+            current_pb = raw_anchor * current_shares / current_equity
+            metrics["current_p_b"] = current_pb
+            if historical_pb_median not in (None, 0):
+                metrics["pb_deviation_from_history_pct"] = (current_pb / historical_pb_median - 1.0) * 100.0
+        policy = default_cases(metrics, company_type, calibration)
+        result = evaluate(
+            metrics, policy, policy["weights"], int(policy["horizon_years"]),
+            current_price=raw_anchor, allow_reference_fallback=False,
+        )
         scenario = result["scenarios"]
+        base_quality = valuation_base_quality(result)
+        independent_methods = int((scenario.get("BASE") or {}).get("independent_method_count") or 0)
+        decision_grade = base_quality == "INTRINSIC" and independent_methods >= 2
+        if decision_grade:
+            decision_grade_samples += 1
+        if calibration.get("regime_filter_applied"):
+            regime_filtered_samples += 1
         bear_raw, base_raw, bull_raw = scenario["BEAR"].get("fair_value"), scenario["BASE"].get("fair_value"), scenario["BULL"].get("fair_value")
         expected_raw = result.get("expected_value")
         anchor_adjusted = n(anchor_row.close_split_adjusted)
@@ -273,7 +317,14 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         future_3y = _future_price(security.id, anchor_row.trade_date, 3, provider)
         future_5y = _future_price(security.id, anchor_row.trade_date, 5, provider)
         realized = _next_realized(full_history, fiscal_year)
-        scores = _score_sample(anchor_adjusted, bear, base, bull, expected, future_1y, policy["BASE"], realized)
+        scores = (
+            _score_sample(anchor_adjusted, bear, base, bull, expected, future_1y, policy["BASE"], realized)
+            if decision_grade and future_1y is not None
+            else {"reliability": None}
+        )
+        scores["decision_grade"] = decision_grade
+        scores["base_quality"] = base_quality
+        scores["independent_method_count"] = independent_methods
         leakage = {
             "cutoff": filing_date.isoformat(),
             "latest_input_filed_at": max((str(row.get("filed_at") or "") for row in history), default=""),
@@ -282,14 +333,18 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
             "future_prices_used_in_model": False,
             "future_prices_used_for_validation_only": True,
             "historical_price_basis": "split-adjusted for outcome comparison; raw for contemporaneous valuation calibration",
+            "structural_regime_uses_future_data": False,
+            "calibration_includes_current_anchor": True,
+            "canonical_engine_version": ENGINE_VERSION,
         }
         sample = HistoricalTestSample(
             run_id=run.id, anchor_date=anchor_row.trade_date, fiscal_year=fiscal_year, anchor_price=anchor_adjusted,
             bear_value=bear, base_value=base, bull_value=bull, expected_value=expected,
-            inputs={"metrics": metrics, "calibration": calibration, "provider": provider, "raw_anchor_price": raw_anchor, "basis_factor": basis_factor},
+            inputs={"metrics": metrics, "calibration": calibration, "provider": provider, "raw_anchor_price": raw_anchor, "basis_factor": basis_factor, "engine_version": ENGINE_VERSION},
             assumptions={"cases": {key: policy[key] for key in ("BEAR", "BASE", "BULL")}, "weights": policy["weights"], "horizon_years": policy["horizon_years"], "company_type": company_type},
             outcomes={"price_1y": future_1y, "price_3y": future_3y, "price_5y": future_5y, "realized_next_fy": realized},
-            scores=scores, leakage_checks=leakage, status="DONE" if future_1y is not None else "PENDING_OUTCOME",
+            scores=scores, leakage_checks=leakage,
+            status=("DONE" if decision_grade and future_1y is not None else ("PENDING_OUTCOME" if decision_grade else "LIMITED_EVIDENCE")),
         )
         db.session.add(sample)
         if scores.get("reliability") is not None:
@@ -308,8 +363,14 @@ def run_historical_test(coverage_id: int, user_id: int, lookback_years: int = 10
         reliability=run.reliability_score,
     )
     run.summary = {
-        "anchors_considered": len(anchors), "completed_samples": run.sample_size,
-        "anti_leakage": "Future filings and prices are excluded from each model snapshot. Future prices enter validation only.",
+        "anchors_considered": len(anchors),
+        "attempted_samples": attempted_samples,
+        "decision_grade_samples": decision_grade_samples,
+        "completed_samples": run.sample_size,
+        "regime_filtered_samples": regime_filtered_samples,
+        "engine_version": ENGINE_VERSION,
+        "valuation_parity": "Validate replays the same canonical automatic valuation engine, method applicability, current-regime calibration and independent-family rules used by live Valuation.",
+        "anti_leakage": "Future filings and prices are excluded from each model snapshot. Structural-regime detection uses only evidence filed by that cutoff; future prices enter validation only.",
         "provider": provider, "company_type": company_type,
     }
     run.finished_at = utcnow()
