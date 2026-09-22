@@ -153,3 +153,8 @@ def test_036_release_metadata_is_single_current_version():
     assert "**State-Version: 0.3.6**" in current
     assert "**Current product line:** 0.3.6" in how
     assert "PR #70" in current and "superseded" in current.lower()
+    production_lines = [line for line in current.splitlines() if line.startswith("**Production:**")]
+    assert len(production_lines) == 1
+
+    deploy_workflow = Path(".github/workflows/deploy-namecheap.yml").read_text()
+    assert "expected exactly one top-level Production line" in deploy_workflow
