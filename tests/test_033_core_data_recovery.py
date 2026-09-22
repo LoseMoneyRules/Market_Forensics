@@ -1091,6 +1091,10 @@ def test_034_same_period_complementary_fields_are_fused_without_cross_period_car
         assert latest_metrics["inventory_to_revenue_pct"] is not None
         assert round(latest_metrics["inventory_to_revenue_pct"], 2) == round(7501 / 46398 * 100, 2)
 
+        # Data-quality audit must agree with the same canonical field view.
+        audit = _reconcile_financial_field_issues(company)
+        assert "inventory" not in audit["missing_expected_fields"]
+
 
 def test_034_upsert_reactivates_richest_same_period_identity(tmp_path, monkeypatch):
     app = make_app(tmp_path, monkeypatch, "034_reactivate_rich")
