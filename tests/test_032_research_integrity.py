@@ -569,7 +569,7 @@ def test_032_current_financial_coalesces_complementary_same_period_evidence(tmp_
         assert current is not None
         assert current["revenue"] == 1100.0
         assert current["inventory"] == 125.0
-        assert current["metrics"]["revenue_growth_pct"] == 10.0
+        assert abs(float(current["metrics"]["revenue_growth_pct"]) - 10.0) < 1e-9
         assert current["quality"]["canonical_read_coalesced"] is True
         assert len(current["quality"]["canonical_read_period_ids"]) == 2
 
