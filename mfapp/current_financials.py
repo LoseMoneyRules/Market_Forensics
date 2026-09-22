@@ -5,6 +5,8 @@ from math import isfinite
 from statistics import mean
 from typing import Any
 
+from sqlalchemy import or_
+
 from .calculations import financial_metrics
 from .core_models import FinancialPeriod, NormalizedFinancial, ValuationModel
 from .extensions import db
