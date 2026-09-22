@@ -413,7 +413,7 @@ def refresh_institutional_flow(ticker: str, user_id: int) -> dict[str, Any]:
         "ticker": symbol,
         "rows": rows,
         "errors": list(dict.fromkeys(errors)),
-        "method": "REGULAR_SESSION_VOLUME_SANITY_TICK_RULE_PROXY",
+        "method": "REGULAR_SESSION_RECONCILED_SAMPLE_TICK_RULE_PROXY",
         "method_version": FLOW_METHOD_VERSION,
         "threshold_policy": {
             "large": "max(P75, $100k)",
