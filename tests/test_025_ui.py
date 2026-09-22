@@ -63,10 +63,13 @@ def test_025_settings_version_and_collapsed_jobs(tmp_path, monkeypatch):
     html = response.get_data(as_text=True)
     assert "application-version-value" in html
     assert f"v{Path('VERSION').read_text().strip()}" in html
-    assert '<details class="panel recent-jobs">' in html
     assert "<summary class=\"recent-jobs-summary\">" in html
-    assert "Click to view the job list." in html
-    assert '<details class="panel recent-jobs" open' not in html
+    assert "DATA OPERATIONS" in html
+    assert "Background jobs &amp; execution history" in html
+    assert "data-coverage-panel" in html
+    assert '<p class="eyebrow">BACKGROUND WORK</p>' not in html
+    assert '<p class="eyebrow">DATA INGESTION</p>' not in html
+    assert "<details" in html and " open" not in html.split("DATA OPERATIONS", 1)[0][-300:]
 
 
 def test_025_command_center_compact_contract():
