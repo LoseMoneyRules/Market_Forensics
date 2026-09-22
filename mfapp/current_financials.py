@@ -352,6 +352,8 @@ def numbers_completeness(company_id: int) -> dict[str, Any]:
         seq = [_quarter_sequence_value(row) for row in ordered]
         if any(value is None for value in seq) or any(seq[idx] - seq[idx - 1] != 1 for idx in range(1, len(seq))):
             quarter_gaps.append("Latest four stored quarters are not a consecutive fiscal sequence; TTM is withheld.")
+        elif any(n(row.get("revenue")) is None for row in ordered):
+            quarter_gaps.append("Latest four quarters do not all contain Revenue; TTM is withheld and the latest filed annual basis remains active.")
 
     ttm_ready = bool(current and current.get("period_type") == "TTM")
     normalized_fields = FLOW_FIELDS + INSTANT_FIELDS + ("diluted_shares",)
