@@ -503,6 +503,7 @@ def _external_calibration(
             "net_income": row.get("net_income"),
             "fcf": row.get("fcf"),
             "ebitda": ebitda,
+            "equity": row.get("equity"),
             "net_debt": (
                 economic_net_debt
                 if economic and not economic.get("material_unresolved")
@@ -604,6 +605,16 @@ def _valuation_from_history(
             metrics["latest_filing_anchor_date"] = (anchor or {}).get("trade_date").isoformat() if anchor else None
 
     metrics["historical_calibration"] = calibration
+    metrics["current_price"] = price
+    current_equity = _num(metrics.get("equity"))
+    current_shares_for_pb = _num(metrics.get("shares"))
+    pb_history = calibration.get("p_b") or (None, None, None)
+    historical_pb_median = _num(pb_history[1]) if len(pb_history) >= 2 else None
+    if price not in (None, 0) and current_equity not in (None, 0) and current_equity > 0 and current_shares_for_pb not in (None, 0):
+        current_pb = price * current_shares_for_pb / current_equity
+        metrics["current_p_b"] = current_pb
+        if historical_pb_median not in (None, 0):
+            metrics["pb_deviation_from_history_pct"] = (current_pb / historical_pb_median - 1.0) * 100.0
     defaults = default_cases(metrics, company_type)
     cases = {name: defaults[name] for name in ("BEAR", "BASE", "BULL")}
     result = evaluate(
