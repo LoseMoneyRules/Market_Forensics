@@ -65,7 +65,7 @@ def test_025_settings_version_and_collapsed_jobs(tmp_path, monkeypatch):
     assert f"v{Path('VERSION').read_text().strip()}" in html
     assert "<summary class=\"recent-jobs-summary\">" in html
     assert "DATA OPERATIONS" in html
-    assert "Background jobs &amp; execution history" in html
+    assert "Background jobs & execution history" in html
     assert "data-coverage-panel" in html
     assert '<p class="eyebrow">BACKGROUND WORK</p>' not in html
     assert '<p class="eyebrow">DATA INGESTION</p>' not in html
