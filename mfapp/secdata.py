@@ -18,7 +18,7 @@ SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
 
 DURATION_TAGS = {
-    "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "Revenues"],
+    "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
     "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfProductsSold", "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization"],
     "gross_profit": ["GrossProfit"],
     "operating_income": ["OperatingIncomeLoss"],
@@ -44,7 +44,7 @@ INSTANT_TAGS = {
 }
 
 SEMANTIC_LABEL_ALIASES = {
-    "revenue": {"revenue", "revenues", "net sales", "sales", "total revenues"},
+    "revenue": {"revenue", "revenues", "net revenue", "net revenues", "net sales", "sales", "total revenue", "total revenues", "operating revenue", "operating revenues"},
     "cogs": {"cost of sales", "cost of revenue", "cost of revenues", "cost of goods sold", "cost of goods and services sold"},
     "gross_profit": {"gross profit"},
     "operating_income": {"operating income", "income from operations", "operating income loss"},
@@ -308,6 +308,58 @@ def _fiscal_year_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> int
     return end.year
 
 
+def _fiscal_quarter_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> str | None:
+    """Classify the represented period from its own end date, not filing fp.
+
+    SEC Companyfacts repeats comparative facts in later filings. The row fp
+    describes the filing period and can therefore mislabel an older comparative
+    fact as Q2/Q3. Deriving the quarter from the fact end date keeps non-calendar
+    issuers on a consecutive fiscal sequence.
+    """
+    raw_fye = str(fiscal_year_end or "").strip()
+    fallback = str(row.get("fp") or "").upper()
+    if len(raw_fye) != 4 or not raw_fye.isdigit():
+        return fallback if fallback in {"Q1", "Q2", "Q3", "Q4"} else None
+    month, day = int(raw_fye[:2]), int(raw_fye[2:])
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return fallback if fallback in {"Q1", "Q2", "Q3", "Q4"} else None
+    try:
+        end = date.fromisoformat(str(row.get("end") or "")[:10])
+        fy = _fiscal_year_from_end(row, raw_fye)
+        if fy is None:
+            return None
+
+        def fye(year: int) -> date:
+            candidate_day = day
+            while candidate_day >= 28:
+                try:
+                    return date(year, month, candidate_day)
+                except ValueError:
+                    candidate_day -= 1
+            return date(year, month, candidate_day)
+
+        previous_end = fye(fy - 1)
+        current_end = fye(fy)
+        span = max(1, (current_end - previous_end).days)
+        elapsed = (end - previous_end).days
+        if elapsed <= 0 or elapsed > span + 24:
+            return None
+        ratio = elapsed / span
+        centers = {"Q1": 0.25, "Q2": 0.50, "Q3": 0.75, "Q4": 1.00}
+        quarter, center = min(centers.items(), key=lambda item: abs(ratio - item[1]))
+        return quarter if abs(ratio - center) <= 0.16 else None
+    except (TypeError, ValueError):
+        return fallback if fallback in {"Q1", "Q2", "Q3", "Q4"} else None
+
+
+def _mark_last_good_retained(source_map: dict[str, Any], field: str) -> None:
+    """Keep a previously sourced same-period value when a refresh cannot resolve it."""
+    prior = dict(source_map.get(field) or {})
+    prior["refresh_state"] = "LAST_GOOD_RETAINED"
+    prior["refresh_note"] = "Current provider refresh missed this same-period fact; prior sourced value retained."
+    source_map[field] = prior
+
+
 def _annual_duration(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "", namespace: str = "us-gaap") -> dict[int, dict[str, Any]]:
     output: dict[int, dict[str, Any]] = {}
     for tag in tags:
@@ -350,10 +402,11 @@ def _annual_instant(companyfacts: dict, tags: Iterable[str], namespace: str = "u
 
 
 def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_year_end: str = "", namespace: str = "us-gaap") -> tuple[dict[tuple[int, str], dict[str, Any]], dict[tuple[int, str], dict[str, Any]]]:
-    """Return quarter-only and YTD 10-Q facts, preserving tag priority.
+    """Return quarter-only and YTD facts keyed by represented fiscal quarter.
 
-    Income-statement facts often expose a ~90-day quarter and a YTD context. Cash-flow
-    facts commonly expose YTD only, so Q2/Q3 must be derived by differencing YTD facts.
+    Companyfacts can repeat comparative periods in later 10-Q filings. The
+    filing-level fp marker is therefore not trusted as the represented quarter;
+    the fact end date and issuer fiscal year-end define the key.
     """
     direct: dict[tuple[int, str], dict[str, Any]] = {}
     ytd: dict[tuple[int, str], dict[str, Any]] = {}
@@ -361,8 +414,10 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
         direct_candidates: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
         ytd_candidates: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
         for row in _facts(companyfacts, namespace, tag):
-            fp = str(row.get("fp") or "").upper()
-            if row.get("form") not in {"10-Q", "10-Q/A"} or fp not in {"Q1", "Q2", "Q3"}:
+            if row.get("form") not in {"10-Q", "10-Q/A"}:
+                continue
+            quarter = _fiscal_quarter_from_end(row, fiscal_year_end)
+            if quarter not in {"Q1", "Q2", "Q3"}:
                 continue
             days = _duration_days(row)
             if days is None or _as_decimal(row.get("val")) is None:
@@ -370,7 +425,7 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
             fy = _fiscal_year_from_end(row, fiscal_year_end)
             if fy is None:
                 continue
-            key = (fy, fp)
+            key = (fy, quarter)
             if 60 <= days <= 120:
                 direct_candidates[key].append(row)
             elif 121 <= days <= 310:
@@ -382,7 +437,6 @@ def _quarter_duration_sources(companyfacts: dict, tags: Iterable[str], fiscal_ye
             if key not in ytd:
                 ytd[key] = _sort_rows(rows)[-1]
     return direct, ytd
-
 
 def _quarter_duration_values(companyfacts: dict, tags: Iterable[str], annual: dict[int, dict[str, Any]], *, shares_metric: bool = False, fiscal_year_end: str = "", namespace: str = "us-gaap") -> dict[tuple[int, str], dict[str, Any]]:
     direct, ytd = _quarter_duration_sources(companyfacts, tags, fiscal_year_end, namespace=namespace)
@@ -436,11 +490,14 @@ def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = 
             if row.get("start") or _as_decimal(row.get("val")) is None:
                 continue
             form = str(row.get("form") or "")
-            fp = str(row.get("fp") or "").upper()
-            if form in {"10-Q", "10-Q/A"} and fp in {"Q1", "Q2", "Q3"}:
-                quarter = fp
-            elif form in {"10-K", "10-K/A"} and fp == "FY":
-                quarter = "Q4"
+            if form in {"10-Q", "10-Q/A"}:
+                quarter = _fiscal_quarter_from_end(row, fiscal_year_end)
+                if quarter not in {"Q1", "Q2", "Q3"}:
+                    continue
+            elif form in {"10-K", "10-K/A"}:
+                quarter = _fiscal_quarter_from_end(row, fiscal_year_end)
+                if quarter != "Q4":
+                    continue
             else:
                 continue
             fy = _fiscal_year_from_end(row, fiscal_year_end)
@@ -451,7 +508,6 @@ def _quarter_instants(companyfacts: dict, tags: Iterable[str], namespace: str = 
             if key not in out:
                 out[key] = _sort_rows(rows)[-1]
     return out
-
 
 def _source_for(company: Company, meta: dict, user_agent: str, facts: dict) -> Source:
     stamp = f"{facts.get('entityName') or meta['name']}|{datetime.now(timezone.utc).date().isoformat()}"
