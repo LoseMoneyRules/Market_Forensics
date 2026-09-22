@@ -9,7 +9,7 @@ from typing import Any
 from .economic_reality import economic_from_row, has_suppression, metric as economic_metric
 from .company_quality import build_company_quality
 
-ENGINE_VERSION = "0.3.2-integrity-v1"
+ENGINE_VERSION = "0.3.2-integrity-v2"
 MONTE_CARLO_DRAWS = 10000
 
 DECISION_GRADE_QUALITIES = {"INTRINSIC", "MANUAL_OVERRIDE"}
