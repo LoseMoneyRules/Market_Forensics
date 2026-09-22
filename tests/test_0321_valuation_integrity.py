@@ -9,6 +9,7 @@ from mfapp.valuation_engine import (
     calibrate_multiples,
     dcf_value,
     default_cases,
+    detect_operating_regime,
     evaluate,
     metrics_from_history,
     scenario_value,
@@ -303,3 +304,53 @@ def test_032_integrity_cvs_like_revenue_scale_cannot_manufacture_triple_digit_va
     assert bear <= base <= bull
     assert base < 160.0
     assert result["scenarios"]["BASE"]["independent_method_count"] >= 2
+
+
+
+def test_032_integrity_structural_regime_excludes_old_business_history():
+    rows = [
+        {"fiscal_year": 2018, "period_end": "2018-12-31", "revenue": 100.0, "gross_profit": 55.0, "operating_income": 20.0, "fcf": 15.0, "capex": 4.0, "diluted_shares": 10.0},
+        {"fiscal_year": 2019, "period_end": "2019-12-31", "revenue": 105.0, "gross_profit": 57.0, "operating_income": 21.0, "fcf": 16.0, "capex": 4.0, "diluted_shares": 10.0},
+        {"fiscal_year": 2020, "period_end": "2020-12-31", "revenue": 110.0, "gross_profit": 59.0, "operating_income": 22.0, "fcf": 16.0, "capex": 4.0, "diluted_shares": 10.0},
+        # Persistent transformed business: much larger revenue base, lower margin,
+        # higher capital intensity and a materially different share base.
+        {"fiscal_year": 2021, "period_end": "2021-12-31", "revenue": 210.0, "gross_profit": 63.0, "operating_income": 17.0, "fcf": 12.0, "capex": 18.0, "diluted_shares": 14.0},
+        {"fiscal_year": 2022, "period_end": "2022-12-31", "revenue": 225.0, "gross_profit": 67.0, "operating_income": 18.0, "fcf": 13.0, "capex": 19.0, "diluted_shares": 14.2},
+        {"fiscal_year": 2023, "period_end": "2023-12-31", "revenue": 240.0, "gross_profit": 72.0, "operating_income": 20.0, "fcf": 14.0, "capex": 20.0, "diluted_shares": 14.4},
+        {"fiscal_year": 2024, "period_end": "2024-12-31", "revenue": 255.0, "gross_profit": 76.0, "operating_income": 21.0, "fcf": 15.0, "capex": 21.0, "diluted_shares": 14.5},
+    ]
+    regime = detect_operating_regime(rows)
+    assert regime["detected"] is True
+    assert regime["start_fiscal_year"] == 2021
+    assert regime["excluded_years"] == 3
+    assert len(regime["signals"]) >= 2
+
+    observations = [
+        {
+            "fiscal_year": fy,
+            "price": price,
+            "shares": 10.0,
+            "revenue": 100.0,
+            "net_income": 10.0,
+            "fcf": 8.0,
+            "ebitda": 15.0,
+            "net_debt": 0.0,
+            "equity": 80.0,
+        }
+        for fy, price in zip(range(2018, 2025), (40, 42, 45, 12, 13, 14, 15))
+    ]
+    calibration = calibrate_multiples(observations, "Generic", regime["start_fiscal_year"])
+    assert calibration["pre_regime_observations_excluded"] == 3
+    assert calibration["method_stats"]["pe"]["sample_size"] == 4
+    assert calibration["pe"][1] < 20.0
+
+
+def test_032_integrity_validate_uses_same_fail_closed_engine_contract():
+    from pathlib import Path
+    source = Path("mfapp/historical_engine.py").read_text()
+    assert "allow_reference_fallback=False" in source
+    assert 'base_output.get("independent_method_count")' in source
+    assert '"MODEL_LIMITED"' in source
+    assert '"regime_detection_point_in_time": True' in source
+    assert '"ebitda": ebitda' in source
+    assert '"equity": row.get("equity")' in source
