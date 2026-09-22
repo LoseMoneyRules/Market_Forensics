@@ -17,7 +17,7 @@ from .sec_inline_facts import extract_extension_concepts
 SEC_DATA = "https://data.sec.gov"
 SEC_WWW = "https://www.sec.gov"
 CALCULATION_VERSION = "0.2.0"
-SEC_NORMALIZER_VERSION = "0.3.3-financial-completeness"
+SEC_NORMALIZER_VERSION = "0.3.3-financial-basis-integrity-r2"
 
 DURATION_TAGS = {
     "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "Revenues"],
@@ -484,10 +484,18 @@ def _sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fiscal_year_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> int | None:
-    """Resolve the fiscal year from the fact's own period end, not the later filing's fy.
+    """Resolve represented fiscal year from the fact period end.
 
-    SEC Companyfacts repeats comparative periods in later filings. Using row['fy']
-    alone can therefore attach an old comparative fact to the newest fiscal year.
+    The SEC fiscalYearEnd value is a current MMDD convention. 52/53-week issuers
+    can close a historical fiscal year a few days before or after that MMDD.
+    Treating the MMDD as an exact cutover silently shifts those annual facts into
+    the next fiscal year and creates fake history holes. Comparative Companyfacts
+    rows also make row['fy'] unsafe as the primary key, so the represented end
+    date remains canonical.
+
+    A 21-day year-end tolerance is deliberately much smaller than a fiscal
+    quarter: dates near nominal FYE stay in the same represented year, while
+    genuine post-year-end quarter dates still map to the following fiscal year.
     """
     try:
         end = date.fromisoformat(str(row.get("end") or "")[:10])
@@ -497,7 +505,19 @@ def _fiscal_year_from_end(row: dict[str, Any], fiscal_year_end: str = "") -> int
     if len(fye) == 4 and fye.isdigit():
         month, day = int(fye[:2]), int(fye[2:])
         if 1 <= month <= 12 and 1 <= day <= 31:
-            return end.year + (1 if (end.month, end.day) > (month, day) else 0)
+            candidate_day = day
+            nominal = None
+            while candidate_day >= 28:
+                try:
+                    nominal = date(end.year, month, candidate_day)
+                    break
+                except ValueError:
+                    candidate_day -= 1
+            if nominal is not None:
+                delta_days = (end - nominal).days
+                if abs(delta_days) <= 21:
+                    return end.year
+                return end.year + (1 if delta_days > 0 else 0)
     return end.year
 
 
@@ -1011,9 +1031,22 @@ def _record_raw(period: FinancialPeriod, source: Source, record: dict | None) ->
 def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal_year: int, end_date: date, anchor: dict[str, Any] | None) -> FinancialPeriod:
     period = FinancialPeriod.query.filter_by(company_id=company.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date).first()
     if period is None:
-        period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
-        db.session.add(period)
-        db.session.flush()
+        # Parser migrations may correct the fiscal-year or quarter label for an
+        # already-stored end date. Repair that period in place rather than keeping
+        # a stale mislabeled duplicate that can poison history and valuation.
+        same_end = FinancialPeriod.query.filter_by(company_id=company.id, end_date=end_date)
+        if period_type == "FY":
+            same_end = same_end.filter(FinancialPeriod.period_type == "FY")
+        else:
+            same_end = same_end.filter(FinancialPeriod.period_type.in_(["Q1", "Q2", "Q3", "Q4"]))
+        period = same_end.order_by(FinancialPeriod.id.desc()).first()
+        if period is not None:
+            period.period_type = period_type
+            period.fiscal_year = fiscal_year
+        else:
+            period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
+            db.session.add(period)
+            db.session.flush()
     period.source_id = source.id
     if anchor:
         period.filed_at = date.fromisoformat(str(anchor.get("filed"))[:10]) if anchor.get("filed") else period.filed_at
