@@ -16,8 +16,10 @@ from mfapp.secdata import (
     _apply_annual_statement_bridges,
     _bridge_fy_end_instants_to_q4,
     _fiscal_quarter_from_end,
+    _fiscal_year_from_end,
     _quarter_duration_values,
     _reconcile_financial_field_issues,
+    _upsert_period,
     _validated_sga_operating_bridge,
 )
 
@@ -613,3 +615,172 @@ def test_033_settings_consolidates_duplicate_job_views():
     assert "data-coverage-panel" in template
     assert '<p class="eyebrow">BACKGROUND WORK</p>' not in template
     assert '<p class="eyebrow">DATA INGESTION</p>' not in template
+
+
+def test_033_week_based_fiscal_year_end_does_not_create_fake_apple_history_holes():
+    # Apple-style 52/53-week years can close a few days after the SEC's current
+    # nominal fiscalYearEnd MMDD. Those are still the represented fiscal year,
+    # not the following one.
+    rows = [
+        _fact(start="2016-09-25", end="2017-09-30", value=229234, form="10-K", fp="FY", filed="2017-11-03"),
+        _fact(start="2017-10-01", end="2018-09-29", value=265595, form="10-K", fp="FY", filed="2018-11-05"),
+        _fact(start="2022-09-25", end="2023-09-30", value=383285, form="10-K", fp="FY", filed="2023-11-03"),
+        _fact(start="2023-10-01", end="2024-09-28", value=391035, form="10-K", fp="FY", filed="2024-11-01"),
+    ]
+    facts = {"facts": {"us-gaap": {"RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": rows}}}}}
+    annual = _annual_duration(facts, DURATION_TAGS["revenue"], "0927")
+
+    assert _fiscal_year_from_end(rows[0], "0927") == 2017
+    assert _fiscal_year_from_end(rows[2], "0927") == 2023
+    assert set(annual) == {2017, 2018, 2023, 2024}
+    assert annual[2017]["val"] == 229234
+    assert annual[2023]["val"] == 383285
+
+
+def test_033_current_basis_prefers_newer_or_same_date_fy_over_stale_ttm(tmp_path, monkeypatch):
+    from mfapp.current_financials import current_row
+
+    app = make_app(tmp_path, monkeypatch, "freshest_current_basis")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Fresh Filing Co", display_name="Fresh Filing Co")
+        db.session.add(company); db.session.flush()
+
+        fy = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2026,
+            start_date=date(2025, 6, 1), end_date=date(2026, 5, 31), currency="USD",
+        )
+        db.session.add(fy); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=fy.id,
+            revenue=Decimal("46398"), gross_profit=Decimal("19911"),
+            operating_income=Decimal("3797"), inventory=Decimal("7501"),
+            net_income=Decimal("3108"), cfo=Decimal("3500"), capex=Decimal("900"),
+            fcf=Decimal("2600"), source_map={"inventory": {"provider": "SEC"}}, quality={},
+        ))
+
+        # A complete same-date TTM is reconstructable, but its Q4 instant can be
+        # thinner than the audited FY balance sheet. FY and TTM are economically
+        # the same duration at year-end, so the richer filed FY must be current.
+        for period_type, end_date, revenue in (
+            ("Q1", date(2025, 8, 31), "11000"),
+            ("Q2", date(2025, 11, 30), "11200"),
+            ("Q3", date(2026, 2, 28), "11800"),
+            ("Q4", date(2026, 5, 31), "12398"),
+        ):
+            period = FinancialPeriod(
+                company_id=company.id, period_type=period_type, fiscal_year=2026,
+                end_date=end_date, currency="USD",
+            )
+            db.session.add(period); db.session.flush()
+            db.session.add(NormalizedFinancial(
+                financial_period_id=period.id,
+                revenue=Decimal(revenue), inventory=None,
+                source_map={"revenue": {"provider": "SEC"}}, quality={},
+            ))
+        db.session.commit()
+
+        current = current_row(company.id)
+        assert current is not None
+        assert current["period_type"] == "FY"
+        assert current["period_end"] == "2026-05-31"
+        assert current["revenue"] == 46398.0
+        assert current["inventory"] == 7501.0
+        assert current["metrics"]["operating_margin_pct"] is not None
+        assert current["comparison_basis"] == "LATEST_FILED_FY"
+
+
+def test_033_newer_fy_beats_older_ttm_after_new_10k(tmp_path, monkeypatch):
+    from mfapp.current_financials import current_row
+
+    app = make_app(tmp_path, monkeypatch, "new_10k_basis")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="July Software Co", display_name="July Software Co")
+        db.session.add(company); db.session.flush()
+
+        fy = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2026,
+            start_date=date(2025, 8, 1), end_date=date(2026, 7, 31), currency="USD",
+        )
+        db.session.add(fy); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=fy.id,
+            revenue=Decimal("21448"), operating_income=Decimal("5884"),
+            net_income=Decimal("4566"), cfo=Decimal("7000"), capex=Decimal("1200"),
+            fcf=Decimal("5800"), source_map={"revenue": {"provider": "SEC"}}, quality={},
+        ))
+
+        # Latest reconstructable TTM ends at Q3 because Q4 has not been derived.
+        for period_type, fiscal_year, end_date, revenue in (
+            ("Q4", 2025, date(2025, 7, 31), "4500"),
+            ("Q1", 2026, date(2025, 10, 31), "4800"),
+            ("Q2", 2026, date(2026, 1, 31), "5000"),
+            ("Q3", 2026, date(2026, 4, 30), "5200"),
+        ):
+            period = FinancialPeriod(
+                company_id=company.id, period_type=period_type, fiscal_year=fiscal_year,
+                end_date=end_date, currency="USD",
+            )
+            db.session.add(period); db.session.flush()
+            db.session.add(NormalizedFinancial(
+                financial_period_id=period.id, revenue=Decimal(revenue),
+                source_map={"revenue": {"provider": "SEC"}}, quality={},
+            ))
+        db.session.commit()
+
+        current = current_row(company.id)
+        assert current is not None
+        assert current["period_type"] == "FY"
+        assert current["period_end"] == "2026-07-31"
+        assert current["revenue"] == 21448.0
+        assert round(current["metrics"]["operating_margin_pct"], 2) == round(5884 / 21448 * 100, 2)
+
+
+def test_033_user_facing_templates_never_hardcode_release_versions():
+    import re
+    from pathlib import Path
+
+    templates = Path(__file__).resolve().parents[1] / "mfapp" / "templates"
+    offenders = []
+    for template in templates.glob("*.html"):
+        for line_no, line in enumerate(template.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"\b0\.\d+\.\d+\b", line):
+                offenders.append(f"{template.name}:{line_no}:{line.strip()}")
+    assert offenders == [], "User-facing templates must not hardcode product/release versions: " + " | ".join(offenders)
+
+
+def test_033_parser_revision_repairs_same_end_date_fiscal_label_in_place(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "period_relabel_in_place")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Week Calendar Co", display_name="Week Calendar Co")
+        db.session.add(company); db.session.flush()
+        source = Source(
+            company_id=company.id, provider="SEC", source_type="COMPANYFACTS",
+            title="test", url="https://example.test", retrieved_at=datetime.utcnow(),
+            content_hash="test-period-relabel", meta={},
+        )
+        db.session.add(source); db.session.flush()
+
+        # Simulate the old bug: Sep 30, 2023 was incorrectly labeled FY2024.
+        stale = FinancialPeriod(
+            company_id=company.id, source_id=source.id, period_type="FY",
+            fiscal_year=2024, end_date=date(2023, 9, 30), currency="USD",
+        )
+        db.session.add(stale); db.session.flush()
+        stale_id = stale.id
+        db.session.commit()
+
+        repaired = _upsert_period(
+            company, source, period_type="FY", fiscal_year=2023,
+            end_date=date(2023, 9, 30),
+            anchor={"end": "2023-09-30", "filed": "2023-11-03", "accn": "TEST-AAPL-2023"},
+        )
+        db.session.flush()
+
+        assert repaired.id == stale_id
+        assert repaired.fiscal_year == 2023
+        assert FinancialPeriod.query.filter_by(
+            company_id=company.id, period_type="FY", end_date=date(2023, 9, 30)
+        ).count() == 1

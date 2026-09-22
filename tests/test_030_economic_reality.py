@@ -490,7 +490,7 @@ def test_030_fundamentals_template_exposes_complete_forensic_contract():
 
     template = Path("mfapp/templates/company_section.html").read_text(encoding="utf-8")
     for marker in (
-        "FUNDAMENTALS FORENSICS · 0.3.0",
+        "FUNDAMENTALS FORENSICS",
         "CURRENT FINANCIAL ANATOMY",
         "EVIDENCE / PROVENANCE",
         "Full Economic Reality ledger",
@@ -499,6 +499,7 @@ def test_030_fundamentals_template_exposes_complete_forensic_contract():
         "All visible gaps",
     ):
         assert marker in template
+    assert "FUNDAMENTALS FORENSICS · 0.3.0" not in template
 
 
 def test_030_full_report_contract_carries_fundamentals_forensics_source():

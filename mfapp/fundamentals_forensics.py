@@ -16,7 +16,7 @@ from .company_quality import build_company_quality
 from .economic_reality import economic_from_row, metric as economic_metric
 
 
-ENGINE_VERSION = "0.3.0"
+ENGINE_VERSION = "fundamentals-forensics-v2"
 
 
 def n(value: Any) -> float | None:
@@ -319,7 +319,7 @@ def build_fundamentals_forensics(
     if not economic:
         data_gaps.append(_item(
             "ECONOMIC_REALITY_MISSING", "Economic Reality not materialized",
-            "This stored filing basis predates the 0.3.0 accounting classification. Refresh SEC before treating leverage, EV/Sales or accounting-quality conclusions as decision-grade.",
+            "This stored filing basis predates the current accounting classification. Refresh SEC before treating leverage, EV/Sales or accounting-quality conclusions as decision-grade.",
             "data", "UNRESOLVED",
         ))
     elif economic.get("material_unresolved"):
