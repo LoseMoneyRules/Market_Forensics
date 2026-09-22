@@ -602,9 +602,15 @@ def _finish_normalized(
         row.fcf = row.cfo - row.capex
     row.source_map = source_map
     quality = dict(row.quality or {})
+    retained = sorted(
+        field for field, ref in source_map.items()
+        if isinstance(ref, dict) and ref.get("refresh_state") == "LAST_GOOD_RETAINED"
+    )
     quality.update({
         "provider": "SEC", "filing_aware": True, "raw_facts_persisted": True,
         "period_type": period_type, "ttm_eligible": period_type in {"Q1", "Q2", "Q3", "Q4"},
+        "retained_last_good_fields": retained,
+        "provider_refresh_complete": not retained,
     })
     if economic_reality is not None:
         quality["economic_reality"] = economic_reality
@@ -1108,23 +1114,29 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         end_date = date.fromisoformat(str(anchor["end"])[:10])
         period = _upsert_period(company, source, period_type="FY", fiscal_year=fy, end_date=end_date, anchor=anchor)
         normalized = _normalized(period)
-        source_map: dict[str, Any] = {}
+        source_map: dict[str, Any] = dict(normalized.source_map or {})
         for field, records in duration.items():
             rec = records.get(fy)
             _record_raw(period, source, rec)
-            setattr(normalized, field, _as_decimal((rec or {}).get("val")))
-            if rec:
+            value = _as_decimal((rec or {}).get("val"))
+            if rec and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {"tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap", "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id, "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY"}
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
         for field, records in instant.items():
             rec = records.get(fy)
             _record_raw(period, source, rec)
-            setattr(normalized, field, _as_decimal((rec or {}).get("val")))
-            if rec:
+            value = _as_decimal((rec or {}).get("val"))
+            if rec and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
                     "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
                     "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_FY",
                 }
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
 
         debt_value, debt_records, debt_method = _compose_debt(
             instant.get("debt", {}).get(fy), debt_current_annual.get(fy), debt_noncurrent_annual.get(fy), debt_short_annual.get(fy)
@@ -1156,10 +1168,16 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         )
         for field, ref in source_map.items():
             db.session.add(Provenance(source_id=source.id, object_type="normalized_financial", object_id=str(period.id), field_name=field, raw_or_normalized="NORMALIZED", financial_period_id=period.id, provider="SEC", freshness_at=utcnow(), calculation_version=CALCULATION_VERSION, notes=f"{ref.get('tag','')} / {ref.get('accession','')} / {ref.get('method','')}"))
+        missing_revenue_issue = DataQualityIssue.query.filter_by(
+            company_id=company.id, object_type="financial_period", object_id=str(period.id),
+            code="MISSING_REVENUE", status="OPEN",
+        ).first()
         if normalized.revenue is None:
-            exists = DataQualityIssue.query.filter_by(company_id=company.id, object_type="financial_period", object_id=str(period.id), code="MISSING_REVENUE", status="OPEN").first()
-            if not exists:
+            if not missing_revenue_issue:
                 db.session.add(DataQualityIssue(company_id=company.id, object_type="financial_period", object_id=str(period.id), code="MISSING_REVENUE", severity="REVIEW", message=f"FY{fy}: revenue was not resolved from SEC Companyfacts."))
+        elif missing_revenue_issue:
+            missing_revenue_issue.status = "RESOLVED"
+            missing_revenue_issue.resolved_at = utcnow()
         annual_saved += 1
 
     quarter_duration: dict[str, dict[tuple[int, str], dict[str, Any]]] = {}
@@ -1201,31 +1219,37 @@ def refresh_company_fundamentals(company: Company, security: Security, user_id: 
         end_date = date.fromisoformat(str(anchor.get("end"))[:10])
         period = _upsert_period(company, source, period_type=fp, fiscal_year=fy, end_date=end_date, anchor=anchor)
         normalized = _normalized(period)
-        source_map: dict[str, Any] = {}
+        source_map: dict[str, Any] = dict(normalized.source_map or {})
         for field, records in quarter_duration.items():
             info = records.get((fy, fp)) or {}
             record = info.get("record")
             for raw in info.get("derived_from") or []:
                 _record_raw(period, source, raw)
             _record_raw(period, source, record)
-            setattr(normalized, field, info.get("value"))
-            if info:
+            value = info.get("value")
+            if info and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": (record or {}).get("tag"), "accession": (record or {}).get("accn"),
                     "filed": (record or {}).get("filed"), "source_id": source.id,
                     "namespace": (record or {}).get("_mf_namespace") or (record or {}).get("namespace") or "us-gaap",
                     "method": "SEMANTIC_LABEL_FALLBACK" if (record or {}).get("_mf_semantic_fallback") else info.get("method"),
                 }
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
         for field, records in quarter_instant.items():
             rec = records.get((fy, fp))
             _record_raw(period, source, rec)
-            setattr(normalized, field, _as_decimal((rec or {}).get("val")))
-            if rec:
+            value = _as_decimal((rec or {}).get("val"))
+            if rec and value is not None:
+                setattr(normalized, field, value)
                 source_map[field] = {
                     "tag": rec.get("tag"), "namespace": rec.get("_mf_namespace") or rec.get("namespace") or "us-gaap",
                     "accession": rec.get("accn"), "filed": rec.get("filed"), "source_id": source.id,
                     "method": "SEMANTIC_LABEL_FALLBACK" if rec.get("_mf_semantic_fallback") else "DIRECT_INSTANT",
                 }
+            elif getattr(normalized, field, None) is not None:
+                _mark_last_good_retained(source_map, field)
 
         debt_value, debt_records, debt_method = _compose_debt(
             quarter_instant.get("debt", {}).get((fy, fp)),
