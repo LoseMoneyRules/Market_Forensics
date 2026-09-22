@@ -580,7 +580,7 @@ def test_033_refresh_stale_reingests_coverage_with_old_financial_normalizer(tmp_
         ).first()
         assert result["coverage_scanned"] == 1
         assert sec_job is not None
-        assert SEC_NORMALIZER_VERSION == "0.3.3-financial-completeness"
+        assert SEC_NORMALIZER_VERSION == "0.3.3-production-data-truth-r3"
 
 
 def test_033_terminal_job_cleanup_preserves_row_and_marks_dismissed(tmp_path, monkeypatch):
@@ -784,3 +784,142 @@ def test_033_parser_revision_repairs_same_end_date_fiscal_label_in_place(tmp_pat
         assert FinancialPeriod.query.filter_by(
             company_id=company.id, period_type="FY", end_date=date(2023, 9, 30)
         ).count() == 1
+
+
+
+def test_033_live_read_prefers_rich_correct_row_over_newer_sparse_duplicate(tmp_path, monkeypatch):
+    from mfapp.current_financials import annual_rows, current_row
+
+    app = make_app(tmp_path, monkeypatch, "legacy_duplicate_read")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Legacy Duplicate Co", display_name="Legacy Duplicate Co")
+        db.session.add(company); db.session.flush()
+
+        correct = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2026,
+            end_date=date(2026, 5, 31), filed_at=date(2026, 7, 24), currency="USD",
+        )
+        db.session.add(correct); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=correct.id,
+            revenue=Decimal("46398"), gross_profit=Decimal("19911"),
+            operating_income=Decimal("3797"), inventory=Decimal("7501"),
+            net_income=Decimal("3108"), cfo=Decimal("3500"), capex=Decimal("900"),
+            fcf=Decimal("2600"),
+            source_map={
+                "revenue": {"provider": "SEC"},
+                "operating_income": {"provider": "SEC"},
+                "inventory": {"provider": "SEC"},
+            },
+            quality={},
+        ))
+
+        # Simulate production legacy pollution: same represented date, wrong FY,
+        # newer DB id, and a much thinner normalized shell.
+        stale = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2027,
+            end_date=date(2026, 5, 31), filed_at=date(2026, 7, 24), currency="USD",
+        )
+        db.session.add(stale); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=stale.id,
+            revenue=None, inventory=None, source_map={}, quality={},
+        ))
+        db.session.commit()
+
+        rows = annual_rows(company.id, 5)
+        assert len(rows) == 1
+        assert rows[0]["period_id"] == correct.id
+        assert rows[0]["fiscal_year"] == 2026
+        assert rows[0]["revenue"] == 46398.0
+        assert rows[0]["inventory"] == 7501.0
+        assert round(rows[0]["metrics"]["operating_margin_pct"], 2) == 8.18
+
+        current = current_row(company.id)
+        assert current["period_id"] == correct.id
+        assert current["inventory"] == 7501.0
+
+
+def test_033_exact_correct_period_quarantines_existing_same_end_stale_sibling(tmp_path, monkeypatch):
+    app = make_app(tmp_path, monkeypatch, "quarantine_duplicate_identity")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Quarantine Co", display_name="Quarantine Co")
+        db.session.add(company); db.session.flush()
+        source = Source(
+            company_id=company.id, provider="SEC", source_type="COMPANYFACTS",
+            title="test", url="https://example.test", retrieved_at=datetime.utcnow(),
+            content_hash="quarantine-test", meta={},
+        )
+        db.session.add(source); db.session.flush()
+
+        correct = FinancialPeriod(
+            company_id=company.id, source_id=source.id, period_type="FY",
+            fiscal_year=2023, end_date=date(2023, 9, 30), currency="USD",
+        )
+        db.session.add(correct); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=correct.id, revenue=Decimal("383285"),
+            source_map={"revenue": {"provider": "SEC"}}, quality={},
+        ))
+
+        stale = FinancialPeriod(
+            company_id=company.id, source_id=source.id, period_type="FY",
+            fiscal_year=2024, end_date=date(2023, 9, 30), currency="USD",
+        )
+        db.session.add(stale); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=stale.id, revenue=None, source_map={}, quality={},
+        ))
+        db.session.commit()
+
+        chosen = _upsert_period(
+            company, source, period_type="FY", fiscal_year=2023,
+            end_date=date(2023, 9, 30),
+            anchor={"end": "2023-09-30", "filed": "2023-11-03", "accn": "AAPL-2023"},
+        )
+        db.session.flush()
+
+        assert chosen.id == correct.id
+        stale = db.session.get(FinancialPeriod, stale.id)
+        assert stale.period_type == "SUPERSEDED_FY"
+        assert stale.normalized.quality["period_identity_state"] == "SUPERSEDED"
+        assert FinancialPeriod.query.filter_by(
+            company_id=company.id, period_type="FY", end_date=date(2023, 9, 30)
+        ).count() == 1
+
+
+def test_033_research_basis_ignores_legacy_duplicate_identity(tmp_path, monkeypatch):
+    from mfapp.research_basis import latest_financial_basis
+
+    app = make_app(tmp_path, monkeypatch, "canonical_research_basis")
+    with app.app_context():
+        db.create_all()
+        company = Company(legal_name="Basis Co", display_name="Basis Co")
+        db.session.add(company); db.session.flush()
+
+        correct = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2026,
+            end_date=date(2026, 7, 31), filed_at=date(2026, 9, 1), currency="USD",
+        )
+        db.session.add(correct); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=correct.id, revenue=Decimal("21448"),
+            operating_income=Decimal("5884"), source_map={"revenue": {"provider": "SEC"}}, quality={},
+        ))
+        stale = FinancialPeriod(
+            company_id=company.id, period_type="FY", fiscal_year=2027,
+            end_date=date(2026, 7, 31), filed_at=date(2026, 9, 1), currency="USD",
+        )
+        db.session.add(stale); db.session.flush()
+        db.session.add(NormalizedFinancial(
+            financial_period_id=stale.id, source_map={}, quality={},
+        ))
+        db.session.commit()
+
+        basis = latest_financial_basis(company.id)
+        assert basis["available"] is True
+        assert basis["period_id"] == correct.id
+        assert basis["fiscal_year"] == 2026
+        assert basis["period_end"] == "2026-07-31"
