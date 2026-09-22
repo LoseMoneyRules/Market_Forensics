@@ -1621,7 +1621,7 @@ The canonical validation policy is defined once and used by historical-run statu
 
 - VALIDATED requires at least 5 valid scored samples;
 - a valid scored sample must itself have been decision-grade at that historical cutoff: Base quality INTRINSIC, at least two independent valuation families, no reference-price fallback, and only evidence filed on or before the cutoff;
-- Valuation and Validate must use the same canonical valuation engine/version and the same regime-aware company-history rules. Validate may not use a simplified or legacy fair-value formula;
+- Valuation and Validate must use the same canonical valuation engine/version and the same regime-aware company-history rules. Validate may not use a simplified or legacy fair-value formula; a historical run from an older engine version is REVIEW/STALE until rerun and cannot support current Model Confidence;
 - structural-regime detection inside Validate is point-in-time: a historical sample may only detect changes visible by that date, never a later transformation;
 - VALIDATED requires reliability ≥ 65;
 - fewer than 5 valid samples is LIMITED regardless of a high reliability score;
