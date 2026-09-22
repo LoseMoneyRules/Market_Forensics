@@ -226,6 +226,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
     fcf_margins: list[float | None] = []
     operating_margins: list[float | None] = []
     ebitda_margins: list[float | None] = []
+    roic_values: list[float | None] = []
     ccc_values: list[float] = []
     share_values: list[float] = []
     earnings_normalization_review = False
@@ -267,6 +268,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
             row_ebitda / row_revenue
             if row_ebitda is not None and row_revenue not in (None, 0) else None
         )
+        roic_values.append((economic_metric(row_economic, "economic_roic_pct") / 100.0) if economic_metric(row_economic, "economic_roic_pct") is not None else None)
         ccc = _ccc_days(row)
         if ccc is not None:
             ccc_values.append(ccc)
@@ -315,6 +317,11 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         net_debt / latest_ebitda
         if net_debt is not None and latest_ebitda not in (None, 0) and latest_ebitda > 0 else None
     )
+    latest_dividends = abs(n(latest.get("dividends")) or 0.0)
+    retention_rate = clamp(1.0 - latest_dividends / net_income, -1.0, 1.0) if net_income not in (None, 0) and net_income > 0 else None
+    current_assets = economic_metric(economic, "current_assets")
+    current_liabilities = economic_metric(economic, "current_liabilities")
+    retained_earnings = economic_metric(economic, "retained_earnings")
     net_cash = max(0.0, -net_debt) if net_debt is not None else None
     cash_burn = max(0.0, -(fcf or 0.0)) if fcf is not None else 0.0
     liquidation_floor = (
@@ -368,6 +375,13 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
         "ebitda_margin": median([x for x in ebitda_margins[-3:] if x is not None]) if any(x is not None for x in ebitda_margins[-3:]) else None,
         "capex_to_revenue": capex_to_revenue,
         "economic_roic_pct": economic_metric(economic, "economic_roic_pct"),
+        "earnings_retention_rate": retention_rate,
+        "assets": n(latest.get("assets")),
+        "liabilities": n(latest.get("liabilities")),
+        "equity": n(latest.get("equity")),
+        "current_assets": current_assets,
+        "current_liabilities": current_liabilities,
+        "retained_earnings": retained_earnings,
         "rd_to_revenue_pct": economic_metric(economic, "rd_to_revenue_pct"),
         "sbc_to_revenue_pct": economic_metric(economic, "sbc_to_revenue_pct"),
         "interest_coverage_x": economic_metric(economic, "interest_coverage_x"),
@@ -393,6 +407,7 @@ def metrics_from_history(history: list[dict[str, Any]], shares_override: Any = N
             "fcf_margin": _distribution(fcf_margins[-10:]),
             "operating_margin": _distribution(operating_margins[-10:]),
             "ebitda_margin": _distribution(ebitda_margins[-10:]),
+            "economic_roic": _distribution(roic_values[-10:]),
             "share_growth": _distribution(share_growths[-10:]),
             "ccc_days": _distribution(ccc_values[-10:]),
         },
@@ -456,6 +471,7 @@ def calibrate_multiples(observations: list[dict[str, Any]], company_type: str = 
             "ev_sales": ((market_cap + net_debt) / revenue) if net_debt is not None and revenue not in (None, 0) and revenue > 0 else None,
             "ev_ebitda": ((market_cap + net_debt) / ebitda) if net_debt is not None and ebitda not in (None, 0) and ebitda > 0 else None,
             "fcf_yield": fcf / market_cap if fcf is not None and fcf > 0 and market_cap > 0 else None,
+            "p_b": market_cap / n(row.get("equity")) if n(row.get("equity")) not in (None, 0) and n(row.get("equity")) > 0 else None,
         }
         if out["pe"] is not None and not (2.0 <= out["pe"] <= 150.0):
             out["pe"] = None
@@ -467,11 +483,13 @@ def calibrate_multiples(observations: list[dict[str, Any]], company_type: str = 
             out["ev_ebitda"] = None
         if out["fcf_yield"] is not None and not (0.001 <= out["fcf_yield"] <= 0.50):
             out["fcf_yield"] = None
+        if out["p_b"] is not None and not (0.05 <= out["p_b"] <= 50.0):
+            out["p_b"] = None
         computed.append(out)
 
     stats: dict[str, Any] = {}
     result: dict[str, Any] = {}
-    for key in ("pe", "p_sales", "ev_sales", "ev_ebitda", "fcf_yield"):
+    for key in ("pe", "p_sales", "ev_sales", "ev_ebitda", "fcf_yield", "p_b"):
         values, horizon = _calibration_series(computed, key)
         if values:
             p10 = quantile(values, .10)
@@ -526,11 +544,22 @@ def _life_cycle(metrics: dict[str, Any], company_type: str) -> str:
             or (op_std is not None and op_std >= .055)
         )
     )
+    retention = n(metrics.get("earnings_retention_rate"))
+    roic = n(metrics.get("economic_roic_pct"))
     if volatility_evidence:
         return "CYCLICAL"
-    if growth_med is not None and growth_med >= .10 and reinvestment_high:
+    if (
+        growth_med is not None and growth_med >= .10
+        and (reinvestment_high or (retention is not None and retention >= .60))
+        and (roic is None or roic >= 8.0)
+    ):
         return "GROWTH"
-    if growth_med is not None and growth_med <= .06 and not reinvestment_high:
+    if (
+        growth_med is not None and growth_med <= .06
+        and (retention is None or retention <= .45)
+        and not reinvestment_high
+        and (roic is None or roic >= 6.0)
+    ):
         return "MATURE"
     return "STABLE"
 
@@ -679,6 +708,41 @@ def _method_policy(metrics: dict[str, Any], calibration: dict[str, Any], company
     return weights, sorted(exclusions), notes
 
 
+
+def _altman_z_score(metrics: dict[str, Any], company_type: str) -> dict[str, Any]:
+    """Classic public-company Altman Z where the required filed inputs exist.
+
+    This is a tail-risk cross-check, not a valuation method. Financial/REIT and
+    high-intangible software models are excluded because the classic formula is
+    not economically comparable for those balance sheets.
+    """
+    if company_type in {"Financial / REIT", "Software"}:
+        return {"available": False, "state": "NOT_APPLICABLE", "score": None}
+    assets = n(metrics.get("assets"))
+    liabilities = n(metrics.get("liabilities"))
+    current_assets = n(metrics.get("current_assets"))
+    current_liabilities = n(metrics.get("current_liabilities"))
+    retained_earnings = n(metrics.get("retained_earnings"))
+    ebit = n(metrics.get("operating_income"))
+    revenue = n(metrics.get("revenue"))
+    shares = n(metrics.get("shares"))
+    price = n(metrics.get("current_price"))
+    required = (assets, liabilities, current_assets, current_liabilities, retained_earnings, ebit, revenue, shares, price)
+    if any(value is None for value in required) or assets <= 0 or liabilities <= 0 or shares <= 0 or price <= 0:
+        return {"available": False, "state": "INSUFFICIENT", "score": None}
+    working_capital = current_assets - current_liabilities
+    market_equity = shares * price
+    score = (
+        1.2 * working_capital / assets
+        + 1.4 * retained_earnings / assets
+        + 3.3 * ebit / assets
+        + 0.6 * market_equity / liabilities
+        + 1.0 * revenue / assets
+    )
+    state = "DISTRESS" if score < 1.81 else "GREY" if score < 2.99 else "SAFE"
+    return {"available": True, "state": state, "score": score, "basis": "CLASSIC_PUBLIC_COMPANY_ALTMAN_Z"}
+
+
 def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibration: dict[str, Any] | None = None) -> dict[str, Any]:
     calibration = calibration or dict(metrics.get("historical_calibration") or {}) or {
         "source": "COMPANY_HISTORY_INSUFFICIENT",
@@ -743,15 +807,18 @@ def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibr
 
     interest_coverage = n(metrics.get("interest_coverage_x"))
     fixed_coverage = n(metrics.get("fixed_charge_coverage_x"))
+    altman = _altman_z_score(metrics, company_type)
     if (
-        (leverage is not None and leverage >= 5.0)
+        (altman.get("state") == "DISTRESS")
+        or (leverage is not None and leverage >= 5.0)
         or (interest_coverage is not None and interest_coverage < 1.5)
         or (fixed_coverage is not None and fixed_coverage < 1.2)
     ):
         solvency_state = "DISTRESS"
         bear_multiplier, base_multiplier = .65, .90
     elif (
-        (leverage is not None and leverage >= 3.5)
+        (altman.get("state") == "GREY")
+        or (leverage is not None and leverage >= 3.5)
         or (interest_coverage is not None and interest_coverage < 2.5)
         or (fixed_coverage is not None and fixed_coverage < 2.0)
     ):
@@ -841,6 +908,7 @@ def default_cases(metrics: dict[str, Any], company_type: str = "Generic", calibr
             "monte_carlo_draws": MONTE_CARLO_DRAWS,
             "life_cycle": life_cycle,
             "solvency_state": solvency_state,
+            "altman_z": altman,
             "leverage_discount_premium": leverage_premium,
             "ccc_discount_adjustment": ccc_adjustment,
             "capital_efficiency_discount_adjustment": capital_efficiency_adjustment,
@@ -1166,6 +1234,7 @@ def _monte_carlo_distribution(
         "p90": p90,
         "freshness_scale": freshness_scale,
         "market_move_since_filing_pct": move,
+        "pb_deviation_from_history_pct": pb_deviation,
         "solvency": solvency,
         "solvency_tail_factor": tail_factor,
         "basis": "DETERMINISTIC_SEEDED_TRIANGULAR_INPUTS_FROM_COMPANY_HISTORY",
