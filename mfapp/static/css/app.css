@@ -3,7 +3,7 @@
   --navy:#0b1f33;--navy-2:#12314f;--navy-3:#1b4268;--ink:#14202b;--muted:#6d7a86;--line:#d9e0e6;
   --paper:#f6f8fa;--white:#fff;--soft:#eef3f6;--teal:#137c82;--teal-soft:#e9f5f4;--amber:#a96f00;--amber-soft:#fff5dd;
   --danger:#a13b3b;--danger-soft:#fff0ef;--success:#1f7a54;--shadow:0 1px 2px rgba(11,31,51,.05),0 8px 26px rgba(11,31,51,.06);
-  --radius:12px;--sidebar:208px;--topbar:64px;--safe-top:env(safe-area-inset-top,0px);--safe-right:env(safe-area-inset-right,0px);--safe-bottom:env(safe-area-inset-bottom,0px);--safe-left:env(safe-area-inset-left,0px);
+  --radius:12px;--sidebar:208px;--topbar:64px;--safe-top:env(safe-area-inset-top,0px);--safe-right:env(safe-area-inset-right,0px);--safe-bottom:env(safe-area-inset-bottom,0px);--safe-left:env(safe-area-inset-left,0px);--surface:var(--white);--surface-soft:var(--soft);--text:var(--ink);--warning:var(--semantic-caution);--space-3:12px;--space-5:20px;
   --positive:#1f7a54;--positive-2:#176543;--positive-soft:#e9f5ef;--negative:#a13b3b;--watch:#9a6a12;
   --primary:#3a6f99;--primary-2:#2e5d82;--primary-soft:#eaf1f7;--primary-line:#bdd0df;
   --mf-bull:#39745d;--mf-bull-soft:#edf7f1;--mf-bear:#a04444;--mf-bear-soft:#fbefef;--mf-neutral:#667785;--mf-neutral-soft:#f1f4f6;--mf-zero:#8d99a3;

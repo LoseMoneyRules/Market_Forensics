@@ -52,3 +52,12 @@ def test_037_desktop_visual_contract_stays_institutional():
         assert forbidden not in css
     assert "--mf-body-size:14px" in css
     assert ".navitem,.company-tabs a,.company-tabs a.active,.view-switch a,.tape-controls a,.role-pill{font-weight:400}" in css
+
+
+def test_037_css_runtime_tokens_are_fully_defined():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    defined = set(re.findall(r"--([A-Za-z0-9_-]+)\s*:", css))
+    referenced = set(re.findall(r"var\(--([A-Za-z0-9_-]+)", css))
+    assert referenced <= defined
+    for token in ("surface", "surface-soft", "text", "warning", "space-3", "space-5"):
+        assert token in defined
