@@ -82,3 +82,35 @@ def test_037_intermediate_desktop_topbar_does_not_collide():
     css = (ROOT / "mfapp/static/css/app.css").read_text()
     assert "@media(min-width:821px) and (max-width:1100px)" in css
     assert ".view-switch span,.role-pill{display:none}" in css
+
+
+def test_037_discovery_summary_wraps_long_stage_labels():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    discovery = (ROOT / "mfapp/templates/discovery.html").read_text()
+    assert "Stage 1.5 MISPRICING" in discovery
+    assert ".scan-summary .status-chip{max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.3}" in css
+    assert ".scan-summary small,.discovery-method span{min-width:0;max-width:100%;overflow-wrap:anywhere}" in css
+
+
+def test_037_small_tables_do_not_inherit_wide_table_minimum():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    company = (ROOT / "mfapp/templates/company_section.html").read_text()
+    portfolio = (ROOT / "mfapp/templates/portfolio.html").read_text()
+    settings = (ROOT / "mfapp/templates/settings.html").read_text()
+
+    assert ".data-table.compact-table{min-width:0}" in css
+    assert ".data-table.compact-table th,.data-table.compact-table td{white-space:normal;overflow-wrap:anywhere;padding:10px 11px}" in css
+    assert company.count("compact-table") >= 3
+    assert portfolio.count("compact-table") >= 2
+    assert settings.count("compact-table") >= 1
+    assert ".coverage-table{width:100%;min-width:1040px" in css
+    assert ".tape-flow-table .data-table{min-width:980px}" in css
+    assert ".recent-jobs .data-table{min-width:900px}" in css
+
+
+def test_037_mobile_tools_button_stays_right_when_ticker_appears():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    base = (ROOT / "mfapp/templates/base.html").read_text()
+    assert 'id="mf-mobile-tools"' in base
+    assert ".mobile-tools-button{margin-left:auto}" in css
+    assert ".security-context-visible .brand{flex:0 1 auto}" in css

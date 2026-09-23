@@ -433,6 +433,8 @@ UI rules also include:
 - neutral must never be rendered as caution merely because it is undecided, and dark mode must preserve the same semantic meaning rather than flattening all chips to one generic color;
 - on company/research pages, once the main company header scrolls away, a compact ticker + latest stored/live price remains visible in the top bar so the active security is never ambiguous;
 - desktop problems are not solved only with horizontal scrolling;
+- dynamic summary/status chips that can contain long data-driven labels must wrap within their container rather than use unbounded no-wrap text;
+- the generic wide-table minimum is for genuinely wide evidence tables; two/three-column tables must opt into compact sizing and wrapping instead of creating unnecessary horizontal scroll or oversized mobile surfaces;
 - empty decorative panels should not be rendered;
 - footer remains Lose Money Rules;
 - responsive shells must respect iOS safe-area insets; fixed topbar, mobile navigation and tools share one height/offset contract;
@@ -440,6 +442,7 @@ UI rules also include:
 - iPhone layouts must preserve readable 13–14 px information density and 44 px interactive touch targets without hiding decision evidence;
 - on iPhone, form controls may use 16 px text to prevent Safari focus zoom while surrounding information typography remains 13–14 px; stacked mobile rows must wrap decision-relevant text rather than retain desktop ellipsis;
 - transient phone chrome such as auth and flash surfaces must respect safe-area insets, and micro actions that remain interactive on phone must preserve practical touch targets;
+- the mobile tools control must remain anchored to the right edge when sticky ticker/price context appears or disappears; security-context visibility must not move primary mobile chrome;
 - Settings is the only normal user-facing application-version surface;
 - one canonical company header;
 - one canonical mobile navigation; the drawer/control shell owns phone and tablet portrait navigation and must never leave an intermediate width without a reachable primary menu;
