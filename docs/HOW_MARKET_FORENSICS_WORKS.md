@@ -438,6 +438,8 @@ UI rules also include:
 - responsive shells must respect iOS safe-area insets; fixed topbar, mobile navigation and tools share one height/offset contract;
 - page-level horizontal overflow is a defect; intentionally wide tables/charts must contain their own scrolling without widening the viewport;
 - iPhone layouts must preserve readable 13–14 px information density and 44 px interactive touch targets without hiding decision evidence;
+- on iPhone, form controls may use 16 px text to prevent Safari focus zoom while surrounding information typography remains 13–14 px; stacked mobile rows must wrap decision-relevant text rather than retain desktop ellipsis;
+- transient phone chrome such as auth and flash surfaces must respect safe-area insets, and micro actions that remain interactive on phone must preserve practical touch targets;
 - Settings is the only normal user-facing application-version surface;
 - one canonical company header;
 - one canonical mobile navigation; the drawer/control shell owns phone and tablet portrait navigation and must never leave an intermediate width without a reachable primary menu;
