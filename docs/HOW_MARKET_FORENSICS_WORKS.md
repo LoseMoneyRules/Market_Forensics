@@ -442,6 +442,7 @@ UI rules also include:
 - iPhone layouts must preserve readable 13–14 px information density and 44 px interactive touch targets without hiding decision evidence;
 - on iPhone, form controls may use 16 px text to prevent Safari focus zoom while surrounding information typography remains 13–14 px; stacked mobile rows must wrap decision-relevant text rather than retain desktop ellipsis;
 - transient phone chrome such as auth and flash surfaces must respect safe-area insets, and micro actions that remain interactive on phone must preserve practical touch targets;
+- the mobile tools control must remain anchored to the right edge when sticky ticker/price context appears or disappears; security-context visibility must not move primary mobile chrome;
 - Settings is the only normal user-facing application-version surface;
 - one canonical company header;
 - one canonical mobile navigation; the drawer/control shell owns phone and tablet portrait navigation and must never leave an intermediate width without a reachable primary menu;

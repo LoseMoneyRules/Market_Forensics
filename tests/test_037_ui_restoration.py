@@ -106,3 +106,11 @@ def test_037_small_tables_do_not_inherit_wide_table_minimum():
     assert ".coverage-table{width:100%;min-width:1040px" in css
     assert ".tape-flow-table .data-table{min-width:980px}" in css
     assert ".recent-jobs .data-table{min-width:900px}" in css
+
+
+def test_037_mobile_tools_button_stays_right_when_ticker_appears():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    base = (ROOT / "mfapp/templates/base.html").read_text()
+    assert 'id="mf-mobile-tools"' in base
+    assert ".mobile-tools-button{margin-left:auto}" in css
+    assert ".security-context-visible .brand{flex:0 1 auto}" in css
