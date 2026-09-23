@@ -117,14 +117,14 @@
     <div class="panel">
       <div class="panel-head"><div><p class="eyebrow">EXPOSURE</p><h2>Manual factor map</h2><p class="muted">Tags expose shared drivers that sector labels can hide.</p></div></div>
       {% if totals.factor_exposure %}
-      <div class="table-card embedded"><table class="data-table numeric"><thead><tr><th>Factor</th><th>Gross value</th><th>Share of tagged gross</th></tr></thead><tbody>{% for item in totals.factor_exposure %}<tr><td>{{ item.tag }}</td><td>&#36;{{ '{:,.0f}'.format(item.market_value) }}</td><td>{{ '%.1f'|format(item.gross_pct) }}%</td></tr>{% endfor %}</tbody></table></div>
+      <div class="table-card embedded"><table class="data-table numeric compact-table"><thead><tr><th>Factor</th><th>Gross value</th><th>Share of tagged gross</th></tr></thead><tbody>{% for item in totals.factor_exposure %}<tr><td>{{ item.tag }}</td><td>&#36;{{ '{:,.0f}'.format(item.market_value) }}</td><td>{{ '%.1f'|format(item.gross_pct) }}%</td></tr>{% endfor %}</tbody></table></div>
       {% else %}<p class="muted">Add exposure tags to positions to build this map.</p>{% endif %}
     </div>
 
     <div class="panel">
       <div class="panel-head"><div><p class="eyebrow">PORTFOLIO RISK</p><h2>Highest pairwise correlations</h2><p class="muted">Stored split-adjusted daily returns. Descriptive only.</p></div></div>
       {% if totals.correlations %}
-      <div class="table-card embedded scroll"><table class="data-table numeric"><thead><tr><th>Pair</th><th>Correlation</th><th>Samples</th></tr></thead><tbody>{% for pair in totals.correlations[:10] %}<tr><td>{{ pair.left }} / {{ pair.right }}</td><td>{{ '%+.2f'|format(pair.correlation) }}</td><td>{{ pair.samples }}</td></tr>{% endfor %}</tbody></table></div>
+      <div class="table-card embedded scroll"><table class="data-table numeric compact-table"><thead><tr><th>Pair</th><th>Correlation</th><th>Samples</th></tr></thead><tbody>{% for pair in totals.correlations[:10] %}<tr><td>{{ pair.left }} / {{ pair.right }}</td><td>{{ '%+.2f'|format(pair.correlation) }}</td><td>{{ pair.samples }}</td></tr>{% endfor %}</tbody></table></div>
       {% else %}<p class="muted">Correlation analytics will appear after enough price history is stored.</p>{% endif %}
     </div>
   </div>

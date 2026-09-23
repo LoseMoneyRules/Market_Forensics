@@ -433,6 +433,8 @@ UI rules also include:
 - neutral must never be rendered as caution merely because it is undecided, and dark mode must preserve the same semantic meaning rather than flattening all chips to one generic color;
 - on company/research pages, once the main company header scrolls away, a compact ticker + latest stored/live price remains visible in the top bar so the active security is never ambiguous;
 - desktop problems are not solved only with horizontal scrolling;
+- dynamic summary/status chips that can contain long data-driven labels must wrap within their container rather than use unbounded no-wrap text;
+- the generic wide-table minimum is for genuinely wide evidence tables; two/three-column tables must opt into compact sizing and wrapping instead of creating unnecessary horizontal scroll or oversized mobile surfaces;
 - empty decorative panels should not be rendered;
 - footer remains Lose Money Rules;
 - responsive shells must respect iOS safe-area insets; fixed topbar, mobile navigation and tools share one height/offset contract;
