@@ -59,7 +59,7 @@ def test_0213_css_readability_responsive_and_cleanup_contract():
     assert ".table-card,.table-wrap{width:100%;overflow-x:auto;overflow-y:hidden" in css
     assert "@media(max-width:820px){" in css
     assert "body.nav-open,body.tools-open{overflow:hidden}" in css
-    assert ":root{--topbar:58px}" in css
+    assert ":root{--topbar:calc(58px + var(--safe-top))}" in css
     assert "width:44px;height:44px" in css
     assert ".company-tabs-toggle{display:flex;width:100%;min-height:44px" in css
     assert "@media(max-width:540px)" in css
@@ -100,7 +100,7 @@ def test_0213_narrow_phone_layout_stacks_dense_controls_without_hiding_informati
     assert ".discovery-list-row{grid-template-columns:1fr}" in css
     assert ".discovery-list-action,.discovery-list-action form,.discovery-list-action .button{width:100%}" in css
     assert ".panel-head{align-items:flex-start;flex-wrap:wrap}" in css
-    assert "max-height:calc(100dvh - 76px);overflow-y:auto" in css
+    assert "max-height:calc(100dvh - var(--topbar) - 18px);overflow-y:auto" in css
     assert "padding-bottom:max(18px,env(safe-area-inset-bottom))" in css
     assert "preview-mode" in base
     assert ".preview-mode .app-shell{padding-top:" in css
