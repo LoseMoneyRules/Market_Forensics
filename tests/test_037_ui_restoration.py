@@ -61,3 +61,24 @@ def test_037_css_runtime_tokens_are_fully_defined():
     assert referenced <= defined
     for token in ("surface", "surface-soft", "text", "warning", "space-3", "space-5"):
         assert token in defined
+
+
+def test_037_mobile_interactions_are_touchable_without_ios_focus_zoom():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    assert ".button.micro,.flow-tab,.tape-controls a,.company-tabs a,.top-actions .theme-toggle,.top-actions .view-switch a{min-height:44px}" in css
+    assert "input,textarea,select{font-size:16px}" in css
+    assert ".flash-stack{top:calc(var(--topbar) + 10px)" in css
+    assert "padding:max(24px,var(--safe-top))" in css
+
+
+def test_037_mobile_stacked_decision_text_remains_visible():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    assert ".gate-row .gate-status{grid-column:1;grid-row:2" in css
+    assert ".discovery-list-title>span:last-child,.discovery-list-reason span{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}" in css
+    assert ".notice,.panel-head p,.list-row p,.company-states{overflow-wrap:anywhere}" in css
+
+
+def test_037_intermediate_desktop_topbar_does_not_collide():
+    css = (ROOT / "mfapp/static/css/app.css").read_text()
+    assert "@media(min-width:821px) and (max-width:1100px)" in css
+    assert ".view-switch span,.role-pill{display:none}" in css
