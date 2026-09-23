@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.6  
+**Current product line:** 0.3.7  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -435,6 +435,9 @@ UI rules also include:
 - desktop problems are not solved only with horizontal scrolling;
 - empty decorative panels should not be rendered;
 - footer remains Lose Money Rules;
+- responsive shells must respect iOS safe-area insets; fixed topbar, mobile navigation and tools share one height/offset contract;
+- page-level horizontal overflow is a defect; intentionally wide tables/charts must contain their own scrolling without widening the viewport;
+- iPhone layouts must preserve readable 13–14 px information density and 44 px interactive touch targets without hiding decision evidence;
 - Settings is the only normal user-facing application-version surface;
 - one canonical company header;
 - one canonical mobile navigation; the drawer/control shell owns phone and tablet portrait navigation and must never leave an intermediate width without a reachable primary menu;
