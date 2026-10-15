@@ -198,7 +198,9 @@
         delete priceMeta.dataset.semantic;
         const dot = document.createElement('i');
         dot.className = 'live-dot' + (q.fresh ? '' : ' stale');
-        priceMeta.append(dot, document.createTextNode((q.provider || 'quote') + ' · ' + fmtTime(q.as_of)));
+        const problem = q.quality === 'DISPUTED_OBSERVED' ? ' · PROVIDERS DISAGREE · NOT DECISION-GRADE' : (!q.as_of || !q.fresh ? ' · CHECK FRESHNESS' : '');
+        priceMeta.append(dot, document.createTextNode((q.provider || 'quote') + ' · ' + (fmtTime(q.as_of) || 'time unknown') + problem));
+        if (q.quality === 'DISPUTED_OBSERVED' || !q.as_of) priceMeta.dataset.semantic = 'caution';
       }
       return q;
     } catch (_) {
