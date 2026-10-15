@@ -9,6 +9,15 @@
     </div>
   </div>
   <div class="company-actions">
+    {% if coverage is defined and coverage and request.endpoint in ['web.company_section', 'web.valuation_company', 'web.validate_company', 'web.financial_flows'] %}
+    <form class="company-refresh-form" method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='all') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="button primary" type="submit">Update {{ security.ticker }}</button>
+      {% if company_refresh_job is defined and company_refresh_job %}
+      <small class="muted" aria-live="polite">{{ company_refresh_job.status }}{% if company_refresh_job.result and company_refresh_job.result.current_stage %} · {{ company_refresh_job.result.current_stage|replace('_', ' ') }}{% endif %}</small>
+      {% else %}<small class="muted">Complete Research refresh</small>{% endif %}
+    </form>
+    {% endif %}
     <div class="company-market">
       <span>Current price · refreshes every 5 min</span>
       <strong data-live-price>{% if market %}${{ '%.2f'|format(market.price|float) }}{% else %}—{% endif %}</strong>
