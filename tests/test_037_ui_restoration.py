@@ -10,9 +10,9 @@ def test_037_release_identity_and_scope_are_synced():
     version = (ROOT / "VERSION").read_text().strip()
     current = (ROOT / "docs/CURRENT_STATE.md").read_text()
     how = (ROOT / "docs/HOW_MARKET_FORENSICS_WORKS.md").read_text()
-    assert version == "0.4.1"
-    assert "**State-Version: 0.4.1**" in current
-    assert "**Current product line:** 0.4.1" in how
+    assert version == "0.4.2"
+    assert "**State-Version: 0.4.2**" in current
+    assert "**Current product line:** 0.4.2" in how
     assert "release/0.3.7-ui-restoration" in current
     assert "UI/UX restoration and responsive consolidation only" in current
 
