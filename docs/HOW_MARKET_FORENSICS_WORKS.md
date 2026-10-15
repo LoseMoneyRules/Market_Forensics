@@ -8,7 +8,7 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.3.7  
+**Current product line:** 0.4.0  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
@@ -528,7 +528,7 @@ The main worker command is:
 
 python manage.py run-jobs --limit 5
 
-Production normally runs this from cron, with a browser-triggered detached fallback when necessary.
+Production runs this from cPanel cron every minute; explicit Research refresh also starts a detached server-side bounded queue drain (\x60manage.py run-jobs --limit 5 --user-id USER --drain\x60). The browser remains a status observer and fallback.
 
 Duplicate active jobs are compacted rather than multiplied.
 
@@ -536,9 +536,19 @@ Dead RUNNING leases are recovered so one crashed worker cannot block the queue f
 
 A failed execution is transaction-safe: uncommitted business/data writes from that attempt are rolled back before the durable Job / RefreshRun / CalculationRun failure record is written. CONTROL may dismiss FAILED/CANCELLED rows from the operational queue without deleting the job or its audit/execution history.
 
-**Data ingestion is a subset of background work, not a second executor.** SEC, quotes, price history and FINRA are ingestion jobs; recalculation, validation, Discovery, management scans and Portfolio analytics are other background jobs on the same queue/executor. Settings therefore presents one Data Operations view with queue state plus execution history.
+**Data ingestion is a subset of background work, not a second executor.** SEC, quotes, price history and FINRA are ingestion jobs; recalculation, validation, Discovery, management scans and Portfolio analytics are other background jobs on the same queue/executor. Settings therefore presents one Data Operations view with queue state plus execution history; the only user-facing company-evidence update actions are in Research Command Center and the company header.
 
 `Refresh stale` treats an obsolete SEC financial normalizer revision as stale evidence even when the last SEC job ran recently. This is the supported bulk-migration path after a normalizer correction: all affected Coverage can be re-ingested and recalculated without opening each ticker individually.
+
+### 4.3.1 Canonical 0.4.0 Research update workflow
+
+The analyst uses one **Update all securities** button at Research Command Center or **Update TICKER** from the company header. A new ticker also receives one orchestrated Research refresh. Normal navigation remains provider-free.
+
+The durable global refresh planner enqueues one `RESEARCH_REFRESH` per active Coverage security, instead of a separate queue job for every provider followed by repeated recalculation. Within that job, stored fresh evidence is reused according to provider-specific minimum ages and SEC normalizer identity. Market, historical prices, SEC, macro, FINRA, positioning and management are independently audited via `RefreshRun`; even when a provider fails the remaining stages proceed and the result is marked PARTIAL rather than silently claiming full success. One final `RECALCULATE` builds the canonical Research cache after the evidence pass. The job does not discard last-known valid financials or invent missing values.
+
+The POST launches a detached server-side, lock-protected bounded queue drain, so work continues even when the browser closes. The mandatory cPanel cron must still run every minute, picking up pending work after hosting termination/restart or a failed process. An open browser merely observes status and can start a fallback consumer. A server-side dispatcher is not proof that the production cron is enabled; cron presence must be confirmed in cPanel.
+
+One-click data refresh updates stored/derived Research and downstream read surfaces without automatically approving gates, republishing reports, changing manual thesis/assumptions or executing a new historical walk-forward validation. When a new filing changes the financial basis, the existing human re-review/revalidation rules continue to apply. Discovery's full-market scan and deliberate Validate tests remain distinct background actions, not a concealed part of routine company-data ingestion.
 
 ### 4.4 Research cache
 
