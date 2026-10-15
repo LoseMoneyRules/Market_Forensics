@@ -8,11 +8,27 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.4.1  
+**Current product line:** 0.4.2  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
 **Primary operating rule:** ADD ON EVIDENCE, NOT ON PRICE.
+
+---
+
+### 0.4.2 — Guided analyst decision workflow and least-privilege publication
+
+The existing fourteen company tabs form one ordered research process, beginning with Overview and finishing in a point-in-time Validate checkpoint. Each step starts with the investment question, relevant stored decision metrics and their missing-data status, the source family to inspect, specific analyst work and previous/next navigation. Shared guidance is deliberately short: detailed existing reports, accounting tables, forecasts, Sankey diagrams, valuation model, factor/tape analysis, monitoring, journal, sources and gate controls remain the canonical deep surfaces.
+
+**Data collection:** A page request NEVER scrapes or directly calls an external API. Background `RESEARCH_REFRESH` and source-specific jobs fetch from the configured SEC, historical market, FINRA, positioning and management providers, retain provenance and normalize the evidence; `RECALCULATE` is the only Research-cache author. The workflow frame shows stored facts and labels unavailable values honestly. It does not claim that a field is freshly web-sourced merely because a page is open.
+
+**Manual inputs:** The optional/additive per-section verdict record captures a BULLISH, BEARISH, MIXED, INSUFFICIENT or UNASSESSED interpretation; independent confidence, a named numeric estimate/unit, time horizon, evidence note, reassessment trigger and a separately labeled analyst-supplied URL. A user-supplied link is not a verified provider fact. Input URLs permit only http/https with no embedded credentials, numeric assumptions must be finite and within explicit bounds, and all changes require CONTROL + CSRF. Save never overwrites canonical SEC data, model assumptions or existing free-form analysis. The new table is created at production bootstrap via the existing AUTO_MIGRATE path.
+
+**Approval:** A new or edited structured verdict is included in the corresponding existing Research evidence fingerprint; existing approvals remain recorded historically, but a manual verdict change reopens its current gate until a CONTROL analyst reapproves it in Overview. Untouched legacy coverage is not forced to reenter notes to view or preserve previously approved work. New financial bases and thesis revisions continue following their established re-review rules. Nothing publishes or validates while current required gates are not approved; the final actionable decision remains a separate, immutable Decision Journal and portfolio risk workflow. An analytical verdict alone never opens or closes a holding.
+
+**Publication:** A frozen snapshot is the sole source of published data. The FRIEND payload is a strict field allowlist: ticker/company identity, frozen observed price/date and Bear/Base/Bull price targets only. No direction, thesis, narrative, rationale, confidence, sources, detailed numbers, target methodology or private portfolio information. INSIDER receives a more complete approved research document (narrative, expectations, valuation assumptions and cases, source-backed history, bear risks, catalysts, management and analyst section reviews) but no personal positions, risk-plan locked invalidation, sizing, portfolio rules, journal, or private account data. Do not rely only on the publication writer: **every published GET must reapply role-specific filtering**, including historic snapshots created under older visibility policies. A CONTROL preview must show both role projections separately.
+
+Research conclusion, point-in-time model validation, portfolio position, trade execution and publication are separate. Missing evidence stays missing; never invent targets, analyst values, source URLs, trades or confidence scores.
 
 ---
 
