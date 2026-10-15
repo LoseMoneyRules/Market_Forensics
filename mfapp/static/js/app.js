@@ -658,7 +658,7 @@
       : 'No active background jobs.';
     if(refreshOffered){workerChip.textContent='Data updated · refresh';workerChip.classList.add('job-updated');return}
     workerChip.classList.remove('job-updated');
-    if(running)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · running · '+queued+' queued';
+    if(running)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · '+(lead?.stage ? String(lead.stage).replaceAll('_',' ')+' '+(lead.finished_steps||0)+'/'+(lead.total_steps||8) : 'running')+' · '+queued+' queued';
     else if(queued)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · queued · '+queued;
     else if(failed)workerChip.textContent='Jobs · idle · '+failed+' failed';
     else workerChip.textContent='Jobs · idle';
