@@ -25,6 +25,9 @@ STAGES = (
     "MACRO_REFRESH", "FINRA_IMPORT", "POSITIONING_REFRESH",
     "MANAGEMENT_SCAN", "RECALCULATE",
 )
+# Scheduled Research and stale-mode source checks share one age contract.
+# Morning scheduling is still at most once per security per Eastern calendar day.
+STALE_REFRESH_MAX_AGE = timedelta(hours=12)
 # Minimum ages for manual comprehensive refresh; avoid immediately downloading
 # the same immutable source again after a second click.
 FULL_MIN_AGE = {
@@ -73,10 +76,10 @@ def _due(kind: str, security: Security, mode: str, now, sec_ready: bool) -> bool
             company_id=security.company_id, provider="SEC", source_type="COMPANYFACTS",
         ).order_by(Source.retrieved_at.desc(), Source.id.desc()).first()
         normalizer_old = not source or str((source.meta or {}).get("normalizer_version") or "") != SEC_NORMALIZER_VERSION
-        return bool(normalizer_old or elapsed is None or elapsed > (FULL_MIN_AGE[kind] if mode == "all" else timedelta(hours=24)))
+        return bool(normalizer_old or elapsed is None or elapsed > (FULL_MIN_AGE[kind] if mode == "all" else STALE_REFRESH_MAX_AGE))
     if kind == "MANAGEMENT_SCAN":
         return elapsed is None or elapsed > timedelta(days=7)
-    threshold = FULL_MIN_AGE[kind] if mode == "all" else timedelta(hours=24)
+    threshold = FULL_MIN_AGE[kind] if mode == "all" else STALE_REFRESH_MAX_AGE
     return elapsed is None or elapsed > threshold
 
 
@@ -126,7 +129,7 @@ def schedule_research_refresh(user_id: int, mode: str, *, eligible_security_ids:
 
 
 def schedule_morning_refresh(now: datetime | None = None) -> dict:
-    """Queue research older than 24h after 08:00 US Eastern, without a browser.
+    """Queue research older than 12h after 08:00 US Eastern, without a browser.
 
     Called only by the global server cron while it owns the executor lock.
     Latest durable jobs are the idempotency ledger: one automatic attempt per
@@ -143,7 +146,7 @@ def schedule_morning_refresh(now: datetime | None = None) -> dict:
         return {"scheduled": False, "reason": "before_08_local", "timezone": zone_name}
 
     day_start = datetime.combine(eastern.date(), clock_time.min, tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
-    old_before = now - timedelta(hours=24)
+    old_before = now - STALE_REFRESH_MAX_AGE
     owners = (
         db.session.query(Coverage.user_id)
         .join(User, User.id == Coverage.user_id)
@@ -170,7 +173,7 @@ def schedule_morning_refresh(now: datetime | None = None) -> dict:
                 if last.status in {"QUEUED", "RUNNING"} or last.created_at >= day_start:
                     continue
                 last_attempt_at = last.finished_at or last.started_at or last.created_at
-                if last_attempt_at > old_before:
+                if last_attempt_at >= old_before:
                     continue
             eligible.add(security.id)
         if not eligible:

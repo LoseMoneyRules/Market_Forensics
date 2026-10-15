@@ -247,7 +247,7 @@ def test_041_morning_refresh_only_after_eight_eastern_and_once_daily(tmp_path, m
         assert Job.query.filter_by(job_type="RESEARCH_REFRESH").count() == 1
 
 
-def test_041_morning_refresh_respects_24_hour_age_and_dst(tmp_path, monkeypatch):
+def test_041_morning_refresh_respects_12_hour_age_and_dst(tmp_path, monkeypatch):
     from datetime import datetime, timedelta
     from mfapp.refresh_engine import schedule_morning_refresh
 
@@ -261,8 +261,8 @@ def test_041_morning_refresh_respects_24_hour_age_and_dst(tmp_path, monkeypatch)
                           company_id=db.session.get(Security, sec_id).company_id,
                           payload={"coverage_id": coverage_id, "mode": "all"}, priority=28)
         job.status = "DONE"
-        job.created_at = winter - timedelta(hours=7)
-        job.finished_at = winter - timedelta(hours=6)
+        job.created_at = winter - timedelta(hours=12)
+        job.finished_at = winter - timedelta(hours=11)
         db.session.commit()
         assert not schedule_morning_refresh(winter - timedelta(minutes=2))["scheduled"]
         recent = schedule_morning_refresh(winter)
@@ -289,3 +289,55 @@ def test_041_company_refresh_is_small_topbar_action_with_audited_status():
     assert "company-refresh-form" not in header
     assert "min-height:44px" in css
     assert ".topbar-refresh-button" in css
+
+
+def test_041_morning_refresh_12_hour_boundary(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    from mfapp.refresh_engine import schedule_morning_refresh
+    from mfapp.jobs import enqueue_job
+
+    app, uid, sec_id, coverage_id = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr("mfapp.refresh_engine.provider_status", lambda _uid: {"sec": True})
+    morning = datetime(2030, 1, 15, 13, 0)  # 08:00 EST
+    with app.app_context():
+        security = db.session.get(Security, sec_id)
+        job = enqueue_job(
+            "RESEARCH_REFRESH", user_id=uid, company_id=security.company_id,
+            security_id=sec_id, payload={"coverage_id": coverage_id, "mode": "all"}, priority=28,
+        )
+        job.status = "DONE"
+        job.created_at = morning - timedelta(hours=14)
+        job.finished_at = morning - timedelta(hours=12)
+        db.session.commit()
+        assert schedule_morning_refresh(morning)["eligible"] == 0
+        assert Job.query.filter_by(job_type="RESEARCH_REFRESH").count() == 1
+
+        # Strictly older than 12h becomes eligible after one minute.
+        result = schedule_morning_refresh(morning + timedelta(minutes=1))
+        assert result["eligible"] == 1
+        assert result["jobs_queued"] >= 1
+        assert Job.query.filter_by(job_type="RESEARCH_REFRESH").count() == 2
+        # The same day's subsequent hourly invocations do not duplicate it.
+        assert schedule_morning_refresh(morning + timedelta(hours=3))["jobs_queued"] == 0
+
+
+def test_041_stale_evidence_sources_use_12_hour_age(monkeypatch, tmp_path):
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    import mfapp.refresh_engine as engine
+
+    app, uid, sec_id, coverage_id = _workspace(tmp_path, monkeypatch)
+    at = datetime(2030, 1, 15, 13, 0)
+    with app.app_context():
+        security = db.session.get(Security, sec_id)
+        for kind in ("MACRO_REFRESH", "FINRA_IMPORT", "POSITIONING_REFRESH"):
+            monkeypatch.setattr(
+                engine, "_latest_done",
+                lambda _kind, _security: SimpleNamespace(finished_at=at - timedelta(hours=11)),
+            )
+            assert not engine._due(kind, security, "stale", at, sec_ready=True)
+            monkeypatch.setattr(
+                engine, "_latest_done",
+                lambda _kind, _security: SimpleNamespace(finished_at=at - timedelta(hours=13)),
+            )
+            assert engine._due(kind, security, "stale", at, sec_ready=True)

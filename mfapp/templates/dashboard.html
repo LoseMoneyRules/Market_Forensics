@@ -16,7 +16,7 @@
   {% endfor %}
   {% if rows %}
   <div class="command-actions command-refresh-actions research-refresh-command">
-    <div><h2>Research update</h2><p class="muted">Automatic check every morning from 8:00 a.m. ET for Research not updated in 24 hours. Use this button for an immediate full update; work continues even with the site closed.</p></div>
+    <div><h2>Research update</h2><p class="muted">Automatic check every morning from 8:00 a.m. ET for Research not updated in 12 hours. Use this button for an immediate full update; work continues even with the site closed.</p></div>
     <form method="post" action="{{ url_for('web.queue_global_job', kind='bulk') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Update all securities</button></form>
   </div>
   {% endif %}
