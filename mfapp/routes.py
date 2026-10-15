@@ -345,6 +345,11 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         Job.job_type == "RESEARCH_REFRESH",
         Job.status.in_(["QUEUED", "RUNNING"]),
     ).first()
+    latest_company_refresh = active_research_refresh or Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.security_id == security.id,
+        Job.job_type == "RESEARCH_REFRESH",
+    ).order_by(Job.id.desc()).first()
     active_recalc = Job.query.filter(
         Job.user_id == g.user.id,
         Job.company_id == company.id,
@@ -409,7 +414,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         brief["confidence"] = "UNVALIDATED"
 
     return {
-        "company_refresh_job": active_research_refresh, "market_stale": market_stale, "market_disputed": market_disputed,
+        "company_refresh_job": latest_company_refresh, "market_stale": market_stale, "market_disputed": market_disputed,
         "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
         "investment": investment, "model": model, "market": market, "position": position,
         "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
@@ -642,6 +647,16 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             Job.status.in_(["QUEUED", "RUNNING"]),
         ).all()
     }
+    latest_ids = [
+        row[0] for row in db.session.query(db.func.max(Job.id)).filter(
+            Job.user_id == user_id,
+            Job.job_type == "RESEARCH_REFRESH",
+            Job.security_id.in_(security_ids),
+        ).group_by(Job.security_id).all()
+    ] if security_ids else []
+    latest_updates = {
+        job.security_id: job for job in Job.query.filter(Job.id.in_(latest_ids)).all()
+    } if latest_ids else {}
     now = utcnow()
     rows = []
     for coverage in coverages:
@@ -706,7 +721,17 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
         freshness_hours = None
         if market and market.as_of:
             freshness_hours = max(0.0, (now - market.as_of).total_seconds() / 3600.0)
+        refresh_job = latest_updates.get(security.id)
+        refresh_result = dict((refresh_job.result or {}) if refresh_job else {})
+        refresh_state = (
+            "PARTIAL" if refresh_job and refresh_job.status == "DONE" and refresh_result.get("state") == "PARTIAL"
+            else refresh_job.status if refresh_job else "NOT RUN"
+        )
         rows.append({
+            "refresh_state": refresh_state,
+            "refresh_stage": refresh_result.get("current_stage") or "",
+            "refresh_finished_steps": int(refresh_result.get("finished_steps") or 0),
+            "refresh_total_steps": int(refresh_result.get("total_steps") or 0),
             "coverage": coverage, "security": security, "company": company, "market": market,
             "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
             "decision_lenses": lenses, "discovery_labels": discovery_labels,
