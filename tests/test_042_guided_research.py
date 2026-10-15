@@ -169,3 +169,53 @@ def test_042_guided_pages_render_without_external_requests(tmp_path, monkeypatch
         html = response.get_data(as_text=True)
         assert "guided-step" in html, step
         assert STEP_SPEC[step][0] in html, step
+
+
+def test_042_published_pages_do_not_leak_older_friend_payloads(tmp_path, monkeypatch):
+    from mfapp.core_models import Publication, Snapshot, Coverage
+    from mfapp.extensions import db
+    from mfapp.models import User
+    app, client, coverage_id = _integration_workspace(tmp_path, monkeypatch)
+    with app.app_context():
+        user_id = db.session.get(Coverage, coverage_id).user_id
+        snapshot = Snapshot(coverage_id=coverage_id, version=1, snapshot_type="PUBLICATION",
+                            payload=_snapshot().payload, created_by=user_id)
+        db.session.add(snapshot)
+        db.session.flush()
+        old_permissive = publication_view_for_role(_snapshot().payload, "INSIDER")
+        publication = Publication(
+            coverage_id=coverage_id, snapshot_id=snapshot.id, version=1,
+            visibility="FRIEND", title="EXM Research", slug="mft-test-research",
+            payload={"views": {"FRIEND": old_permissive, "INSIDER": old_permissive}},
+            published_by=user_id,
+        )
+        friend = User(email="friend042@example.com", display_name="Friend",
+                      role="FRIEND", password_hash="test", totp_secret_enc="test", is_active=True)
+        db.session.add_all([publication, friend])
+        db.session.commit()
+        friend_id = friend.id
+    with client.session_transaction() as session:
+        session["user_id"] = friend_id
+        session["view_as"] = "FRIEND"
+    res = client.get("/published/mft-test-research")
+    assert res.status_code == 200
+    html = res.get_data(as_text=True)
+    assert "Bear" in html and "Bull" in html
+    assert "INSIDER_THESIS_SECRET" not in html
+    assert "INSIDER_REVIEW" not in html
+    assert "PRIVATE_INVALIDATION" not in html
+    assert "PRIVATE_POSITION" not in html
+    assert "Financial history" not in html
+    with app.app_context():
+        user_id = db.session.get(Coverage, coverage_id).user_id
+    with client.session_transaction() as session:
+        session["user_id"] = user_id
+        session["view_as"] = "INSIDER"
+    insider = client.get("/published/mft-test-research")
+    assert insider.status_code == 200
+    html = insider.get_data(as_text=True)
+    assert "INSIDER_THESIS_SECRET" in html
+    assert "INSIDER_REVIEW" in html
+    assert "Financial history" in html
+    assert "PRIVATE_INVALIDATION" not in html
+    assert "PRIVATE_POSITION" not in html
