@@ -328,6 +328,13 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         valuation["base_quality"] = base_quality
         valuation["quality"] = valuation.get("quality") or base_quality
         valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
+    # A fresh but disputed provider observation may be shown for situational
+    # awareness, never promoted into an investable valuation conclusion.
+    if market and str(market.quality or "") == "DISPUTED_OBSERVED":
+        valuation["base_quality"] = "DATA_WARNING"
+        valuation["quality"] = "DATA_WARNING"
+        valuation["decision_grade"] = False
+        valuation["market_quote_disputed"] = True
 
     active_research_refresh = Job.query.filter(
         Job.user_id == g.user.id,
@@ -383,7 +390,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
             priority=30,
         )
     economic_reclass_pending = active_sec is not None or (core_financial_recovery_needed and active_research_refresh is not None)
-    core_financial_recovery_pending = core_financial_recovery_needed and active_sec is not None
+    core_financial_recovery_pending = core_financial_recovery_needed and (active_sec is not None or active_research_refresh is not None)
 
     cache_pending = active_recalc is not None or active_research_refresh is not None or economic_reclass_pending
     # Readiness is intentionally live DB state. It is lightweight and user-edited;
@@ -665,6 +672,11 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             valuation["base_quality"] = base_quality
             valuation["quality"] = valuation.get("quality") or base_quality
             valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
+        if market and str(market.quality or "") == "DISPUTED_OBSERVED":
+            valuation["base_quality"] = "DATA_WARNING"
+            valuation["quality"] = "DATA_WARNING"
+            valuation["decision_grade"] = False
+            valuation["market_quote_disputed"] = True
         readiness = dict(cache.get("readiness") or _fallback_readiness())
         intelligence = dict(cache.get("intelligence") or _fallback_intelligence(readiness, updating=True))
         lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
