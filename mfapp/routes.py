@@ -329,13 +329,19 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         valuation["quality"] = valuation.get("quality") or base_quality
         valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
 
+    active_research_refresh = Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.security_id == security.id,
+        Job.job_type == "RESEARCH_REFRESH",
+        Job.status.in_(["QUEUED", "RUNNING"]),
+    ).first()
     active_recalc = Job.query.filter(
         Job.user_id == g.user.id,
         Job.company_id == company.id,
         Job.job_type == "RECALCULATE",
         Job.status.in_(["QUEUED", "RUNNING"]),
     ).first()
-    if stale_cache and active_recalc is None and queue_recalc:
+    if stale_cache and active_recalc is None and active_research_refresh is None and queue_recalc:
         active_recalc = enqueue_job(
             "RECALCULATE",
             user_id=g.user.id,
@@ -362,6 +368,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
     if (
         core_financial_recovery_needed
         and active_sec is None
+        and active_research_refresh is None
         and queue_recalc
         and provider_status(g.user.id).get("sec")
     ):
@@ -375,10 +382,10 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
             payload={"coverage_id": coverage.id, "normalizer_version": SEC_NORMALIZER_VERSION},
             priority=30,
         )
-    economic_reclass_pending = active_sec is not None
+    economic_reclass_pending = active_sec is not None or (core_financial_recovery_needed and active_research_refresh is not None)
     core_financial_recovery_pending = core_financial_recovery_needed and active_sec is not None
 
-    cache_pending = active_recalc is not None or economic_reclass_pending
+    cache_pending = active_recalc is not None or active_research_refresh is not None or economic_reclass_pending
     # Readiness is intentionally live DB state. It is lightweight and user-edited;
     # serving a materialized copy made Monitoring / Journal and gate approvals look
     # stale until a heavy recalculation happened.
@@ -392,6 +399,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         brief["confidence"] = "UNVALIDATED"
 
     return {
+        "company_refresh_job": active_research_refresh,
         "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
         "investment": investment, "model": model, "market": market, "position": position,
         "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
@@ -617,6 +625,13 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
         if active_prime is None:
             enqueue_job("CACHE_PRIME", user_id=user_id, payload={}, priority=94)
 
+    refreshing_security_ids = {
+        row.security_id for row in Job.query.filter(
+            Job.user_id == user_id,
+            Job.job_type == "RESEARCH_REFRESH",
+            Job.status.in_(["QUEUED", "RUNNING"]),
+        ).all()
+    }
     now = utcnow()
     rows = []
     for coverage in coverages:
@@ -636,14 +651,15 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             valuation["base_quality"] = "DATA_WARNING"
             valuation["quality"] = "DATA_WARNING"
             valuation["decision_grade"] = False
-            enqueue_job(
-                "RECALCULATE",
-                user_id=user_id,
-                company_id=company.id,
-                security_id=security.id,
-                payload={"coverage_id": coverage.id},
-                priority=95,
-            )
+            if security.id not in refreshing_security_ids:
+                enqueue_job(
+                    "RECALCULATE",
+                    user_id=user_id,
+                    company_id=company.id,
+                    security_id=security.id,
+                    payload={"coverage_id": coverage.id},
+                    priority=95,
+                )
         elif not valuation.get("base_quality"):
             base_quality = stored_model_base_quality(model)
             valuation["base_quality"] = base_quality
