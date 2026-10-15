@@ -78,7 +78,8 @@ def test_0213_mobile_keeps_quote_metadata_and_contains_wide_diagnostics():
     header = (ROOT / "mfapp/templates/_company_header.html").read_text()
     trace = (ROOT / "mfapp/templates/trace_console.html").read_text()
 
-    assert "Current price · refreshes every 5 min" in header
+    assert "Latest observed price · checks every 5 min" in header
+    assert "NOT DECISION-GRADE" in header
     assert "data-live-price-meta" in header
     assert ".company-actions .company-market{display:none}" not in css
     assert ".company-market{width:100%;text-align:left}" in css
