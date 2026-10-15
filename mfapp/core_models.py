@@ -7,6 +7,7 @@ from .core_research import ResearchState, ResearchVersion, Expectation, Valuatio
 from .core_operations import Event, Provenance, DataQualityIssue, Job, RefreshRun, Alert, HistoricalPrice, HistoricalTestRun, HistoricalTestSample
 from .core_publication import Snapshot, Publication, CalculationRun, SchemaMigration
 from .research_gates import ResearchGateApproval
+from .research_section_review import ResearchSectionReview
 
 __all__ = [
     "Company", "Security", "Coverage", "MarketSnapshot", "Source", "FinancialPeriod",
@@ -16,5 +17,5 @@ __all__ = [
     "RiskPlan", "InvestmentState", "Position", "PositionProfile", "PortfolioRiskPlan", "DecisionJournal", "DecisionOutcome", "Event", "Provenance",
     "DataQualityIssue", "Job", "RefreshRun", "Alert", "HistoricalPrice", "HistoricalTestRun",
     "HistoricalTestSample", "Snapshot", "Publication", "CalculationRun", "SchemaMigration",
-    "ResearchGateApproval",
+    "ResearchGateApproval", "ResearchSectionReview",
 ]
