@@ -752,7 +752,14 @@
       <form class="panel stack" method="post" action="{{ url_for('web.add_journal', ticker=security.ticker) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="panel-head"><div><p class="eyebrow">DECISION JOURNAL</p><h2>Freeze the decision</h2><p class="muted">The original evidence, valuation and invalidation snapshot becomes immutable. Outcomes are appended later.</p></div><button class="button primary">Commit entry</button></div>
-        <label>Decision<input name="decision" value="{{ journal_prefill.decision }}"></label>
+        <label>Decision to freeze · intention only, not an order
+          {% set journal_actions = ['WAIT','WATCH','OPEN LONG','OPEN SHORT','ADD LONG','ADD SHORT','HOLD','REDUCE','CLOSE LONG','COVER SHORT'] %}
+          <select name="decision">
+            {% if journal_prefill.decision and journal_prefill.decision not in journal_actions %}<option value="{{ journal_prefill.decision }}" selected>{{ journal_prefill.decision }} · current research proposal</option>{% endif %}
+            {% for action in journal_actions %}<option value="{{ action }}" {% if journal_prefill.decision == action or (not journal_prefill.decision and action == 'WAIT') %}selected{% endif %}>{{ action }}</option>{% endfor %}
+          </select>
+        </label>
+        <p class="muted">This immutable record captures a proposed action and its evidence. No trade is submitted here. Check the latest validation and manage actual position/risk separately in Portfolio.</p>
         <label>Evidence for<textarea name="evidence_for" rows="7">{{ journal_prefill.evidence_for }}</textarea></label>
         <label>Evidence against<textarea name="evidence_against" rows="7">{{ journal_prefill.evidence_against }}</textarea></label>
         <label>Bias / discipline notes<textarea name="bias_notes" rows="6">{{ journal_prefill.bias_notes }}</textarea></label>
