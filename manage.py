@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import time
 from pathlib import Path
 
 import pyotp
@@ -71,8 +72,14 @@ def _acquire_job_executor_lock():
     return handle
 
 
-def run_jobs(limit: int, user_id: int | None = None) -> None:
+def run_jobs(limit: int, user_id: int | None = None, *, drain: bool = False) -> None:
+    """Process durable queue work independently of an open browser.
+
+    A detached request-triggered consumer drains until empty or its bounded
+    shared-hosting budget; cron resumes any remaining jobs on its next tick.
+    """
     from mfapp.jobs import run_jobs as execute
+
     lock = _acquire_job_executor_lock()
     if lock is None:
         print({"executor": "busy", "message": "Another Market Forensics job executor owns the lock."})
@@ -80,10 +87,17 @@ def run_jobs(limit: int, user_id: int | None = None) -> None:
     try:
         app = create_app({"AUTO_MIGRATE": True})
         with app.app_context():
-            for result in execute(limit=limit, user_id=user_id):
-                print(result)
-            # Monitoring remains part of unattended cron runs. Browser fallback
-            # processes are user-scoped and must stay short.
+            started = time.monotonic()
+            processed = 0
+            while True:
+                batch = execute(limit=min(limit, 5) if drain else limit, user_id=user_id)
+                for result in batch:
+                    print(result, flush=True)
+                processed += len(batch)
+                if not drain or not batch or processed >= 250 or time.monotonic() - started >= 1200:
+                    break
+            # Keep unattended monitoring cron-only; detached user-scoped workers
+            # never execute global monitoring inside a research refresh.
             if user_id is None:
                 _run_monitoring_for_controls()
     finally:
@@ -105,13 +119,13 @@ def main() -> None:
     sub.add_parser("generate-secrets")
     p = sub.add_parser("bootstrap-admin"); p.add_argument("--email", required=True); p.add_argument("--name", default="Control")
     sub.add_parser("migrate")
-    jobs = sub.add_parser("run-jobs"); jobs.add_argument("--limit", type=int, default=5); jobs.add_argument("--user-id", type=int)
+    jobs = sub.add_parser("run-jobs"); jobs.add_argument("--limit", type=int, default=5); jobs.add_argument("--user-id", type=int); jobs.add_argument("--drain", action="store_true")
     sub.add_parser("monitor")
     args = parser.parse_args()
     if args.cmd == "generate-secrets": generate_secrets()
     elif args.cmd == "bootstrap-admin": bootstrap_admin(args.email, args.name)
     elif args.cmd == "migrate": migrate()
-    elif args.cmd == "run-jobs": run_jobs(args.limit, args.user_id)
+    elif args.cmd == "run-jobs": run_jobs(args.limit, args.user_id, drain=args.drain)
     elif args.cmd == "monitor": run_monitoring()
 
 
