@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -144,7 +145,15 @@ def _alpha_vantage(ticker: str, user_id: int) -> QuoteResult:
         row = (response.json() or {}).get("Global Quote") or {}; price = row.get("05. price")
         if not price:
             return QuoteResult(False, "Alpha Vantage", message="no usable quote")
-        return QuoteResult(True, "Alpha Vantage", float(price), "USD", _dt(row.get("07. latest trading day")), "DELAYED_OBSERVED", {"source": "global_quote", "latest_trading_day": row.get("07. latest trading day")})
+        trading_day = _dt(row.get("07. latest trading day"))
+        if trading_day is not None:
+            # GLOBAL_QUOTE only has a date, not an intraday timestamp. Treat
+            # it as the US regular-session close, never as retrieval time.
+            try:
+                trading_day = datetime.combine(trading_day.date(), datetime.min.time().replace(hour=16), tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                trading_day = trading_day.replace(hour=20)
+        return QuoteResult(True, "Alpha Vantage", float(price), "USD", trading_day, "DELAYED_OBSERVED", {"source": "global_quote", "latest_trading_day": row.get("07. latest trading day")})
     except Exception as exc:
         return QuoteResult(False, "Alpha Vantage", message=type(exc).__name__)
 
@@ -181,6 +190,14 @@ def _candidate_payload(rows: list[QuoteResult]) -> list[dict[str, Any]]:
     return [{"provider": row.provider, "ok": row.ok, "price": row.price, "quality": row.quality, "as_of": row.as_of.isoformat() if row.as_of else None, "message": row.message} for row in rows]
 
 
+def _us_trading_day(as_of: datetime):
+    """Use the source's NY market date, not the HTTP or UTC calendar date."""
+    try:
+        return as_of.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("America/New_York")).date()
+    except Exception:
+        return as_of.date()
+
+
 def fetch_quote(ticker: str, user_id: int) -> QuoteResult:
     """Resolve current market evidence by freshness, then source agreement.
 
@@ -205,10 +222,16 @@ def fetch_quote(ticker: str, user_id: int) -> QuoteResult:
             payload={"candidates": evidence, "freshness_error": True},
         )
 
-    # Only compare the same recent trading window: previous closes are not
-    # contemporaneous with a newer trade after a gap or strong price move.
+    # Never let a previous-session close outvote a current-session move.
+    # Reconcile only same-NY-session observations within 2h of the freshest
+    # trade. This also excludes a previous close on Monday mornings.
     latest = max(row.as_of for row in valid)
-    comparable = [row for row in valid if latest - row.as_of <= timedelta(hours=36)]
+    latest_session = _us_trading_day(latest)
+    comparable = [
+        row for row in valid
+        if _us_trading_day(row.as_of) == latest_session
+        and latest - row.as_of <= timedelta(hours=2)
+    ]
     # A provider that reports missing time must never override this group.
     freshest_auth = next(
         (row for row in sorted(comparable, key=lambda x: x.as_of, reverse=True) if row in attempts[:3]), None
