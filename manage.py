@@ -96,10 +96,11 @@ def run_jobs(limit: int, user_id: int | None = None, *, drain: bool = False) -> 
                     morning = schedule_morning_refresh()
                     if morning.get("jobs_queued"):
                         print({"morning_research_refresh": morning}, flush=True)
-                except Exception:
+                except Exception as exc:
                     from mfapp.extensions import db
                     db.session.rollback()
-                    raise
+                    print({"morning_research_refresh": "ERROR", "error": str(exc)[:200]}, flush=True)
+                    # Scheduler trouble must not strand already queued Research work.
             started = time.monotonic()
             processed = 0
             while True:
