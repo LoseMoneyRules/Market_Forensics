@@ -32,7 +32,9 @@ def _fmt(value: Any, *, money: bool = False, suffix: str = "") -> str:
         if money:
             return f"${float(value):,.2f}"
         if isinstance(value, (float, int)) or hasattr(value, "as_tuple"):
-            return f"{float(value):,.1f}{suffix}" if suffix else f"{float(value):,.0f}"
+            numeric = float(value)
+            formatted = f"{numeric:,.0f}" if numeric.is_integer() else f"{numeric:,.2f}".rstrip("0").rstrip(".")
+            return formatted + suffix
     except (ValueError, TypeError, OverflowError):
         return "—"
     return str(value)
