@@ -548,6 +548,12 @@ The durable global refresh planner enqueues one `RESEARCH_REFRESH` per active Co
 
 The POST launches a detached server-side, lock-protected bounded queue drain, so work continues even when the browser closes. The mandatory cPanel cron must still run every minute, picking up pending work after hosting termination/restart or a failed process. An open browser merely observes status and can start a fallback consumer. A server-side dispatcher is not proof that the production cron is enabled; cron presence must be confirmed in cPanel.
 
+### 4.3.2 Pricing freshness and SEC integrity in 0.4.0
+
+A market quote must carry a real source observation time. Missing timestamps may never be replaced with the request time to imply freshness. For routine refresh, choose a price from the freshest comparable trading window, preferring corroboration among authenticated providers and independent public reference. A stale or outlier provider may not veto a recent agreed cluster. If all recent sources materially disagree, retain the newest sourced reference as `DISPUTED_OBSERVED`, show its provider/time/conflicting candidates, and suppress decision-grade value/Research conclusions until verified. A source observation more than five days old or missing is not fresh; the last-known evidence remains visible but cannot support decision-grade analysis. Do not use a delayed Alpha Vantage retrieval timestamp as market observation time.
+
+SEC period upsert must be safe under MySQL immediate unique constraints: when an existing superseded FY or fiscal-quarter identity becomes the richest exact-end canonical record, all conflicting active siblings must first be demoted and flushed, before promoting the winning identity. This prevents autoflush-triggered duplicate keys and preserves prior audit/evidence.
+
 One-click data refresh updates stored/derived Research and downstream read surfaces without automatically approving gates, republishing reports, changing manual thesis/assumptions or executing a new historical walk-forward validation. When a new filing changes the financial basis, the existing human re-review/revalidation rules continue to apply. Discovery's full-market scan and deliberate Validate tests remain distinct background actions, not a concealed part of routine company-data ingestion.
 
 ### 4.4 Research cache
