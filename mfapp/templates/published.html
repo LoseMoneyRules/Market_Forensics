@@ -8,6 +8,7 @@
 <div data-mf-alert-coverage="{{ publication.coverage_id }}"></div>
 {% endif %}
 {% for key,label in [('thesis','Thesis'),('business','Business'),('numbers','Numbers'),('expectations','Expectations'),('valuation_notes','Valuation'),('bear_case_summary','Bear Case'),('catalysts_summary','Catalysts'),('flows_summary','Flows'),('management_summary','Management'),('tape_summary','Tape / Flows'),('risk_summary','Risk')] %}{% if r.get(key) %}<article class="report-section"><h2>{{ label }}</h2><div class="prose">{{ r.get(key)|e|replace('\n','<br>')|safe }}</div></article>{% endif %}{% endfor %}
+{% include "_insider_publication_details.html" %}
 {% if p.get('visibility') == 'INSIDER' and p.get('section_reviews') %}
 <article class="report-section"><h2>Structured analyst reviews</h2>
 {% for item in p.get('section_reviews',[]) %}
