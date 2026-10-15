@@ -14,7 +14,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="button primary" type="submit">Update {{ security.ticker }}</button>
       {% if company_refresh_job is defined and company_refresh_job %}
-      <small class="muted" aria-live="polite">{{ company_refresh_job.status }}{% if company_refresh_job.result and company_refresh_job.result.current_stage %} · {{ company_refresh_job.result.current_stage|replace('_', ' ') }}{% endif %}</small>
+      <small class="muted" aria-live="polite" data-status-value="{{ company_refresh_job.result.state if company_refresh_job.status == 'DONE' and company_refresh_job.result and company_refresh_job.result.state else company_refresh_job.status }}">{{ company_refresh_job.result.state if company_refresh_job.status == 'DONE' and company_refresh_job.result and company_refresh_job.result.state else company_refresh_job.status }}{% if company_refresh_job.status in ['QUEUED', 'RUNNING'] and company_refresh_job.result and company_refresh_job.result.current_stage %} · {{ company_refresh_job.result.finished_steps or 0 }}/{{ company_refresh_job.result.total_steps or 8 }} · {{ company_refresh_job.result.current_stage|replace('_', ' ') }}{% elif company_refresh_job.finished_at %} · {{ company_refresh_job.finished_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</small>
       {% else %}<small class="muted">Complete Research refresh</small>{% endif %}
     </form>
     {% endif %}
