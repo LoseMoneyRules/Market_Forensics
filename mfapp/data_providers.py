@@ -197,6 +197,8 @@ def fetch_quote(ticker: str, user_id: int) -> QuoteResult:
         and row.as_of is not None
         and timedelta(minutes=-15) <= (now - row.as_of) <= timedelta(days=5)
     ]
+    # If every provider is stale, retain the last-good cache only as historical
+    # reference. Never relabel it as a fresh or decision-grade current quote.
     if not valid:
         return QuoteResult(
             False, "Quote freshness", message="No recently dated quote available; existing quote is stale and must not be treated as current.",
