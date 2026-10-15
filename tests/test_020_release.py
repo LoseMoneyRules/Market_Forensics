@@ -723,8 +723,11 @@ def test_020_discovery_landscape_pdf_and_full_refresh_contract(tmp_path, monkeyp
     pdf = render_discovery_pdf(scan, {"title": "Market Forensics", "footer": "Lose Money Rules", "logo_url": ""})
     assert len(pdf.getvalue()) > 700
     jobs = Path("mfapp/jobs.py").read_text()
-    assert '("POSITIONING_REFRESH", 75)' in jobs
-    assert '("MANAGEMENT_SCAN", 80)' in jobs
+    refresh = Path("mfapp/refresh_engine.py").read_text()
+    assert '"POSITIONING_REFRESH"' in refresh
+    assert '"MANAGEMENT_SCAN"' in refresh
+    assert '"RECALCULATE"' in refresh
+    assert "schedule_research_refresh(user_id, \"all\")" in jobs
     assert "MANAGEMENT_GUIDANCE_SCAN" in jobs
 
 
