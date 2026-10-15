@@ -41,7 +41,7 @@ A startup migration failure prevents a healthy application response. Research/ac
 
 Heavy work is queued in `mf_job` and drained by cPanel cron. In 0.1.6 the same unattended command also evaluates CONTROL monitoring rules after the job queue pass, including threshold, data-quality, valuation/invalidation and filing-window checks.
 
-Required recovery schedule for 0.4.0 is every minute (verify the actual cPanel cron entry after deployment):
+Recommended recovery schedule is every minute (verify the actual cPanel cron entry after deployment). For the 0.4.1 user-selected hourly schedule, use `Once Per Hour` and add `--drain` to this command; morning checks continue to work, but interrupted jobs may wait up to an hour for recovery:
 
 ```bash
 cd /home/ACCOUNT/PYTHON_APP_ROOT && /home/ACCOUNT/virtualenv/PYTHON_APP_ROOT/3.13/bin/python manage.py run-jobs --limit 5
@@ -80,4 +80,4 @@ The Update all securities / Update TICKER POST queues durable database work and 
 
 ### 0.4.1 daily 08:00 Eastern automatic refresh
 
-**No extra cron entry or browser must be added** if the existing every-minute cPanel recovery cron above is enabled: `manage.py run-jobs --limit 5` now also performs the DST-aware morning eligibility check. Each CONTROL Coverage security is queued once per local calendar day only when its latest full Research refresh is more than 24 hours old; cron continues to process pending jobs. The default timezone is `America/New_York` (08:00 US Eastern, including daylight saving); optionally override with `MF_REFRESH_TIMEZONE` (IANA timezone name). Do not add a second 08:00 cron in addition to the existing minute cron. **Operator action remains necessary:** confirm the existing every-minute cPanel cron entry is present and enabled, because GitHub Actions cannot inspect or provision the hosting crontab. A green deploy /health proves the app release, not that unattended scheduling actually fired.
+**No extra cron entry or browser must be added** when the existing recovery cron is enabled: `manage.py run-jobs --limit 5` (with `--drain` for the configured hourly cadence) also performs the DST-aware morning eligibility check. Each CONTROL Coverage security is queued once per local calendar day only when its latest comprehensive Research refresh is **more than 12 hours old**; source-specific cooldowns still apply. Cron continues to process pending jobs. The default timezone is `America/New_York` (08:00 US Eastern, including daylight saving); optionally override with `MF_REFRESH_TIMEZONE` (IANA timezone name). Do not add a second 08:00 cron in addition to the existing minute cron. **Operator action remains necessary:** confirm an appropriate cPanel cron entry (hourly with `--drain` or more frequent) is present and enabled, because GitHub Actions cannot inspect or provision the hosting crontab. A green deploy /health proves the app release, not that unattended scheduling actually fired.
