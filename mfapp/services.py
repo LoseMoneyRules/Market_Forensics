@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .extensions import db
+from .research_section_review import ResearchSectionReview
 from .calculations import CALCULATION_VERSION, bias_flags, calculate_valuation, financial_metrics
 from .valuation_engine import canonical_valuation_quality, valuation_is_decision_grade
 from .current_financials import annual_rows as canonical_annual_rows, canonical_annual_pairs
@@ -312,6 +313,7 @@ def create_snapshot(coverage: Coverage, user_id: int, snapshot_type: str = "DECI
         "management": management,
         "monitoring": monitoring,
         "financials": financials,
+        "section_reviews": [row.frozen_publication() for row in ResearchSectionReview.query.filter_by(coverage_id=coverage.id).order_by(ResearchSectionReview.section_key).all()],
         "risk": {
             "thesis_invalidation": risk.thesis_invalidation if risk else "",
             "invalidation_locked_at": risk.invalidation_locked_at.isoformat() if risk and risk.invalidation_locked_at else None,
@@ -361,33 +363,59 @@ def snapshot_changes(snapshot: Snapshot) -> list[dict[str, Any]]:
     return changes
 
 
-def publication_payload(snapshot: Snapshot, visibility: str) -> dict[str, Any]:
-    """Build the publication boundary from an immutable snapshot.
+def publication_view_for_role(raw: dict, visibility: str) -> dict[str, Any]:
+    """Strict allowlist, also applied on GET to old published versions.
 
-    The private RiskPlan, InvestmentState, Position and journal data never cross this
-    boundary. Only the explicitly authored research risk summary can be published.
+    Stored publication JSON may have been created under older visibility rules.
+    Role filtering therefore must be enforced at *read* time as well.
     """
-    src = snapshot.payload or {}
-    research = dict(src.get("research") or {})
-    out = {
-        "security": src.get("security") or {},
-        "company": src.get("company") or {},
-        "research": research,
-        "research_state": src.get("research_state"),
-        "valuation": src.get("valuation") or {},
-        "decision": src.get("decision") or {},
-        "risk": {"summary": research.get("risk_summary", "")},
-        "market": src.get("market") or {},
-        "sources": src.get("sources") or [],
-        "calculation_version": src.get("calculation_version") or CALCULATION_VERSION,
+    src = dict(raw or {})
+    visibility = "INSIDER" if str(visibility).upper() in {"INSIDER", "CONTROL"} else "FRIEND"
+    security = dict(src.get("security") or {})
+    company = dict(src.get("company") or {})
+    valuation = dict(src.get("valuation") or {})
+    market = dict(src.get("market") or {})
+    identity = {
+        "security": {k: security.get(k) for k in ("ticker", "currency") if security.get(k) is not None},
+        "company": {"name": company.get("name") or ""},
+        "valuation": {k: valuation.get(k) for k in ("bear", "base", "bull") if k in valuation},
+        "market": {k: market.get(k) for k in ("price", "as_of") if k in market},
         "captured_at": src.get("captured_at"),
         "visibility": visibility,
     }
     if visibility == "FRIEND":
-        out["research"].pop("confirmation_bias_notes", None)
-        out["research"].pop("thesis_drift_notes", None)
-        out["research"].pop("narrative_fit_notes", None)
-    return out
+        # A friend sees ONLY identity, the observed price and frozen price
+        # targets. No thesis, trade direction, analyst notes, sources, assumptions,
+        # diagnostics, triggers, portfolio data or private risk detail.
+        return identity
+
+    identity["company"].update({
+        k: company[k] for k in ("sector", "industry") if k in company
+    })
+    identity["security"].update({
+        k: security[k] for k in ("exchange",) if k in security
+    })
+    identity["valuation"] = valuation
+    for key in (
+        "research", "research_state", "decision", "sources", "expectations",
+        "bear_case_items", "catalysts", "management", "financials",
+        "section_reviews", "valuation_model", "calculation_version",
+    ):
+        if key in src:
+            identity[key] = src[key]
+    # Research risk_summary is authored for members; private RiskPlan, locked
+    # invalidation, account positions, sizing, journal and monitoring stay out.
+    research = dict(identity.get("research") or {})
+    for key in ("confirmation_bias_notes", "thesis_drift_notes", "narrative_fit_notes"):
+        research.pop(key, None)
+    identity["research"] = research
+    identity["risk"] = {"summary": research.get("risk_summary") or ""}
+    return identity
+
+
+def publication_payload(snapshot: Snapshot, visibility: str) -> dict[str, Any]:
+    """Publish only a role-specific projection of an immutable private snapshot."""
+    return publication_view_for_role(snapshot.payload or {}, visibility)
 
 
 def can_view_publication(publication: Publication, role: str) -> bool:

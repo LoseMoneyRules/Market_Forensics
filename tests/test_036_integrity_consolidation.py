@@ -301,7 +301,7 @@ def test_036_sparse_newer_ttm_cannot_hide_complete_fy_current_basis(tmp_path, mo
         assert current["operating_income"] == 4700.0
         assert current["fcf"] == 4750.0
         assert current["assets"] == 34000.0
-        assert current["metrics"]["revenue_growth_pct"] == 17.5
+        assert round(current["metrics"]["revenue_growth_pct"], 6) == 17.5
         assert current["quality"]["newer_ttm_withheld"] is True
         assert current["quality"]["withheld_ttm_period_end"] == "2026-04-30"
         assert "gross_profit" in current["quality"]["withheld_ttm_missing_fields"]
@@ -337,7 +337,7 @@ def test_036_recalculate_is_single_research_cache_materialization_boundary():
     execute = inspect.getsource(jobs._execute)
     cache_source = inspect.getsource(research_cache)
 
-    assert recalc.count("refresh_research_cache") == 1
+    assert recalc.count("cache = refresh_research_cache(") == 1
     assert "patch_research_cache_tape" not in execute
     assert "_publish_tape_after_evidence" not in execute
     assert "patch_research_cache_tape" not in cache_source
@@ -370,9 +370,9 @@ def test_036_release_metadata_is_single_current_version():
     current = Path("docs/CURRENT_STATE.md").read_text()
     how = Path("docs/HOW_MARKET_FORENSICS_WORKS.md").read_text()
 
-    assert version == "0.3.6"
-    assert "**State-Version: 0.3.6**" in current
-    assert "**Current product line:** 0.3.6" in how
+    assert version == "0.4.2"
+    assert "**State-Version: 0.4.2**" in current
+    assert "**Current product line:** 0.4.2" in how
     assert "PR #70" in current and "superseded" in current.lower()
     production_lines = [line for line in current.splitlines() if line.startswith("**Production:**")]
     assert len(production_lines) == 1

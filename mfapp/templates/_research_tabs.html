@@ -23,4 +23,60 @@
   Stored evidence remains visible. Approval, validation and publication remain blocked until the control layer is healthy.
 </div>
 {% endif %}
+{% if workflow is defined and workflow and section in workflow.by_key %}
+{% set step = workflow.by_key[section] %}
+<section class="panel guided-step" aria-label="Research step briefing">
+  <div class="guided-step-head">
+    <div><p class="eyebrow">RESEARCH · {{ step.number }}/{{ step.total }} · {{ step.label|upper }}</p>
+      <h2>{{ step.question }}</h2>
+      <p class="muted">Automatically sourced: {{ step.auto }}. <strong>Human judgement:</strong> {{ step.manual }}</p>
+    </div>
+    {% if step.gate %}
+    <span class="status-chip" data-status-value="{{ step.gate.status }}">{{ step.gate.status }}</span>
+    {% else %}<span class="status-chip">HISTORICAL CHECK</span>{% endif %}
+  </div>
+  <div class="guided-step-facts">
+    {% for fact in step.facts %}<div class="guided-step-fact"><small>{{ fact.label }}</small><strong>{{ fact.value }}</strong></div>{% endfor %}
+  </div>
+  {% if step.no_data_warning %}
+  <p class="guided-step-warning">Refresh or recalculation is pending, or research controls are degraded. Stored evidence can be inspected, but missing figures are not estimates and may not support approval.</p>
+  {% endif %}
+  <div class="guided-step-controls">
+    <details class="guided-step-review">
+      <summary><strong>{{ 'Edit structured analyst verdict' if step.review else 'Add structured analyst verdict' }}</strong><span>{{ (step.review.verdict|replace('_',' ') ~ ' · ' ~ step.review.confidence) if step.review else 'Unassessed — enter a measured conclusion, not a fabricated fact' }}</span></summary>
+      <p class="muted">This is an analyst interpretation, separate from the sourced metrics and the existing detailed notes/editors below. Save it first; approve or reapprove the corresponding gate from Overview. Leave unknown numeric values empty.</p>
+      <form class="guided-step-form" method="post" action="{{ url_for('web.save_section_review', ticker=security.ticker, section=section) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-grid two">
+          <label>Analyst evidence verdict<select name="verdict">{% for v in ['UNASSESSED','BULLISH','BEARISH','MIXED','INSUFFICIENT'] %}<option value="{{ v }}" {% if step.review and step.review.verdict == v %}selected{% endif %}>{{ v|replace('_',' ')|title }}</option>{% endfor %}</select></label>
+          <label>Confidence in this interpretation<select name="confidence">{% for v in ['UNRATED','LOW','MEDIUM','HIGH'] %}<option value="{{ v }}" {% if step.review and step.review.confidence == v %}selected{% endif %}>{{ v|title }}</option>{% endfor %}</select></label>
+        </div>
+        <div class="form-grid three">
+          <label>Metric / test name<input name="metric_label" maxlength="96" placeholder="e.g. FCF margin, demand growth" value="{{ step.review.metric_label if step.review else '' }}"></label>
+          <label>Analyst assumption (number)<input name="metric_value" type="number" step="any" placeholder="Blank if unknown" value="{{ step.review.metric_value if step.review and step.review.metric_value is not none else '' }}"></label>
+          <label>Unit<select name="metric_unit">{% for v in ['','USD','%','x','shares','years','count','other'] %}<option value="{{ v }}" {% if step.review and step.review.metric_unit == v %}selected{% endif %}>{{ v if v else 'Not applicable' }}</option>{% endfor %}</select></label>
+        </div>
+        <label>Horizon (months, optional)<input name="horizon_months" type="number" min="1" max="240" value="{{ step.review.horizon_months if step.review and step.review.horizon_months is not none else '' }}" placeholder="e.g. 12"></label>
+        <label>Evidence and reasoning (analyst-authored)<textarea name="evidence_note" rows="3" maxlength="4000" placeholder="Why does the source support or contradict this?">{{ step.review.evidence_note if step.review else '' }}</textarea></label>
+        <label>Reassess this judgement if...<textarea name="reconsider_if" rows="2" maxlength="2000" placeholder="Specific counter-evidence or a measurable trigger">{{ step.review.reconsider_if if step.review else '' }}</textarea></label>
+        <label>Reference URL (optional, analyst-supplied; not verified)<input name="source_url" type="url" maxlength="1000" placeholder="https://..." value="{{ step.review.source_url if step.review else '' }}"></label>
+        <button class="button primary" type="submit">Save structured review</button>
+      </form>
+    </details>
+    <div class="guided-step-navigation">
+      {% if step.previous %}
+      {% set prev_key = step.previous[0] %}
+      <a class="button micro" href="{{ url_for('web.valuation_company',ticker=security.ticker) if prev_key=='valuation' else url_for('web.financial_flows',ticker=security.ticker) if prev_key=='financial-flows' else url_for('web.validate_company',ticker=security.ticker) if prev_key=='validate' else url_for('web.company_section',ticker=security.ticker,section=prev_key) }}">← {{ step.previous[1] }}</a>
+      {% endif %}
+      <a class="button micro" href="{{ url_for('web.company_section',ticker=security.ticker,section='overview') }}#process-readiness">Review approvals</a>
+      {% if step.next %}
+      {% set next_key = step.next[0] %}
+      <a class="button micro primary" href="{{ url_for('web.valuation_company',ticker=security.ticker) if next_key=='valuation' else url_for('web.financial_flows',ticker=security.ticker) if next_key=='financial-flows' else url_for('web.validate_company',ticker=security.ticker) if next_key=='validate' else url_for('web.company_section',ticker=security.ticker,section=next_key) }}">{{ step.next[1] }} →</a>
+      {% endif %}
+    </div>
+  </div>
+  <p class="guided-step-provenance">{% if step.last_source %}Latest company-wide stored source: {{ step.last_source.provider }} · {{ step.last_source.source_type }} · {{ step.last_source.retrieved_at.strftime('%Y-%m-%d') if step.last_source.retrieved_at else 'date unavailable' }}{% else %}No company source stored. Run Update TICKER and verify provider credentials in Settings.{% endif %} · <a href="{{ url_for('web.company_section',ticker=security.ticker,section='audit') }}">View sources and provenance</a>. Page navigation never fetches providers.</p>
+</section>
+{% endif %}
+
 {% include "_research_kpis.html" %}

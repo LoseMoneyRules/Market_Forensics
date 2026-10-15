@@ -19,7 +19,7 @@ from .position_action import build_position_action, monitoring_condition_state, 
 from .reporting import emergency_discovery_report_stream, emergency_research_report_stream, get_report_branding, render_discovery_pdf_safe, render_docx_safe, render_pdf_safe, safe_research_report_data, set_report_branding
 from .routes import _ctx, _published_for_role, bp, slugify, utcnow
 from .security import login_required, role_required
-from .services import can_view_publication, create_snapshot, publication_payload, snapshot_changes
+from .services import can_view_publication, create_snapshot, publication_payload, publication_view_for_role, snapshot_changes
 
 
 def _memory_download(stream, *, mimetype: str, download_name: str):
@@ -146,8 +146,8 @@ def _publication_view(publication: Publication, role: str) -> dict:
     views = payload.get("views") if isinstance(payload.get("views"), dict) else None
     if views:
         key = "INSIDER" if str(role).upper() in {"INSIDER", "CONTROL"} else "FRIEND"
-        return dict(views.get(key) or views.get("FRIEND") or {})
-    return payload
+        return publication_view_for_role(dict(views.get(key) or views.get("FRIEND") or {}), role)
+    return publication_view_for_role(payload, role)
 
 
 @bp.post("/company/<ticker>/snapshot")
@@ -179,7 +179,7 @@ def snapshot_company(ticker):
 def preview_snapshot(ticker, snapshot_id):
     require_control_view(); ctx = _ctx(ticker); snapshot = db.session.get(Snapshot, snapshot_id)
     if not snapshot or snapshot.coverage_id != ctx["coverage"].id: abort(404)
-    return render_template("publication_preview.html", snapshot=snapshot, changes=snapshot_changes(snapshot), **ctx)
+    return render_template("publication_preview.html", snapshot=snapshot, changes=snapshot_changes(snapshot), friend_view=publication_payload(snapshot, "FRIEND"), insider_view=publication_payload(snapshot, "INSIDER"), **ctx)
 
 
 @bp.post("/company/<ticker>/snapshot/<int:snapshot_id>/publish")

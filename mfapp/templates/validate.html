@@ -37,6 +37,12 @@
     <div class="panel empty-state"><h2>No historical validation yet</h2><p>Run a point-in-time walk-forward using the widest valid history available. The engine will use the widest available price history, reconstruct each SEC filing-date information set, freeze the valuation, then compare it with later outcomes.</p></div>
   {% endif %}
   {% if runs %}<div class="panel"><div class="panel-head"><h2>Run history</h2></div>{% for run in runs %}<div class="list-row"><div><strong>{{ run.created_at.strftime('%Y-%m-%d %H:%M:%S') }} · requested {{ run.lookback_years }}Y</strong><p>{% if run.finished_at %}completed {{ run.finished_at.strftime('%H:%M:%S') }} · {% endif %}{{ run.sample_size }} scored samples · reliability {{ pct(run.reliability_score) }}</p></div><span class="status-chip">{{ validation_states.get(run.id, run.status) }}</span></div>{% endfor %}</div>{% endif %}
+  <div class="panel guided-final-decision">
+    <div class="panel-head"><div><p class="eyebrow">FINAL DECISION CHECKPOINT</p><h2>Act, wait, or close — only after the evidence review</h2></div><span class="status-chip">{{ decision_lenses.research_conclusion }}</span></div>
+    <p>Research conclusion: <strong>{{ decision_lenses.research_conclusion }}</strong>. Historical validation: <strong>{{ latest_validation_state if latest_run else 'NOT RUN' }}</strong>. {% if not readiness.ready_to_validate %}Required gates remain open; no investable decision is ready.{% else %}The Research gates are reviewed; interpret the historical replay and current valuation quality before determining any action.{% endif %}</p>
+    <p class="muted">Choose explicitly between OPEN LONG, OPEN SHORT, WAIT, HOLD, ADD, REDUCE, CLOSE LONG or COVER SHORT in the Decision Journal. That is an immutable research decision, not a broker order. Risk limits and position sizing are handled in Portfolio.</p>
+    <div class="button-row"><a class="button primary" href="{{ url_for('web.company_section', ticker=security.ticker, section='journal') }}">Record or revise decision</a><a class="button" href="{{ url_for('web.company_section', ticker=security.ticker, section='overview') }}#process-readiness">Review approval gates</a><a class="button" href="{{ url_for('web.portfolio_security', ticker=security.ticker) }}">Open Portfolio risk</a></div>
+  </div>
 </section>
 {% endblock %}
 {% block scripts %}{% if latest_run %}<script src="{{ url_for('static', filename='js/validate_chart.js', v=mf_version) }}" defer></script>{% endif %}{% endblock %}

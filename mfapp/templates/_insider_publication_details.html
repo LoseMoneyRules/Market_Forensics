@@ -1,0 +1,27 @@
+{% if p.get('visibility') == 'INSIDER' %}
+<article class="report-section">
+  <h2>Research conclusion &amp; valuation assumptions</h2>
+  <p><strong>Conclusion:</strong> {{ (p.get('decision') or {}).get('research_conclusion') or '—' }} · <strong>State:</strong> {{ p.get('research_state') or '—' }}</p>
+  {% set vm = p.get('valuation_model') or {} %}
+  <p><strong>Valuation method:</strong> {{ vm.get('method') or '—' }}</p>
+  {% if vm.get('scenarios') %}
+  <div class="table-card embedded scroll"><table class="data-table">
+  <thead><tr><th>Case</th><th>Value / share</th><th>Probability</th></tr></thead><tbody>
+  {% for sc in vm.get('scenarios', []) %}<tr><td>{{ sc.get('name') }}</td><td>{{ sc.get('equity_value_per_share')|mf_money(2) if sc.get('equity_value_per_share') is not none else '—' }}</td><td>{{ '%.0f%%'|format(sc.get('probability')|float * 100) if sc.get('probability') is not none else '—' }}</td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+</article>
+{% if p.get('financials') %}<article class="report-section"><h2>Financial history</h2>
+<div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>FY</th><th>Revenue</th><th>Net income</th><th>FCF</th></tr></thead><tbody>
+{% for row in p.get('financials', []) %}<tr><td>{{ row.get('fiscal_year') or '—' }}</td><td>{{ row.get('revenue')|mf_num(0) if row.get('revenue') is not none else '—' }}</td><td>{{ row.get('net_income')|mf_num(0) if row.get('net_income') is not none else '—' }}</td><td>{{ row.get('fcf')|mf_num(0) if row.get('fcf') is not none else '—' }}</td></tr>{% endfor %}
+</tbody></table></div></article>{% endif %}
+{% if p.get('expectations') %}<article class="report-section"><h2>Market vs analyst expectations</h2>
+<div class="table-card embedded scroll"><table class="data-table"><thead><tr><th>Metric</th><th>Period</th><th>Market</th><th>Internal</th><th>Unit</th></tr></thead><tbody>
+{% for e in p.get('expectations', []) %}<tr><td>{{ e.get('metric') }}</td><td>{{ e.get('period_label') }}</td><td>{{ e.get('market_value') if e.get('market_value') is not none else '—' }}</td><td>{{ e.get('internal_value') if e.get('internal_value') is not none else '—' }}</td><td>{{ e.get('unit') }}</td></tr>{% endfor %}
+</tbody></table></div></article>{% endif %}
+{% if p.get('bear_case_items') or p.get('catalysts') %}<article class="report-section"><h2>Bear risks &amp; catalysts</h2>
+<div class="two-col"><div><h3>Bear risks</h3>{% for b in p.get('bear_case_items', []) %}<p><strong>{{ b.title }}</strong> · {{ b.severity }} · {{ b.evidence }}</p>{% else %}<p class="muted">No manual bear items.</p>{% endfor %}</div>
+<div><h3>Catalysts</h3>{% for c in p.get('catalysts', []) %}<p><strong>{{ c.title }}</strong> · {{ c.expected_date or 'undated' }} · {{ c.evidence }}</p>{% else %}<p class="muted">No analyst catalysts.</p>{% endfor %}</div></div></article>{% endif %}
+{% if p.get('management') %}<article class="report-section"><h2>Management review</h2>
+{% for m in p.get('management', [])[:8] %}<p><strong>{{ m.as_of }}</strong> · {{ m.execution }} {{ m.capital_allocation }} {{ m.red_flags }}</p>{% endfor %}
+</article>{% endif %}
+{% endif %}
