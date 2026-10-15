@@ -11,6 +11,7 @@ from .core_models import (
     ResearchGateApproval, ResearchState, ResearchVersion, RiskPlan, Security, Source, ValuationModel,
 )
 from .extensions import db
+from .research_section_review import ResearchSectionReview
 from .services import valuation_result
 from .validation_policy import validation_payload
 from .research_basis import FINANCIAL_REVIEW_GATES, latest_financial_basis
@@ -144,6 +145,13 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     ]
 
     approvals = {row.gate_key: row for row in ResearchGateApproval.query.filter_by(coverage_id=coverage.id).all()}
+    section_reviews = {row.section_key: row for row in ResearchSectionReview.query.filter_by(coverage_id=coverage.id).all()}
+    # Only an explicitly authored 0.4.2 review extends the old gate hash.
+    # Unreviewed legacy companies retain byte-for-byte their earlier gate hashes.
+    for gate in gates:
+        human = section_reviews.get(gate["key"])
+        if human is not None:
+            gate["evidence_hash"] = _hash({"evidence": gate["evidence"], "human_review": human.frozen_publication()})
     basis_materialized_at = _utc_naive(financial_basis.get("materialized_at"))
     thesis_revision_at_cmp = _utc_naive(thesis_revision_at)
 
@@ -165,7 +173,15 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
             and approval_at is not None
             and thesis_revision_at_cmp > approval_at
         )
-        review_required = financial_review_required or thesis_review_required
+        human = section_reviews.get(gate["key"])
+        human_at = _utc_naive(human.updated_at) if human else None
+        # Distinguish a changed human verdict from ordinary provider drift.
+        # Equality covers MariaDB DATETIME columns with second-level precision.
+        manual_review_required = bool(
+            approval and human and evidence_changed and human_at is not None
+            and approval_at is not None and human_at >= approval_at
+        )
+        review_required = financial_review_required or thesis_review_required or manual_review_required
 
         # Preserve the historical human approval row. A new material financial
         # basis or a genuine thesis revision invalidates only its CURRENT
@@ -174,6 +190,7 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         gate["approved"] = bool(approval) and not review_required
         gate["financial_review_required"] = financial_review_required
         gate["thesis_review_required"] = thesis_review_required
+        gate["manual_review_required"] = manual_review_required
         gate["review_required"] = review_required
         gate["stale_approval"] = evidence_changed or review_required
         gate["evidence_changed"] = evidence_changed
@@ -187,7 +204,8 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
     validation = validation_payload(hist)
     financial_reopened = [gate["key"] for gate in gates if gate.get("financial_review_required")]
     thesis_reopened = [gate["key"] for gate in gates if gate.get("thesis_review_required")]
-    reopened = list(dict.fromkeys(financial_reopened + thesis_reopened))
+    manual_reopened = [gate["key"] for gate in gates if gate.get("manual_review_required")]
+    reopened = list(dict.fromkeys(financial_reopened + thesis_reopened + manual_reopened))
 
     return {
         "done": done,
@@ -202,6 +220,7 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
         "financial_review_required_count": len(financial_reopened),
         "thesis_review_required": bool(thesis_reopened),
         "thesis_review_required_count": len(thesis_reopened),
+        "manual_review_required_count": len(manual_reopened),
         "thesis_revision_at": thesis_revision_at,
         "financial_basis": financial_basis,
         "review_banner": (
@@ -209,6 +228,8 @@ def research_readiness(coverage: Coverage) -> dict[str, Any]:
             if thesis_reopened
             else "NEW FINANCIAL EVIDENCE — REVIEW REQUIRED"
             if financial_reopened
+            else "NEW ANALYST REVIEW — APPROVAL REQUIRED"
+            if manual_reopened
             else ""
         ),
         "validation": validation,
