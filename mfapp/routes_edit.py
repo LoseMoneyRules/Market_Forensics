@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from urllib.parse import urlsplit
 
 from flask import abort, flash, g, redirect, request, url_for
 
@@ -12,6 +13,8 @@ from .core_models import (
     PortfolioRiskPlan, Security, Source, ValuationScenario,
 )
 from .extensions import db
+from .research_section_review import ResearchSectionReview
+from .research_cache import patch_research_cache_readiness
 from .jobs import enqueue_job
 from .management_promises import add_manual_promise
 from .portfolio_engine import ensure_portfolio_profile, ensure_portfolio_risk
@@ -661,3 +664,103 @@ def add_journal_outcome(ticker, journal_id):
     db.session.commit()
     flash("Outcome appended. The original decision snapshot was not changed.", "success")
     return redirect(url_for("web.company_section", ticker=ticker.upper(), section="journal"))
+
+
+@bp.post("/company/<ticker>/section-review/<section>")
+@role_required("CONTROL")
+def save_section_review(ticker: str, section: str):
+    """Save a bounded human judgement without rewriting automatic evidence."""
+    require_control_view()
+    if section not in SECTION_KEYS:
+        abort(404)
+    ctx = _ctx(ticker)
+    verdict = str(request.form.get("verdict") or "UNASSESSED").upper()
+    confidence = str(request.form.get("confidence") or "UNRATED").upper()
+    if verdict not in {"UNASSESSED", "BULLISH", "BEARISH", "MIXED", "INSUFFICIENT"}:
+        abort(400)
+    if confidence not in {"UNRATED", "LOW", "MEDIUM", "HIGH"}:
+        abort(400)
+    metric_label = str(request.form.get("metric_label") or "").strip()[:96]
+    metric_unit = str(request.form.get("metric_unit") or "").strip()
+    if metric_unit not in {"", "USD", "%", "x", "shares", "years", "count", "other"}:
+        abort(400)
+    value_raw = str(request.form.get("metric_value") or "").strip()
+    try:
+        metric_value = Decimal(value_raw) if value_raw else None
+        if metric_value is not None and (not metric_value.is_finite() or abs(metric_value) > Decimal("999999999999999999")):
+            abort(400)
+    except InvalidOperation:
+        abort(400)
+    if metric_value is not None and not metric_label:
+        flash("Name the metric before saving a numeric analyst assumption.", "error")
+        return redirect(_section_review_url(section, ticker))
+    horizon_raw = str(request.form.get("horizon_months") or "").strip()
+    try:
+        horizon = int(horizon_raw) if horizon_raw else None
+    except ValueError:
+        abort(400)
+    if horizon is not None and not 1 <= horizon <= 240:
+        abort(400)
+    evidence = str(request.form.get("evidence_note") or "").strip()[:4000]
+    reconsider = str(request.form.get("reconsider_if") or "").strip()[:2000]
+    source_url = str(request.form.get("source_url") or "").strip()[:1000]
+    if source_url:
+        try:
+            parsed = urlsplit(source_url)
+            valid_url = parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not parsed.username and not parsed.password
+        except ValueError:
+            valid_url = False
+        if not valid_url:
+            flash("Source link must be a valid http/https URL without credentials.", "error")
+            return redirect(_section_review_url(section, ticker))
+
+    values = {
+        "verdict": verdict, "confidence": confidence, "metric_label": metric_label,
+        "metric_value": metric_value, "metric_unit": metric_unit,
+        "horizon_months": horizon, "evidence_note": evidence,
+        "reconsider_if": reconsider, "source_url": source_url,
+    }
+    row = ResearchSectionReview.query.filter_by(
+        coverage_id=ctx["coverage"].id, section_key=section
+    ).first()
+    if row is None:
+        row = ResearchSectionReview(
+            coverage_id=ctx["coverage"].id, section_key=section, updated_by=g.user.id,
+        )
+        db.session.add(row)
+    changed = False
+    for field, value in values.items():
+        if getattr(row, field) != value:
+            setattr(row, field, value)
+            changed = True
+    if changed:
+        row.updated_by = g.user.id
+        row.updated_at = utcnow()
+        db.session.flush()
+        # Human gate approvals are not destroyed. An edited verdict reopens the
+        # CURRENT approval in readiness while preserving its historical row.
+        patch_research_cache_readiness(ctx["coverage"].id, _safe_review_readiness(ctx["coverage"]))
+        audit("research.section_review.save", "coverage", ctx["coverage"].id,
+              {"section": section, "verdict": verdict, "confidence": confidence})
+        db.session.commit()
+        flash("Structured review saved. Review the section gate again in Overview if it was previously approved.", "success")
+    else:
+        db.session.rollback()
+        flash("No structured review changes.", "success")
+    return redirect(_section_review_url(section, ticker))
+
+
+def _safe_review_readiness(coverage):
+    from .readiness import research_readiness
+    return research_readiness(coverage)
+
+
+def _section_review_url(section: str, ticker: str):
+    ticker = ticker.upper()
+    if section == "valuation":
+        return url_for("web.valuation_company", ticker=ticker)
+    if section == "financial-flows":
+        return url_for("web.financial_flows", ticker=ticker)
+    if section == "validate":
+        return url_for("web.validate_company", ticker=ticker)
+    return url_for("web.company_section", ticker=ticker, section=section)
