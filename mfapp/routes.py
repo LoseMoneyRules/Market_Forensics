@@ -952,13 +952,14 @@ def add_coverage():
     if discovery_provenance:
         create_meta["discovery_provenance"] = discovery_provenance
     audit("coverage.create", "coverage", coverage.id, create_meta); db.session.commit()
-    enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
-    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 10}, priority=35)
-    if provider_status(g.user.id).get("sec"):
-        enqueue_job("SEC_INGEST", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=40)
-    else:
-        enqueue_job("RESEARCH_PREFILL", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=50)
-    flash(f"{ticker} added to Coverage. Quote, price history and evidence jobs queued where available.", "success")
+    job = enqueue_job(
+        "RESEARCH_REFRESH", user_id=g.user.id,
+        company_id=security.company_id, security_id=security.id,
+        payload={"coverage_id": coverage.id, "mode": "all"}, priority=28,
+    )
+    from .routes_publish import _dispatch_pending_work
+    _dispatch_pending_work()
+    flash(f"{ticker} added to Coverage. One comprehensive Research refresh is queued as job #{job.id}.", "success")
     return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
 
 
