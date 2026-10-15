@@ -330,11 +330,14 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
     # A fresh but disputed provider observation may be shown for situational
     # awareness, never promoted into an investable valuation conclusion.
-    if market and str(market.quality or "") == "DISPUTED_OBSERVED":
+    market_stale = not (market and market.as_of and (utcnow() - market.as_of) <= timedelta(days=5))
+    market_disputed = bool(market and str(market.quality or "") == "DISPUTED_OBSERVED")
+    if market_stale or market_disputed:
         valuation["base_quality"] = "DATA_WARNING"
         valuation["quality"] = "DATA_WARNING"
         valuation["decision_grade"] = False
-        valuation["market_quote_disputed"] = True
+        valuation["market_quote_disputed"] = market_disputed
+        valuation["market_quote_stale"] = market_stale
 
     active_research_refresh = Job.query.filter(
         Job.user_id == g.user.id,
@@ -406,7 +409,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         brief["confidence"] = "UNVALIDATED"
 
     return {
-        "company_refresh_job": active_research_refresh,
+        "company_refresh_job": active_research_refresh, "market_stale": market_stale, "market_disputed": market_disputed,
         "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
         "investment": investment, "model": model, "market": market, "position": position,
         "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
@@ -672,11 +675,14 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             valuation["base_quality"] = base_quality
             valuation["quality"] = valuation.get("quality") or base_quality
             valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
-        if market and str(market.quality or "") == "DISPUTED_OBSERVED":
+        quote_stale = not (market and market.as_of and (now - market.as_of) <= timedelta(days=5))
+        quote_disputed = bool(market and str(market.quality or "") == "DISPUTED_OBSERVED")
+        if quote_stale or quote_disputed:
             valuation["base_quality"] = "DATA_WARNING"
             valuation["quality"] = "DATA_WARNING"
             valuation["decision_grade"] = False
-            valuation["market_quote_disputed"] = True
+            valuation["market_quote_disputed"] = quote_disputed
+            valuation["market_quote_stale"] = quote_stale
         readiness = dict(cache.get("readiness") or _fallback_readiness())
         intelligence = dict(cache.get("intelligence") or _fallback_intelligence(readiness, updating=True))
         lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
@@ -705,6 +711,7 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
             "decision_lenses": lenses, "discovery_labels": discovery_labels,
             "next_action": next_action, "freshness_hours": freshness_hours,
+            "quote_stale": quote_stale, "quote_disputed": quote_disputed,
         })
     rows.sort(key=lambda row: str(row["security"].ticker or "").upper())
     return rows, bool(missing)
