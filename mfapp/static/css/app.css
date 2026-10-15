@@ -542,7 +542,7 @@ html[data-theme="dark"] .research-refresh-command{background:var(--white);border
 .guided-step-head .muted{font-size:.82rem;line-height:1.5;margin:0}
 .guided-step .eyebrow{font-size:.66rem;letter-spacing:.1em}
 .guided-step-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:8px}
-.guided-step-fact{padding:10px 12px;border:1px solid var(--border,#ddd);border-radius:10px;min-width:0}
+.guided-step-fact{padding:10px 12px;border:1px solid var(--line);border-radius:10px;min-width:0}
 .guided-step-fact small,.guided-step-fact strong{display:block;overflow-wrap:anywhere}
 .guided-step-fact small{font-size:.69rem;opacity:.72;margin-bottom:4px}
 .guided-step-fact strong{font-size:1rem;font-weight:650;font-variant-numeric:tabular-nums}
