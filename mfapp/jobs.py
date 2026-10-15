@@ -631,96 +631,13 @@ def _prime_research_cache(user_id: int) -> dict[str, Any]:
 
 
 def _bulk(user_id: int) -> dict[str, Any]:
-    sec_ready = provider_status(user_id).get("sec", False); queued = 0; reused = 0
-    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
-        security = db.session.get(Security, coverage.security_id)
-        if not security: continue
-        specs = [("MARKET_REFRESH", 20), ("PRICE_HISTORY_REFRESH", 35), ("MACRO_REFRESH", 55), ("FINRA_IMPORT", 70), ("POSITIONING_REFRESH", 75), ("RECALCULATE", 95)]
-        if sec_ready:
-            specs.insert(1, ("SEC_INGEST", 40))
-            specs.append(("MANAGEMENT_SCAN", 80))
-        for kind, priority in specs:
-            payload = {"coverage_id": coverage.id}
-            if kind == "PRICE_HISTORY_REFRESH":
-                payload["lookback_years"] = 10
-            job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload=payload, priority=priority)
-            if getattr(job, "_mf_reused", False): reused += 1
-            else: queued += 1
-    portfolio_job = enqueue_job("PORTFOLIO_RECALCULATE", user_id=user_id, payload={}, priority=99)
-    if getattr(portfolio_job, "_mf_reused", False): reused += 1
-    else: queued += 1
-    return {"jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
+    from .refresh_engine import schedule_research_refresh
+    return schedule_research_refresh(user_id, "all")
 
 
 def _stale(user_id: int) -> dict[str, Any]:
-    """Queue only stale evidence, keeping shared-hosting work bounded."""
-    now = utcnow()
-    sec_ready = provider_status(user_id).get("sec", False)
-    queued = reused = scanned = 0
-    for coverage in Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all():
-        security = db.session.get(Security, coverage.security_id)
-        if not security:
-            continue
-        scanned += 1
-        specs: list[tuple[str, int]] = []
-        market = latest_snapshot(security.id)
-        if market is None or market.as_of is None or (now - market.as_of).total_seconds() > 30 * 60:
-            specs.append(("MARKET_REFRESH", 20))
-        latest_hist = (
-            db.session.query(db.func.count(HistoricalPrice.id), db.func.max(HistoricalPrice.trade_date))
-            .filter(HistoricalPrice.security_id == security.id)
-            .first()
-        )
-        hist_count = int((latest_hist or (0, None))[0] or 0)
-        hist_last = (latest_hist or (0, None))[1]
-        if hist_count < 300 or hist_last is None or hist_last < (now.date() - timedelta(days=10)):
-            specs.append(("PRICE_HISTORY_REFRESH", 35))
-        if sec_ready:
-            last_sec = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="SEC_INGEST", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
-            latest_companyfacts = (
-                Source.query
-                .filter_by(company_id=security.company_id, provider="SEC", source_type="COMPANYFACTS")
-                .order_by(Source.retrieved_at.desc(), Source.id.desc())
-                .first()
-            )
-            stored_normalizer = str(((latest_companyfacts.meta or {}).get("normalizer_version") if latest_companyfacts else "") or "")
-            normalizer_stale = stored_normalizer != SEC_NORMALIZER_VERSION
-            if (
-                normalizer_stale
-                or last_sec is None
-                or last_sec.finished_at is None
-                or (now - last_sec.finished_at).total_seconds() > 24 * 3600
-            ):
-                specs.append(("SEC_INGEST", 40))
-        last_macro = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="MACRO_REFRESH", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
-        if last_macro is None or last_macro.finished_at is None or (now - last_macro.finished_at).total_seconds() > 24 * 3600:
-            specs.append(("MACRO_REFRESH", 55))
-        last_finra = RefreshRun.query.filter_by(security_id=security.id, refresh_type="FINRA_IMPORT", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
-        if last_finra is None or last_finra.finished_at is None or (now - last_finra.finished_at).total_seconds() > 24 * 3600:
-            specs.append(("FINRA_IMPORT", 70))
-        last_positioning = RefreshRun.query.filter_by(security_id=security.id, refresh_type="POSITIONING_REFRESH", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
-        if last_positioning is None or last_positioning.finished_at is None or (now - last_positioning.finished_at).total_seconds() > 24 * 3600:
-            specs.append(("POSITIONING_REFRESH", 75))
-        if sec_ready:
-            last_management = RefreshRun.query.filter_by(company_id=security.company_id, refresh_type="MANAGEMENT_SCAN", status="DONE").order_by(RefreshRun.finished_at.desc()).first()
-            if last_management is None or last_management.finished_at is None or (now - last_management.finished_at).total_seconds() > 7 * 24 * 3600:
-                specs.append(("MANAGEMENT_SCAN", 80))
-        if specs:
-            specs.append(("RECALCULATE", 90))
-        for kind, priority in specs:
-            payload = {"coverage_id": coverage.id}
-            if kind == "PRICE_HISTORY_REFRESH":
-                payload["lookback_years"] = 10
-            job = enqueue_job(kind, user_id=user_id, company_id=security.company_id, security_id=security.id, payload=payload, priority=priority)
-            if getattr(job, "_mf_reused", False):
-                reused += 1
-            else:
-                queued += 1
-    if queued:
-        portfolio_job = enqueue_job("PORTFOLIO_RECALCULATE", user_id=user_id, payload={}, priority=99)
-        if getattr(portfolio_job, "_mf_reused", False): reused += 1
-        else: queued += 1
-    return {"coverage_scanned": scanned, "jobs_queued": queued, "jobs_reused": reused, "sec_enabled": sec_ready}
+    from .refresh_engine import schedule_research_refresh
+    return schedule_research_refresh(user_id, "stale")
 
 
 def _store_finra_bundle(security: Security, bundle: dict[str, Any]) -> dict[str, Any]:
@@ -861,6 +778,9 @@ def _execute(job: Job) -> dict[str, Any]:
     if kind == "PORTFOLIO_RECALCULATE":
         from .portfolio_engine import refresh_portfolio_analytics
         return refresh_portfolio_analytics(job.user_id)
+    if kind == "RESEARCH_REFRESH":
+        from .refresh_engine import run_research_refresh
+        return run_research_refresh(job)
     if kind == "BULK_REFRESH": return _bulk(job.user_id)
     if kind == "STALE_REFRESH": return _stale(job.user_id)
     raise RuntimeError(f"Unknown job type: {kind}")
