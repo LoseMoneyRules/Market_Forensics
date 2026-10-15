@@ -43,7 +43,7 @@
         <td class="coverage-number-col">{% if row.intelligence.base_gap_pct is not none %}{{ '%+.1f'|format(row.intelligence.base_gap_pct) }}%{% else %}—{% endif %}</td>
         <td>{% if row.readiness.ready_to_validate %}<a class="micro-link process-ready-only" href="{{ url_for('web.validate_company', ticker=row.security.ticker) }}">READY</a>{% else %}<div class="readiness"><span>{{ row.readiness.done }}/{{ row.readiness.total }}</span><progress class="readiness-progress" value="{{ row.readiness.done }}" max="{{ row.readiness.total if row.readiness.total else 1 }}" aria-label="Process readiness: {{ row.readiness.done }} of {{ row.readiness.total }}"></progress></div>{% endif %}</td>
         <td><span class="status-chip" title="Latest point-in-time walk-forward validation status">{{ row.readiness.validation.state }}</span></td>
-        <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.freshness_hours < 1 %}{{ '%.0f'|format(row.freshness_hours*60) }}m{% else %}{{ '%.1f'|format(row.freshness_hours) }}h{% endif %}</td>
+        <td class="coverage-fresh-col">{% if row.freshness_hours is none %}<span class="muted">No quote</span>{% elif row.quote_stale %}<span data-status-value="DATA WARNING">STALE · {{ '%.0f'|format(row.freshness_hours / 24) }}d</span>{% elif row.quote_disputed %}<span data-status-value="DATA WARNING">DISPUTED</span>{% elif row.freshness_hours < 1 %}{{ '%.0f'|format(row.freshness_hours*60) }}m{% else %}{{ '%.1f'|format(row.freshness_hours) }}h{% endif %}</td>
         <td class="coverage-wrap-col">{{ row.next_action }}</td>
         <td class="coverage-wrap-col"><small>{{ row.discovery_labels[:2]|join(' · ') }}</small></td>
         <td class="coverage-manage-col">
