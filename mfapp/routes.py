@@ -13,6 +13,8 @@ from .current_financials import annual_history_grid, annual_rows, canonical_annu
 from .decision_support import company_brief, journal_prefill, management_accountability, management_engine, monitoring_plan, tape_context_metrics, tape_series
 from .management_promises import evaluate_promises
 from .extensions import db
+from .research_section_review import ResearchSectionReview
+from .research_workflow import build_research_workflow
 from .finra import stored_summary as finra_stored_summary
 from .jobs import enqueue_job
 from .data_providers import latest_snapshot, provider_status
@@ -413,7 +415,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
     if readiness.get("degraded"):
         brief["confidence"] = "UNVALIDATED"
 
-    return {
+    context = {
         "company_refresh_job": latest_company_refresh, "market_stale": market_stale, "market_disputed": market_disputed,
         "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
         "investment": investment, "model": model, "market": market, "position": position,
@@ -424,6 +426,17 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         "core_financial_recovery_pending": core_financial_recovery_pending,
         "financial_normalizer_version": stored_normalizer_version,
     }
+    # All 14 tabs share a lightweight, DB-only research guide. Source providers
+    # are exclusively contacted by the existing background refresh pipeline.
+    reviews = {
+        row.section_key: row
+        for row in ResearchSectionReview.query.filter_by(coverage_id=coverage.id).all()
+    }
+    source_rows = Source.query.filter_by(company_id=company.id).order_by(
+        Source.retrieved_at.desc(), Source.id.desc()
+    ).limit(8).all()
+    context["workflow"] = build_research_workflow(context, SECTIONS, reviews, source_rows)
+    return context
 
 def _fallback_synthesis(ctx: dict) -> dict:
     pending = bool(ctx.get("cache_pending"))
