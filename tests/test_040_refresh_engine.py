@@ -116,3 +116,105 @@ def test_040_research_buttons_have_only_two_entry_points():
     assert "Refresh SEC + TTM" not in company
     assert "Refresh FINRA" not in company
     assert "Queue full refresh" not in settings
+
+
+def test_040_sec_promotes_rich_superseded_period_without_unique_collision(tmp_path, monkeypatch):
+    """MySQL's immediate uq_mf_financial_period constraint must never reject a promotion."""
+    from datetime import date
+    from decimal import Decimal
+    from mfapp.core_models import FinancialPeriod, NormalizedFinancial, Source
+    from mfapp.secdata import _upsert_period
+
+    app, uid, security_id, coverage_id = _workspace(tmp_path, monkeypatch)
+    with app.app_context():
+        security = db.session.get(Security, security_id)
+        company = db.session.get(Company, security.company_id)
+        source = Source(company_id=company.id, provider="SEC", source_type="COMPANYFACTS",
+                        title="SEC facts", url="https://www.sec.gov/test")
+        current = FinancialPeriod(company_id=company.id, period_type="FY", fiscal_year=2025,
+                                  end_date=date(2025, 12, 31), currency="USD")
+        legacy_rich = FinancialPeriod(company_id=company.id, period_type="SUPERSEDED_FY", fiscal_year=2025,
+                                      end_date=date(2025, 12, 31), currency="USD")
+        db.session.add_all([source, current, legacy_rich])
+        db.session.flush()
+        current_id, rich_id = current.id, legacy_rich.id
+        db.session.add(NormalizedFinancial(
+            financial_period_id=rich_id, revenue=Decimal("100"), cfo=Decimal("20"),
+            source_map={"revenue": {"provider": "SEC"}, "cfo": {"provider": "SEC"}},
+        ))
+        db.session.commit()
+
+        selected = _upsert_period(
+            company, source, period_type="FY", fiscal_year=2025,
+            end_date=date(2025, 12, 31), anchor={"filed": "2026-03-20"},
+        )
+        db.session.commit()
+        assert selected.id == rich_id
+        assert selected.period_type == "FY"
+        old = db.session.get(FinancialPeriod, current_id)
+        assert old.period_type.startswith(("SUPERSEDED_", "SUP_"))
+        assert FinancialPeriod.query.filter_by(
+            company_id=company.id, period_type="FY",
+            fiscal_year=2025, end_date=date(2025, 12, 31),
+        ).count() == 1
+
+
+def test_040_recent_quote_consensus_discards_stale_outlier(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from mfapp.data_providers import QuoteResult, fetch_quote
+    import mfapp.data_providers as quotes
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    candidates = [
+        QuoteResult(True, "Alpaca", 100, "USD", now, "OBSERVED"),
+        QuoteResult(True, "Tiingo", 100.7, "USD", now - timedelta(seconds=40), "OBSERVED"),
+        QuoteResult(True, "Alpha Vantage", 91, "USD", now - timedelta(days=3), "DELAYED_OBSERVED"),
+        QuoteResult(True, "Public market chart", 100.5, "USD", now - timedelta(minutes=2), "PUBLIC_FALLBACK"),
+    ]
+    monkeypatch.setattr(quotes, "quote_candidates", lambda *_: candidates)
+    result = fetch_quote("RFH", 1)
+    assert result.ok
+    assert result.quality == "CONSENSUS_OBSERVED"
+    assert 100 <= result.price <= 100.7
+    assert "Alpha Vantage" not in result.payload["selected_providers"]
+
+
+def test_040_disagreement_no_longer_freezes_a_months_old_quote(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from mfapp.data_providers import QuoteResult, fetch_quote
+    import mfapp.data_providers as quotes
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    monkeypatch.setattr(quotes, "quote_candidates", lambda *_: [
+        QuoteResult(True, "Alpaca", 100.0, "USD", now, "OBSERVED"),
+        QuoteResult(True, "Tiingo", 104.5, "USD", now - timedelta(seconds=10), "OBSERVED"),
+        QuoteResult(False, "Alpha Vantage", message="rate limited"),
+        QuoteResult(True, "Public market chart", 100.3, "USD", now - timedelta(seconds=30), "PUBLIC_FALLBACK"),
+    ])
+    resolved = fetch_quote("RFH", 1)
+    assert resolved.ok
+    assert resolved.quality in {"CONSENSUS_OBSERVED", "CROSS_CHECKED_OBSERVED"}
+    assert 100.0 <= resolved.price <= 100.3
+
+    # With three mutually incompatible current providers, publish the latest
+    # sourced reference as DISPUTED, not as a silently 'verified' price.
+    monkeypatch.setattr(quotes, "quote_candidates", lambda *_: [
+        QuoteResult(True, "Alpaca", 100, "USD", now, "OBSERVED"),
+        QuoteResult(True, "Tiingo", 112, "USD", now - timedelta(minutes=1), "OBSERVED"),
+        QuoteResult(False, "Alpha Vantage", message="rate limited"),
+        QuoteResult(True, "Public market chart", 121, "USD", now - timedelta(minutes=2), "PUBLIC_FALLBACK"),
+    ])
+    disputed = fetch_quote("RFH", 1)
+    assert disputed.ok and disputed.price == 100
+    assert disputed.quality == "DISPUTED_OBSERVED"
+    assert disputed.payload["disagreement"] is True
+
+    monkeypatch.setattr(quotes, "quote_candidates", lambda *_: [
+        QuoteResult(True, "Alpaca", 100, "USD", now - timedelta(days=70), "OBSERVED"),
+        QuoteResult(False, "Tiingo", message="offline"),
+        QuoteResult(False, "Alpha Vantage", message="offline"),
+        QuoteResult(False, "Public market chart", message="offline"),
+    ])
+    missing = fetch_quote("RFH", 1)
+    assert not missing.ok
+    assert missing.payload["freshness_error"] is True
