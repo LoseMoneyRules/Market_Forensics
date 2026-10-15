@@ -6,8 +6,10 @@ Only one final Research recalculation runs after its evidence stages.
 """
 from __future__ import annotations
 
+import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, time as clock_time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from .core_models import Company, Coverage, Event, HistoricalPrice, Job, RefreshRun, Security, Source
 from .data_providers import latest_snapshot, provider_status, refresh_security_quote
@@ -78,7 +80,7 @@ def _due(kind: str, security: Security, mode: str, now, sec_ready: bool) -> bool
     return elapsed is None or elapsed > threshold
 
 
-def schedule_research_refresh(user_id: int, mode: str) -> dict:
+def schedule_research_refresh(user_id: int, mode: str, *, eligible_security_ids: set[int] | None = None, trigger: str = "manual") -> dict:
     """One queue row per security, not seven network rows plus duplicate recalcs."""
     from .jobs import enqueue_job, utcnow
 
@@ -89,7 +91,7 @@ def schedule_research_refresh(user_id: int, mode: str) -> dict:
     coverages = Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all()
     for coverage in coverages:
         security = db.session.get(Security, coverage.security_id)
-        if security is None:
+        if security is None or (eligible_security_ids is not None and security.id not in eligible_security_ids):
             continue
         scanned += 1
         if mode == "stale" and not any(
@@ -99,7 +101,7 @@ def schedule_research_refresh(user_id: int, mode: str) -> dict:
         job = enqueue_job(
             "RESEARCH_REFRESH", user_id=user_id, company_id=security.company_id,
             security_id=security.id,
-            payload={"coverage_id": coverage.id, "mode": mode}, priority=28,
+            payload={"coverage_id": coverage.id, "mode": mode, "trigger": trigger}, priority=28,
         )
         if getattr(job, "_mf_reused", False):
             reused += 1
@@ -120,6 +122,78 @@ def schedule_research_refresh(user_id: int, mode: str) -> dict:
         "coverage_scanned": scanned, "jobs_queued": queued,
         "jobs_reused": reused, "sec_enabled": sec_ready,
         "execution": "staged_per_security", "mode": mode,
+    }
+
+
+def schedule_morning_refresh(now: datetime | None = None) -> dict:
+    """Queue research older than 24h after 08:00 US Eastern, without a browser.
+
+    Called only by the global server cron while it owns the executor lock.
+    Latest durable jobs are the idempotency ledger: one automatic attempt per
+    local calendar date per security, including when a previous run was partial.
+    """
+    from .jobs import utcnow
+    from .models import User
+
+    now = now or utcnow()  # DB timestamps are naive UTC.
+    zone_name = os.environ.get("MF_REFRESH_TIMEZONE", "America/New_York")
+    zone = ZoneInfo(zone_name)
+    eastern = now.replace(tzinfo=timezone.utc).astimezone(zone)
+    if eastern.hour < 8:
+        return {"scheduled": False, "reason": "before_08_local", "timezone": zone_name}
+
+    day_start = datetime.combine(eastern.date(), clock_time.min, tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
+    old_before = now - timedelta(hours=24)
+    owners = (
+        db.session.query(Coverage.user_id)
+        .join(User, User.id == Coverage.user_id)
+        .filter(Coverage.status != "ARCHIVED", User.is_active.is_(True), User.role == "CONTROL")
+        .distinct().all()
+    )
+    total_eligible = 0
+    total_queued = 0
+    total_reused = 0
+    for (user_id,) in owners:
+        eligible = set()
+        coverages = Coverage.query.filter(Coverage.user_id == user_id, Coverage.status != "ARCHIVED").all()
+        for coverage in coverages:
+            security = db.session.get(Security, coverage.security_id)
+            if security is None:
+                continue
+            last = (
+                Job.query.filter(Job.user_id == user_id, Job.security_id == security.id, Job.job_type == "RESEARCH_REFRESH")
+                .order_by(Job.created_at.desc(), Job.id.desc()).first()
+            )
+            if last:
+                # Active tasks are resumed by the existing job recovery engine,
+                # never replaced by a second comprehensive refresh.
+                if last.status in {"QUEUED", "RUNNING"} or last.created_at >= day_start:
+                    continue
+                last_attempt_at = last.finished_at or last.started_at or last.created_at
+                if last_attempt_at > old_before:
+                    continue
+            eligible.add(security.id)
+        if not eligible:
+            continue
+        total_eligible += len(eligible)
+        result = schedule_research_refresh(
+            user_id, "stale", eligible_security_ids=eligible, trigger="morning-auto",
+        )
+        total_queued += result["jobs_queued"]
+        total_reused += result["jobs_reused"]
+        # Explicitly stamp automated jobs with the scheduled clock so the
+        # calendar-day ledger is deterministic (also for CLI replay/tests).
+        jobs = Job.query.filter(
+            Job.user_id == user_id, Job.job_type == "RESEARCH_REFRESH",
+            Job.security_id.in_(eligible), Job.status == "QUEUED",
+        ).all()
+        for job in jobs:
+            if (job.payload or {}).get("trigger") == "morning-auto":
+                job.created_at = now
+        db.session.commit()
+    return {
+        "scheduled": True, "timezone": zone_name, "local_date": eastern.date().isoformat(),
+        "eligible": total_eligible, "jobs_queued": total_queued, "jobs_reused": total_reused,
     }
 
 

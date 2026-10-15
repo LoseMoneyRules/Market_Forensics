@@ -8,11 +8,19 @@
 >
 > Historical specs and release notes remain useful context, but when they conflict with this document plus the current tested implementation, they are historical rather than canonical.
 
-**Current product line:** 0.4.0  
+**Current product line:** 0.4.1  
 **Architecture:** web-native Flask + MariaDB  
 **Primary workflow:** Discover → Research → Validate → Portfolio  
 **Core investing discipline:** BUSINESS → FUNDAMENTALS → EXPECTATIONS → VALUATION → BEAR CASE → CATALYSTS → FLOWS → RISK → POSITION SIZE → MONITORING  
 **Primary operating rule:** ADD ON EVIDENCE, NOT ON PRICE.
+
+---
+
+### 0.4.1 automatic Research freshness / compact company controls
+
+The server's existing every-minute cPanel cron (not a browser timer) evaluates CONTROL Coverage daily starting at 08:00 America/New_York (Eastern Time, with daylight saving). Each security whose last comprehensive Research refresh finished more than 24 hours ago, or which has never had one, is eligible for one scheduled stale-mode refresh per local day. Ongoing jobs are deduplicated. Source-specific eligibility/rate-limit cooldowns still apply, and provider errors retain PARTIAL audit instead of claiming complete or decision-grade data. Market, SEC, Financial Anatomy, Tape, valuation and Research caches are updated through the existing unified engine; neither human approvals nor Validate's historical walk-forward tests are auto-approved. The automation depends on a live Namecheap cron entry for `manage.py run-jobs --limit 5` each minute; CI cannot prove hosting cron is configured.
+
+The company-level manual Update TICKER control is a compact topbar action beside light/dark for authorized CONTROL Research/Validate company views. Its last status/stage stays visible as a restrained line in the company header. Research Command Center retains a separate manual Update all securities.
 
 ---
 
