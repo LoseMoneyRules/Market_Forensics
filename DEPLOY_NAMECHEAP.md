@@ -41,7 +41,7 @@ A startup migration failure prevents a healthy application response. Research/ac
 
 Heavy work is queued in `mf_job` and drained by cPanel cron. In 0.1.6 the same unattended command also evaluates CONTROL monitoring rules after the job queue pass, including threshold, data-quality, valuation/invalidation and filing-window checks.
 
-A practical shared-hosting schedule is every 5 minutes:
+Required recovery schedule for 0.4.0 is every minute (verify the actual cPanel cron entry after deployment):
 
 ```bash
 cd /home/ACCOUNT/PYTHON_APP_ROOT && /home/ACCOUNT/virtualenv/PYTHON_APP_ROOT/3.13/bin/python manage.py run-jobs --limit 5
@@ -74,3 +74,6 @@ If SMTP is not configured, trigger records and audit events are still persisted 
 ## Runtime principle
 
 Normal page requests read already persisted MariaDB state. API ingestion, SEC refresh, FINRA imports, scans and bulk work belong in jobs. Fast form saves and deterministic Bear/Base/Bull recalculation may execute in-request. Manual research edits remain authoritative and must not be overwritten by autofill.
+### 0.4.0 independent Research refresh
+
+The Update all securities / Update TICKER POST queues durable database work and immediately starts a detached bounded `manage.py run-jobs --limit 5 --user-id USER --drain` consumer. The browser may close. cPanel cron **must remain installed and enabled every minute** to resume unfinished jobs after process termination, 20-minute drain limits or hosting restarts. The release pipeline does not manage Namecheap cPanel cron settings; confirm the schedule manually. Refresh progress and PARTIAL stages are preserved in `mf_job` and `mf_refresh_run`. Do not assume a passing CI run verifies cron or live refresh speed. No automatic deploy on merge.
