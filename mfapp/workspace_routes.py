@@ -146,7 +146,7 @@ def _mutate_research_gate(ticker: str, gate_key: str, action: str):
 
 
 def _quote_is_fresh(snap) -> bool:
-    return bool(snap and snap.as_of and snap.as_of >= utcnow() - timedelta(minutes=5))
+    return bool(snap and snap.as_of and snap.as_of >= utcnow() - timedelta(minutes=5) and str(snap.quality or "") != "DISPUTED_OBSERVED")
 
 
 def _recent_market_refresh(user_id: int, security_id: int):

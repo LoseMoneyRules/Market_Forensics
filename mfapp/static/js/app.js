@@ -198,7 +198,9 @@
         delete priceMeta.dataset.semantic;
         const dot = document.createElement('i');
         dot.className = 'live-dot' + (q.fresh ? '' : ' stale');
-        priceMeta.append(dot, document.createTextNode((q.provider || 'quote') + ' · ' + fmtTime(q.as_of)));
+        const problem = q.quality === 'DISPUTED_OBSERVED' ? ' · PROVIDERS DISAGREE · NOT DECISION-GRADE' : (!q.as_of || !q.fresh ? ' · CHECK FRESHNESS' : '');
+        priceMeta.append(dot, document.createTextNode((q.provider || 'quote') + ' · ' + (fmtTime(q.as_of) || 'time unknown') + problem));
+        if (q.quality === 'DISPUTED_OBSERVED' || !q.as_of) priceMeta.dataset.semantic = 'caution';
       }
       return q;
     } catch (_) {
@@ -656,7 +658,7 @@
       : 'No active background jobs.';
     if(refreshOffered){workerChip.textContent='Data updated · refresh';workerChip.classList.add('job-updated');return}
     workerChip.classList.remove('job-updated');
-    if(running)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · running · '+queued+' queued';
+    if(running)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · '+(lead?.stage ? String(lead.stage).replaceAll('_',' ')+' '+(lead.finished_steps||0)+'/'+(lead.total_steps||8) : 'running')+' · '+queued+' queued';
     else if(queued)workerChip.textContent='Jobs · '+(target||'GLOBAL')+' · queued · '+queued;
     else if(failed)workerChip.textContent='Jobs · idle · '+failed+' failed';
     else workerChip.textContent='Jobs · idle';

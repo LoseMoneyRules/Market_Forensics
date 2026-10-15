@@ -364,6 +364,7 @@ def test_0214_report_engine_is_materialized_only_and_production_rich_backend_rem
     for forbidden in ("SECClient","Alpaca","FINRAClient","fredapi","evaluate_promises(","enqueue_job("):
         assert forbidden not in contract
     assert "_ctx(ticker, queue_recalc=False)" in route
-    assert "stale_cache and active_recalc is None and queue_recalc" in routes
+    assert "stale_cache and active_recalc is None and active_research_refresh is None and queue_recalc" in routes
+    assert "_ctx(ticker, queue_recalc=False)" in route
     assert "python-docx" in requirements and "reportlab" in requirements
     assert 'report_backend_status()["backend"] == "rich"' in workflow

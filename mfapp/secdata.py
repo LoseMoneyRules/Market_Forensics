@@ -1125,26 +1125,35 @@ def _supersede_period_identity(period: FinancialPeriod) -> None:
 def _upsert_period(company: Company, source: Source, *, period_type: str, fiscal_year: int, end_date: date, anchor: dict[str, Any] | None) -> FinancialPeriod:
     family = _period_family_query(company.id, end_date, period_type).order_by(FinancialPeriod.id.desc()).all()
 
-    # A parser revision must never promote a sparse shell merely because it is the
-    # newest/active row. Pick the richest factual identity across the full same-end
-    # family (including audit-preserved superseded rows), then make that row the
-    # single active canonical identity for the represented period.
+    # Prefer the richest exact-end evidence, including old superseded rows.
+    # IMPORTANT: demote old active identities and FLUSH them BEFORE promoting
+    # the winner. MySQL enforces uq_mf_financial_period immediately, and a
+    # query-autoflush during the earlier implementation could promote a
+    # superseded row while the active (FY/Q) key still existed (e.g. LPG).
     period = max(
         family,
         key=lambda row: _period_evidence_score(row, period_type=period_type, fiscal_year=fiscal_year),
         default=None,
     )
     if period is None:
-        period = FinancialPeriod(company_id=company.id, source_id=source.id, period_type=period_type, fiscal_year=fiscal_year, end_date=end_date, currency="USD")
+        period = FinancialPeriod(
+            company_id=company.id, source_id=source.id,
+            period_type=period_type, fiscal_year=fiscal_year,
+            end_date=end_date, currency="USD",
+        )
         db.session.add(period)
         db.session.flush()
     else:
+        # The no-autoflush guard also prevents the collision lookup inside
+        # _supersede_period_identity from writing a partially switched family.
+        with db.session.no_autoflush:
+            for sibling in family:
+                if sibling.id != period.id and not str(sibling.period_type or "").startswith(("SUPERSEDED_", "SUP_")):
+                    _supersede_period_identity(sibling)
+        db.session.flush()  # release the old unique (company,type,fy,end) key
         period.period_type = period_type
         period.fiscal_year = fiscal_year
-
-    for sibling in family:
-        if sibling.id != period.id and not str(sibling.period_type or "").startswith(("SUPERSEDED_", "SUP_")):
-            _supersede_period_identity(sibling)
+        db.session.flush()  # promote only after sibling demotions are durable
 
     period.source_id = source.id
     if anchor:

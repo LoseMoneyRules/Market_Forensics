@@ -328,14 +328,35 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         valuation["base_quality"] = base_quality
         valuation["quality"] = valuation.get("quality") or base_quality
         valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
+    # A fresh but disputed provider observation may be shown for situational
+    # awareness, never promoted into an investable valuation conclusion.
+    market_stale = not (market and market.as_of and (utcnow() - market.as_of) <= timedelta(days=5))
+    market_disputed = bool(market and str(market.quality or "") == "DISPUTED_OBSERVED")
+    if market_stale or market_disputed:
+        valuation["base_quality"] = "DATA_WARNING"
+        valuation["quality"] = "DATA_WARNING"
+        valuation["decision_grade"] = False
+        valuation["market_quote_disputed"] = market_disputed
+        valuation["market_quote_stale"] = market_stale
 
+    active_research_refresh = Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.security_id == security.id,
+        Job.job_type == "RESEARCH_REFRESH",
+        Job.status.in_(["QUEUED", "RUNNING"]),
+    ).first()
+    latest_company_refresh = active_research_refresh or Job.query.filter(
+        Job.user_id == g.user.id,
+        Job.security_id == security.id,
+        Job.job_type == "RESEARCH_REFRESH",
+    ).order_by(Job.id.desc()).first()
     active_recalc = Job.query.filter(
         Job.user_id == g.user.id,
         Job.company_id == company.id,
         Job.job_type == "RECALCULATE",
         Job.status.in_(["QUEUED", "RUNNING"]),
     ).first()
-    if stale_cache and active_recalc is None and queue_recalc:
+    if stale_cache and active_recalc is None and active_research_refresh is None and queue_recalc:
         active_recalc = enqueue_job(
             "RECALCULATE",
             user_id=g.user.id,
@@ -362,6 +383,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
     if (
         core_financial_recovery_needed
         and active_sec is None
+        and active_research_refresh is None
         and queue_recalc
         and provider_status(g.user.id).get("sec")
     ):
@@ -375,10 +397,10 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
             payload={"coverage_id": coverage.id, "normalizer_version": SEC_NORMALIZER_VERSION},
             priority=30,
         )
-    economic_reclass_pending = active_sec is not None
-    core_financial_recovery_pending = core_financial_recovery_needed and active_sec is not None
+    economic_reclass_pending = active_sec is not None or (core_financial_recovery_needed and active_research_refresh is not None)
+    core_financial_recovery_pending = core_financial_recovery_needed and (active_sec is not None or active_research_refresh is not None)
 
-    cache_pending = active_recalc is not None or economic_reclass_pending
+    cache_pending = active_recalc is not None or active_research_refresh is not None or economic_reclass_pending
     # Readiness is intentionally live DB state. It is lightweight and user-edited;
     # serving a materialized copy made Monitoring / Journal and gate approvals look
     # stale until a heavy recalculation happened.
@@ -392,6 +414,7 @@ def _ctx(ticker: str, *, queue_recalc: bool = True) -> dict:
         brief["confidence"] = "UNVALIDATED"
 
     return {
+        "company_refresh_job": latest_company_refresh, "market_stale": market_stale, "market_disputed": market_disputed,
         "coverage": coverage, "security": security, "company": company, "research": research, "risk": risk,
         "investment": investment, "model": model, "market": market, "position": position,
         "valuation": valuation, "readiness": readiness, "company_sections": SECTIONS,
@@ -617,6 +640,23 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
         if active_prime is None:
             enqueue_job("CACHE_PRIME", user_id=user_id, payload={}, priority=94)
 
+    refreshing_security_ids = {
+        row.security_id for row in Job.query.filter(
+            Job.user_id == user_id,
+            Job.job_type == "RESEARCH_REFRESH",
+            Job.status.in_(["QUEUED", "RUNNING"]),
+        ).all()
+    }
+    latest_ids = [
+        row[0] for row in db.session.query(db.func.max(Job.id)).filter(
+            Job.user_id == user_id,
+            Job.job_type == "RESEARCH_REFRESH",
+            Job.security_id.in_(security_ids),
+        ).group_by(Job.security_id).all()
+    ] if security_ids else []
+    latest_updates = {
+        job.security_id: job for job in Job.query.filter(Job.id.in_(latest_ids)).all()
+    } if latest_ids else {}
     now = utcnow()
     rows = []
     for coverage in coverages:
@@ -636,19 +676,28 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
             valuation["base_quality"] = "DATA_WARNING"
             valuation["quality"] = "DATA_WARNING"
             valuation["decision_grade"] = False
-            enqueue_job(
-                "RECALCULATE",
-                user_id=user_id,
-                company_id=company.id,
-                security_id=security.id,
-                payload={"coverage_id": coverage.id},
-                priority=95,
-            )
+            if security.id not in refreshing_security_ids:
+                enqueue_job(
+                    "RECALCULATE",
+                    user_id=user_id,
+                    company_id=company.id,
+                    security_id=security.id,
+                    payload={"coverage_id": coverage.id},
+                    priority=95,
+                )
         elif not valuation.get("base_quality"):
             base_quality = stored_model_base_quality(model)
             valuation["base_quality"] = base_quality
             valuation["quality"] = valuation.get("quality") or base_quality
             valuation["decision_grade"] = valuation_is_decision_grade({"base_quality": base_quality})
+        quote_stale = not (market and market.as_of and (now - market.as_of) <= timedelta(days=5))
+        quote_disputed = bool(market and str(market.quality or "") == "DISPUTED_OBSERVED")
+        if quote_stale or quote_disputed:
+            valuation["base_quality"] = "DATA_WARNING"
+            valuation["quality"] = "DATA_WARNING"
+            valuation["decision_grade"] = False
+            valuation["market_quote_disputed"] = quote_disputed
+            valuation["market_quote_stale"] = quote_stale
         readiness = dict(cache.get("readiness") or _fallback_readiness())
         intelligence = dict(cache.get("intelligence") or _fallback_intelligence(readiness, updating=True))
         lenses = dict(cache.get("decision_lenses") or _fallback_lenses(valuation, True))
@@ -672,11 +721,22 @@ def _cached_coverage_rows(user_id: int) -> tuple[list[dict], bool]:
         freshness_hours = None
         if market and market.as_of:
             freshness_hours = max(0.0, (now - market.as_of).total_seconds() / 3600.0)
+        refresh_job = latest_updates.get(security.id)
+        refresh_result = dict((refresh_job.result or {}) if refresh_job else {})
+        refresh_state = (
+            "PARTIAL" if refresh_job and refresh_job.status == "DONE" and refresh_result.get("state") == "PARTIAL"
+            else refresh_job.status if refresh_job else "NOT RUN"
+        )
         rows.append({
+            "refresh_state": refresh_state,
+            "refresh_stage": refresh_result.get("current_stage") or "",
+            "refresh_finished_steps": int(refresh_result.get("finished_steps") or 0),
+            "refresh_total_steps": int(refresh_result.get("total_steps") or 0),
             "coverage": coverage, "security": security, "company": company, "market": market,
             "valuation": valuation, "readiness": readiness, "intelligence": intelligence,
             "decision_lenses": lenses, "discovery_labels": discovery_labels,
             "next_action": next_action, "freshness_hours": freshness_hours,
+            "quote_stale": quote_stale, "quote_disputed": quote_disputed,
         })
     rows.sort(key=lambda row: str(row["security"].ticker or "").upper())
     return rows, bool(missing)
@@ -936,13 +996,14 @@ def add_coverage():
     if discovery_provenance:
         create_meta["discovery_provenance"] = discovery_provenance
     audit("coverage.create", "coverage", coverage.id, create_meta); db.session.commit()
-    enqueue_job("MARKET_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=20)
-    enqueue_job("PRICE_HISTORY_REFRESH", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id, "lookback_years": 10}, priority=35)
-    if provider_status(g.user.id).get("sec"):
-        enqueue_job("SEC_INGEST", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=40)
-    else:
-        enqueue_job("RESEARCH_PREFILL", user_id=g.user.id, company_id=security.company_id, security_id=security.id, payload={"coverage_id": coverage.id}, priority=50)
-    flash(f"{ticker} added to Coverage. Quote, price history and evidence jobs queued where available.", "success")
+    job = enqueue_job(
+        "RESEARCH_REFRESH", user_id=g.user.id,
+        company_id=security.company_id, security_id=security.id,
+        payload={"coverage_id": coverage.id, "mode": "all"}, priority=28,
+    )
+    from .routes_publish import _dispatch_pending_work
+    _dispatch_pending_work()
+    flash(f"{ticker} added to Coverage. One comprehensive Research refresh is queued as job #{job.id}.", "success")
     return redirect(url_for("web.company_section", ticker=ticker, section="overview"))
 
 

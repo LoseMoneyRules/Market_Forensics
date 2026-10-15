@@ -175,7 +175,7 @@
     <div class="two-col"><form class="panel stack" method="post" action="{{ url_for('web.save_research', ticker=security.ticker, section='business') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="panel-head"><div><p class="eyebrow">BUSINESS</p><h2>Business quality & model</h2></div><button class="button primary">Save</button></div><label>Evidence-backed business read<textarea name="text" rows="15">{{ research.business|clean_auto }}</textarea></label><p class="muted">Automatic classification is only the starting point. Add moat, customer concentration, pricing power, cyclicality and competitive evidence when known.</p></form><div class="panel"><div class="panel-head"><h2>Automatic numeric clues</h2></div>{% for s in intelligence.get('signals', []) if s.section in ['numbers','financial-flows'] %}<div class="list-row"><div><strong>{{ s.label }}</strong><p>{{ s.detail }}</p></div><span class="status-chip">{{ s.tone|upper }}</span></div>{% else %}<p class="muted">No numeric clue stored yet.</p>{% endfor %}</div></div>
 
   {% elif section == 'fundamentals' %}
-    <div class="action-bar"><div><h2>Fundamentals · FY + current TTM</h2><p>SEC filing data, current TTM when four compatible quarters exist, and internal Base-case forecasts. Display is {{ number_format }}.</p></div><div class="button-row"><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='sec') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Refresh SEC + TTM</button></form><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='recalculate') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Recalculate</button></form></div></div>
+    <div class="action-bar"><div><h2>Fundamentals · FY + current TTM</h2><p>SEC filing data, current TTM when four compatible quarters exist, and internal Base-case forecasts. Display is {{ number_format }}.</p></div></div>
     <div class="current-strip fundamentals-current-strip">
       <div class="current-kpi"><span>Current basis</span><strong>{{ current_financial.period_label if current_financial else 'REFRESH' }}</strong><small>{{ current_financial.period_end if current_financial else 'Refresh fundamentals' }}</small></div>
       <div class="current-kpi"><span>Revenue</span><strong>{{ num(current_financial.revenue) if current_financial else '—' }}</strong><small>{{ pct(current_financial.metrics.revenue_growth_pct) if current_financial else '—' }} growth</small></div>
@@ -522,7 +522,7 @@
     <div class="two-col"><div class="panel"><h2>Catalyst ledger</h2>{% for x in catalyst_rows %}<div class="list-row"><div><strong>{{ x.title }}</strong><p>{{ x.expected_date or 'No date' }} · {{ x.direction }} · {{ x.evidence }}</p></div><span class="status-chip">{{ x.catalyst_type }}</span></div>{% else %}<p class="muted">No sourced event catalysts.</p>{% endfor %}</div><form class="panel stack" method="post" action="{{ url_for('web.add_catalyst', ticker=security.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><h2>Add catalyst</h2><label>Title<input name="title" required></label><div class="form-grid two"><label>Type<input name="catalyst_type"></label><label>Date<input type="date" name="expected_date"></label></div><label>Direction<select name="direction"><option>POSITIVE</option><option selected>MIXED</option><option>NEGATIVE</option></select></label><label>Evidence<textarea name="evidence"></textarea></label><button class="button primary">Add</button></form></div>
 
   {% elif section == 'management' %}
-    <div class="action-bar"><div><h2>Management accountability</h2><p>Execution, capital allocation and promises vs filed actuals. No personality scoring.</p></div><form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='management') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary" type="submit">Scan SEC guidance</button></form></div>
+    <div class="action-bar"><div><h2>Management accountability</h2><p>Execution, capital allocation and promises vs filed actuals. No personality scoring.</p></div></div>
     {% set ms = management_scan.summary or {} %}
     <div class="panel compact-panel">
       <div class="panel-head"><div><p class="eyebrow">SEC GUIDANCE SCAN</p><h2>{{ management_scan.status }}</h2></div><span class="status-chip">Parser {{ ms.scan_version or '—' }}</span></div>
@@ -569,8 +569,6 @@
       <div class="button-row tape-controls">
         <a href="?months=6" class="{% if tape_series.months==6 %}active{% endif %}">6M</a>
         <a href="?months=12" class="{% if tape_series.months==12 %}active{% endif %}">12M</a>
-        <form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='finra') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button primary">Refresh FINRA</button></form>
-        <form method="post" action="{{ url_for('web.queue_refresh', ticker=security.ticker, kind='positioning') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button">Refresh Tape / Positioning</button></form>
       </div>
     </div>
 

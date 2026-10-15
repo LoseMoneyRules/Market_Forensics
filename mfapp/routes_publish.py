@@ -82,6 +82,9 @@ def _queue_status(user_id: int) -> dict:
         "target": targets[job.id]["label"],
         "scope": targets[job.id]["scope"],
         "ticker": targets[job.id]["ticker"],
+        "stage": str((job.result or {}).get("current_stage") or ""),
+        "finished_steps": int((job.result or {}).get("finished_steps") or 0),
+        "total_steps": int((job.result or {}).get("total_steps") or 0),
     } for job in active]
     return {
         "due": due, "queued": queued, "running": running, "failed": failed, "cancelled": cancelled,
@@ -89,7 +92,7 @@ def _queue_status(user_id: int) -> dict:
         "last_finished_id": finished.id if finished else None,
         "last_finished_at": finished.finished_at.isoformat() if finished and finished.finished_at else None,
         "active_jobs": active_jobs,
-        "executor": "cron+browser-fallback",
+        "executor": "cron+server-dispatch+browser-fallback",
     }
 
 
@@ -108,7 +111,7 @@ def _spawn_job_runner(user_id: int) -> int:
     python_executable = str(venv_python) if venv_python and venv_python.exists() else sys.executable
     command = [
         python_executable, str(manage), "run-jobs",
-        "--limit", "1", "--user-id", str(int(user_id)),
+        "--limit", "5", "--user-id", str(int(user_id)), "--drain",
     ]
     proc = subprocess.Popen(
         command,
@@ -121,6 +124,15 @@ def _spawn_job_runner(user_id: int) -> int:
         start_new_session=True,
     )
     return int(proc.pid)
+
+
+def _dispatch_pending_work() -> None:
+    """Start a detached queue consumer now; cron remains the recovery path."""
+    try:
+        _spawn_job_runner(g.user.id)
+    except Exception:
+        current_app.logger.exception("Refresh queued but detached executor failed to start")
+        flash("Refresh queued. Check the server cron if it does not start.", "error")
 
 
 def _job_flash(job: Job) -> str:
@@ -407,6 +419,22 @@ def portfolio_security(ticker):
 @role_required("CONTROL")
 def queue_refresh(ticker, kind):
     require_control_view(); ctx = _ctx(ticker)
+    if str(kind).lower() == "all":
+        job = enqueue_job(
+            "RESEARCH_REFRESH", user_id=g.user.id,
+            company_id=ctx["company"].id, security_id=ctx["security"].id,
+            payload={"coverage_id": ctx["coverage"].id, "mode": "all"}, priority=28,
+        )
+        if getattr(job, "_mf_reused", False) and job.status == "QUEUED":
+            payload = dict(job.payload or {})
+            payload["mode"] = "all"
+            job.payload = payload
+        audit("research_refresh.reuse" if getattr(job, "_mf_reused", False) else "research_refresh.enqueue",
+              "job", job.id, {"ticker": ctx["security"].ticker, "mode": "all"})
+        db.session.commit()
+        _dispatch_pending_work()
+        flash(f"{ctx['security'].ticker}: comprehensive refresh {'already active' if getattr(job, '_mf_reused', False) else 'queued'} (job #{job.id}). You can close the page.", "success")
+        return redirect(url_for("web.company_section", ticker=ticker.upper(), section="overview"))
     mapping = {
         "market": "MARKET_REFRESH", "sec": "SEC_INGEST", "recalculate": "RECALCULATE",
         "prefill": "RESEARCH_PREFILL", "finra": "FINRA_IMPORT", "prices": "PRICE_HISTORY_REFRESH", "validate": "DEEP_VALIDATION",
@@ -436,7 +464,7 @@ def queue_refresh(ticker, kind):
         )
     job = enqueue_job(job_type, user_id=g.user.id, company_id=ctx["company"].id, security_id=ctx["security"].id,
                       payload=payload, priority=priorities.get(kind, 50))
-    audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); flash(_job_flash(job), "success")
+    audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type, "ticker": ctx["security"].ticker}); db.session.commit(); _dispatch_pending_work(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.company_section", ticker=ticker.upper(), section="overview"))
 
 
@@ -445,7 +473,7 @@ def queue_refresh(ticker, kind):
 def queue_global_job(kind):
     require_control_view(); job_type = {"discovery": "DISCOVERY_SCAN", "bulk": "BULK_REFRESH", "stale": "STALE_REFRESH"}.get(str(kind).lower())
     if not job_type: abort(404)
-    job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); flash(_job_flash(job), "success")
+    job = enqueue_job(job_type, user_id=g.user.id, payload={}, priority=70); audit("job.reuse" if getattr(job, "_mf_reused", False) else "job.enqueue", "job", job.id, {"type": job_type}); db.session.commit(); _dispatch_pending_work(); flash(_job_flash(job), "success")
     return redirect(request.referrer or url_for("web.settings"))
 
 

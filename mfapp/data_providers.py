@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -29,16 +30,20 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _dt(value: Any) -> datetime:
+def _dt(value: Any) -> datetime | None:
+    """Preserve actual provider observation time; missing is never 'now'."""
     if isinstance(value, datetime):
-        return value.replace(tzinfo=None)
-    if value:
+        parsed = value
+    elif value:
         try:
             parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-        except Exception:
-            pass
-    return utcnow()
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def get_secret(user_id: int, name: str) -> str:
@@ -101,11 +106,12 @@ def _alpaca(ticker: str, user_id: int) -> QuoteResult:
         raw = response.json() or {}; trade, bar = raw.get("latestTrade") or {}, raw.get("dailyBar") or {}
         trade_price, bar_price = trade.get("p"), bar.get("c")
         price = trade_price or bar_price
+        observed_at = trade.get("t") if trade_price else bar.get("t")
         if price is None:
             return QuoteResult(False, "Alpaca", message="no usable quote")
         if trade_price and bar_price and abs(float(trade_price) / float(bar_price) - 1) > .08:
-            price = bar_price
-        return QuoteResult(True, "Alpaca IEX", float(price), "USD", _dt(trade.get("t") or bar.get("t")), "OBSERVED", {"feed": "iex", "latest_trade": trade_price, "daily_close": bar_price})
+            price, observed_at = bar_price, bar.get("t")
+        return QuoteResult(True, "Alpaca IEX", float(price), "USD", _dt(observed_at), "OBSERVED", {"feed": "iex", "latest_trade": trade_price, "daily_close": bar_price})
     except Exception as exc:
         return QuoteResult(False, "Alpaca", message=type(exc).__name__)
 
@@ -139,7 +145,15 @@ def _alpha_vantage(ticker: str, user_id: int) -> QuoteResult:
         row = (response.json() or {}).get("Global Quote") or {}; price = row.get("05. price")
         if not price:
             return QuoteResult(False, "Alpha Vantage", message="no usable quote")
-        return QuoteResult(True, "Alpha Vantage", float(price), "USD", utcnow(), "DELAYED_OBSERVED", {"source": "global_quote"})
+        trading_day = _dt(row.get("07. latest trading day"))
+        if trading_day is not None:
+            # GLOBAL_QUOTE only has a date, not an intraday timestamp. Treat
+            # it as the US regular-session close, never as retrieval time.
+            try:
+                trading_day = datetime.combine(trading_day.date(), datetime.min.time().replace(hour=16), tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc).replace(tzinfo=None)
+            except Exception:
+                trading_day = trading_day.replace(hour=20)
+        return QuoteResult(True, "Alpha Vantage", float(price), "USD", trading_day, "DELAYED_OBSERVED", {"source": "global_quote", "latest_trading_day": row.get("07. latest trading day")})
     except Exception as exc:
         return QuoteResult(False, "Alpha Vantage", message=type(exc).__name__)
 
@@ -158,7 +172,7 @@ def _public_chart(ticker: str) -> QuoteResult:
             closes = (((node.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []); usable = [x for x in closes if x is not None]; price = usable[-1] if usable else None
         if price is None:
             return QuoteResult(False, "Public market chart", message="no usable quote")
-        ts = meta.get("regularMarketTime"); as_of = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None) if ts else utcnow()
+        ts = meta.get("regularMarketTime") or ((node.get("timestamp") or [None])[-1]); as_of = datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None) if ts else None
         return QuoteResult(True, "Public market chart", float(price), str(meta.get("currency") or "USD"), as_of, "PUBLIC_FALLBACK", {"exchange": meta.get("exchangeName"), "instrument_type": meta.get("instrumentType")})
     except Exception as exc:
         return QuoteResult(False, "Public market chart", message=type(exc).__name__)
@@ -176,32 +190,92 @@ def _candidate_payload(rows: list[QuoteResult]) -> list[dict[str, Any]]:
     return [{"provider": row.provider, "ok": row.ok, "price": row.price, "quality": row.quality, "as_of": row.as_of.isoformat() if row.as_of else None, "message": row.message} for row in rows]
 
 
+def _us_trading_day(as_of: datetime):
+    """Use the source's NY market date, not the HTTP or UTC calendar date."""
+    try:
+        return as_of.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("America/New_York")).date()
+    except Exception:
+        return as_of.date()
+
+
 def fetch_quote(ticker: str, user_id: int) -> QuoteResult:
+    """Resolve current market evidence by freshness, then source agreement.
+
+    A stale or delayed authenticated feed must never veto a current one.
+    Disputed fresh observations can be displayed with an explicit non-decision
+    grade quality marker; that is safer than silently serving a months-old quote.
+    """
     attempts = quote_candidates(ticker, user_id)
-    authenticated = [row for row in attempts[:3] if row.ok and row.price is not None and row.price > 0]
-    public = attempts[-1] if attempts[-1].ok and attempts[-1].price is not None and attempts[-1].price > 0 else None
     evidence = _candidate_payload(attempts)
-    if len(authenticated) >= 2:
-        prices = [float(row.price) for row in authenticated]; center = median(prices); dispersion = max(abs(price / center - 1.0) for price in prices)
-        if public:
-            public_gap = abs(float(public.price) / center - 1.0)
-        else:
-            public_gap = None
-        if dispersion > .035:
-            return QuoteResult(False, "Quote consensus", message=f"Authenticated quote disagreement {dispersion:.1%}; last-good quote preserved.", payload={"candidates": evidence, "dispersion": dispersion})
-        latest = max((row.as_of for row in authenticated if row.as_of), default=utcnow())
-        return QuoteResult(True, "Verified quote consensus", center, authenticated[0].currency, latest, "CONSENSUS_OBSERVED", {"candidates": evidence, "dispersion": dispersion, "public_gap": public_gap})
-    if len(authenticated) == 1:
-        row = authenticated[0]
-        if public:
-            gap = abs(float(public.price) / float(row.price) - 1.0)
-            if gap > .05:
-                return QuoteResult(False, "Quote verification", message=f"Authenticated/public quote disagreement {gap:.1%}; last-good quote preserved.", payload={"candidates": evidence, "dispersion": gap})
-            return QuoteResult(True, row.provider + " · cross-checked", row.price, row.currency, row.as_of, "CROSS_CHECKED_OBSERVED", {"candidates": evidence, "dispersion": gap})
-        return QuoteResult(True, row.provider, row.price, row.currency, row.as_of, row.quality, {"candidates": evidence, **(row.payload or {})})
-    if public:
-        return QuoteResult(True, public.provider, public.price, public.currency, public.as_of, "PUBLIC_FALLBACK", {"candidates": evidence, **(public.payload or {})})
-    return QuoteResult(False, "last-good cache", message="; ".join(f"{row.provider}: {row.message}" for row in attempts), payload={"candidates": evidence})
+    now = utcnow()
+    valid = [
+        row for row in attempts
+        if row.ok and row.price is not None and 0 < float(row.price)
+        and row.as_of is not None
+        and timedelta(minutes=-15) <= (now - row.as_of) <= timedelta(days=5)
+    ]
+    # If every provider is stale, retain the last-good cache only as historical
+    # reference. Never relabel it as a fresh or decision-grade current quote.
+    if not valid:
+        return QuoteResult(
+            False, "Quote freshness", message="No recently dated quote available; existing quote is stale and must not be treated as current.",
+            payload={"candidates": evidence, "freshness_error": True},
+        )
+
+    # Never let a previous-session close outvote a current-session move.
+    # Reconcile only same-NY-session observations within 2h of the freshest
+    # trade. This also excludes a previous close on Monday mornings.
+    latest = max(row.as_of for row in valid)
+    latest_session = _us_trading_day(latest)
+    comparable = [
+        row for row in valid
+        if _us_trading_day(row.as_of) == latest_session
+        and latest - row.as_of <= timedelta(hours=2)
+    ]
+    # A provider that reports missing time must never override this group.
+    freshest_auth = next(
+        (row for row in sorted(comparable, key=lambda x: x.as_of, reverse=True) if row in attempts[:3]), None
+    )
+    preferred_currency = freshest_auth.currency if freshest_auth else comparable[0].currency
+    comparable = [row for row in comparable if row.currency == preferred_currency]
+    if not comparable:
+        return QuoteResult(False, "Quote currency", message="Recent providers disagree on quote currency.",
+                           payload={"candidates": evidence, "currency_conflict": True})
+
+    # Find a corroborated price cluster. An older outlier must not invalidate
+    # two newer matching sources (the former global-median 3.5% rejection).
+    clusters = []
+    for anchor in comparable:
+        pair = [row for row in comparable if abs(float(row.price) / float(anchor.price) - 1) <= .035]
+        if len(pair) >= 2:
+            auth_count = sum(row in attempts[:3] for row in pair)
+            if auth_count:
+                clusters.append((len(pair), auth_count, max(row.as_of for row in pair), pair))
+    if clusters:
+        best = max(clusters, key=lambda x: (x[0], x[1], x[2]))[3]
+        observed = max(row.as_of for row in best)
+        prices = [float(row.price) for row in best]
+        price = median(prices)
+        dispersion = max(abs(x / price - 1) for x in prices)
+        auth = sum(row in attempts[:3] for row in best)
+        return QuoteResult(
+            True, "Verified quote consensus" if auth >= 2 else best[0].provider + " · cross-checked",
+            price, preferred_currency, observed,
+            "CONSENSUS_OBSERVED" if auth >= 2 else "CROSS_CHECKED_OBSERVED",
+            {"candidates": evidence, "selected_providers": [row.provider for row in best],
+             "dispersion": dispersion, "discarded_outliers": [row.provider for row in comparable if row not in best]},
+        )
+
+    # With no agreement, prefer the most recent authenticated trade over the
+    # oldest stored quote; explicitly mark it disputed so Research fails closed.
+    chosen = freshest_auth or max(comparable, key=lambda row: row.as_of)
+    disputed = len(comparable) > 1
+    return QuoteResult(
+        True, chosen.provider, float(chosen.price), chosen.currency, chosen.as_of,
+        "DISPUTED_OBSERVED" if disputed else ("SINGLE_SOURCE_OBSERVED" if chosen in attempts[:3] else "PUBLIC_FALLBACK"),
+        {"candidates": evidence, "selected_providers": [chosen.provider],
+         "disagreement": disputed, "warning": "Contemporaneous providers disagree; displayed price is not decision-grade." if disputed else ""},
+    )
 
 
 def refresh_security_quote(security: Security, user_id: int) -> QuoteResult:

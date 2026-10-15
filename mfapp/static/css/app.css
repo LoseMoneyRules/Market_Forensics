@@ -509,3 +509,12 @@ html[data-theme="dark"] .tape-flow-grid{background:var(--line);border-color:var(
 @media (max-width:620px){.timeline-grid{grid-template-columns:1fr}.valuation-forensics-head .metric-grid{grid-template-columns:1fr 1fr}}
 
 @media(max-width:420px){.topbar-security.visible{max-width:120px}.topbar-security strong,.topbar-security span{overflow:hidden;text-overflow:ellipsis}.company-market strong{font-size:23px}.chart-card canvas,.tape-v2-charts .chart-card canvas{height:220px}.report-actions{display:grid;grid-template-columns:1fr}.report-actions .button{width:100%}.valuation-forensics-head .metric-grid{grid-template-columns:1fr}}
+
+/* 0.4.0 – one research refresh action on desktop and iPhone. */
+.research-refresh-command{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 18px}
+.research-refresh-command h2{font-size:14px;font-weight:500;margin:0 0 3px}
+.research-refresh-command p{margin:0;max-width:560px}
+.company-refresh-form{display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:0}
+.company-refresh-form .button{min-height:44px}
+.company-refresh-form small{max-width:180px;overflow-wrap:anywhere;text-align:right}
+@media(max-width:760px){.research-refresh-command{align-items:stretch}.research-refresh-command form,.research-refresh-command .button{width:100%}.company-refresh-form{align-items:stretch}.company-refresh-form small{text-align:left}}
