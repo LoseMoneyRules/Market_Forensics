@@ -34,7 +34,7 @@
     <tbody>
     {% for row in rows %}
       <tr>
-        <td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span></a></td>
+        <td><a class="ticker-link" href="{{ url_for('web.company_section', ticker=row.security.ticker, section='overview') }}"><strong>{{ row.security.ticker }}</strong><span>{{ row.company.display_name }}</span><small class="muted" data-status-value="{{ row.refresh_state }}">Update · {{ row.refresh_state }}{% if row.refresh_state in ['QUEUED', 'RUNNING'] and row.refresh_total_steps %} · {{ row.refresh_finished_steps }}/{{ row.refresh_total_steps }}{% endif %}</small></a></td>
         <td><span class="research-conclusion-text">{{ row.decision_lenses.research_conclusion }}</span></td>
         <td>{{ row.decision_lenses.value }} · {{ row.decision_lenses.path }}</td>
         <td>{{ row.decision_lenses.model_confidence }}</td>
