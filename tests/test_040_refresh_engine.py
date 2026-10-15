@@ -109,10 +109,14 @@ def test_040_research_buttons_have_only_two_entry_points():
     root = Path(__file__).resolve().parents[1] / "mfapp" / "templates"
     dashboard = (root / "dashboard.html").read_text()
     header = (root / "_company_header.html").read_text()
+    topbar = (root / "base.html").read_text()
     company = (root / "company_section.html").read_text()
     settings = (root / "settings.html").read_text()
     assert dashboard.count("Update all securities") == 1
-    assert header.count("Update {{ security.ticker }}") == 1
+    assert topbar.count("Update {{ security.ticker }}") == 1
+    assert "company-refresh-form" not in header
+    assert "company-refresh-summary" in header
+    assert "topbar-refresh-form" in topbar
     assert "Refresh SEC + TTM" not in company
     assert "Refresh FINRA" not in company
     assert "Queue full refresh" not in settings
@@ -218,3 +222,70 @@ def test_040_disagreement_no_longer_freezes_a_months_old_quote(monkeypatch):
     missing = fetch_quote("RFH", 1)
     assert not missing.ok
     assert missing.payload["freshness_error"] is True
+
+
+def test_041_morning_refresh_only_after_eight_eastern_and_once_daily(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    from mfapp.refresh_engine import schedule_morning_refresh
+
+    app, uid, sec_id, coverage_id = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr("mfapp.refresh_engine.provider_status", lambda _uid: {"sec": True})
+    # Summer EDT: 08:00 local is 12:00 UTC.
+    before = datetime(2030, 6, 15, 11, 59)
+    after = datetime(2030, 6, 15, 12, 1)
+    with app.app_context():
+        assert not schedule_morning_refresh(before)["scheduled"]
+        assert Job.query.filter_by(job_type="RESEARCH_REFRESH").count() == 0
+        first = schedule_morning_refresh(after)
+        assert first["scheduled"] and first["eligible"] == 1
+        jobs = Job.query.filter_by(job_type="RESEARCH_REFRESH").all()
+        assert len(jobs) == 1
+        assert jobs[0].payload["mode"] == "stale"
+        assert jobs[0].payload["trigger"] == "morning-auto"
+        assert jobs[0].created_at == after
+        schedule_morning_refresh(after + timedelta(minutes=15))
+        assert Job.query.filter_by(job_type="RESEARCH_REFRESH").count() == 1
+
+
+def test_041_morning_refresh_respects_24_hour_age_and_dst(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    from mfapp.refresh_engine import schedule_morning_refresh
+
+    app, uid, sec_id, coverage_id = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr("mfapp.refresh_engine.provider_status", lambda _uid: {"sec": True})
+    # Winter EST: 08:00 local is 13:00 UTC.
+    winter = datetime(2030, 1, 15, 13, 1)
+    with app.app_context():
+        from mfapp.jobs import enqueue_job
+        job = enqueue_job("RESEARCH_REFRESH", user_id=uid, security_id=sec_id,
+                          company_id=db.session.get(Security, sec_id).company_id,
+                          payload={"coverage_id": coverage_id, "mode": "all"}, priority=28)
+        job.status = "DONE"
+        job.created_at = winter - timedelta(hours=7)
+        job.finished_at = winter - timedelta(hours=6)
+        db.session.commit()
+        assert not schedule_morning_refresh(winter - timedelta(minutes=2))["scheduled"]
+        recent = schedule_morning_refresh(winter)
+        assert recent["eligible"] == 0
+        assert Job.query.filter_by(job_type="RESEARCH_REFRESH").count() == 1
+
+        # Two mornings later a terminal job is old and can be refreshed once.
+        next_morning = winter + timedelta(days=2)
+        result = schedule_morning_refresh(next_morning)
+        assert result["eligible"] == 1 and result["jobs_queued"] >= 1
+        assert Job.query.filter_by(job_type="RESEARCH_REFRESH").count() == 2
+        assert Job.query.filter_by(job_type="RESEARCH_REFRESH").order_by(Job.id.desc()).first().created_at == next_morning
+
+
+def test_041_company_refresh_is_small_topbar_action_with_audited_status():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "mfapp"
+    topbar = (root / "templates/base.html").read_text()
+    header = (root / "templates/_company_header.html").read_text()
+    css = (root / "static/css/app.css").read_text()
+    assert topbar.index('class="topbar-refresh-form"') < topbar.index('id="mf-theme-toggle"')
+    assert "company-refresh-summary" in header
+    assert "company-refresh-form" not in header
+    assert "min-height:44px" in css
+    assert ".topbar-refresh-button" in css

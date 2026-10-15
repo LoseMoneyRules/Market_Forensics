@@ -87,6 +87,20 @@ def run_jobs(limit: int, user_id: int | None = None, *, drain: bool = False) -> 
     try:
         app = create_app({"AUTO_MIGRATE": True})
         with app.app_context():
+            if user_id is None:
+                # The existing every-minute cPanel cron becomes the unattended
+                # 08:00 ET, 24-hour-staleness scheduler. Detached user-scoped
+                # workers do not schedule additional global updates.
+                from mfapp.refresh_engine import schedule_morning_refresh
+                try:
+                    morning = schedule_morning_refresh()
+                    if morning.get("jobs_queued"):
+                        print({"morning_research_refresh": morning}, flush=True)
+                except Exception as exc:
+                    from mfapp.extensions import db
+                    db.session.rollback()
+                    print({"morning_research_refresh": "ERROR", "error": str(exc)[:200]}, flush=True)
+                    # Scheduler trouble must not strand already queued Research work.
             started = time.monotonic()
             processed = 0
             while True:

@@ -510,11 +510,27 @@ html[data-theme="dark"] .tape-flow-grid{background:var(--line);border-color:var(
 
 @media(max-width:420px){.topbar-security.visible{max-width:120px}.topbar-security strong,.topbar-security span{overflow:hidden;text-overflow:ellipsis}.company-market strong{font-size:23px}.chart-card canvas,.tape-v2-charts .chart-card canvas{height:220px}.report-actions{display:grid;grid-template-columns:1fr}.report-actions .button{width:100%}.valuation-forensics-head .metric-grid{grid-template-columns:1fr}}
 
-/* 0.4.0 – one research refresh action on desktop and iPhone. */
-.research-refresh-command{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 18px}
-.research-refresh-command h2{font-size:14px;font-weight:500;margin:0 0 3px}
-.research-refresh-command p{margin:0;max-width:560px}
-.company-refresh-form{display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:0}
-.company-refresh-form .button{min-height:44px}
-.company-refresh-form small{max-width:180px;overflow-wrap:anywhere;text-align:right}
-@media(max-width:760px){.research-refresh-command{align-items:stretch}.research-refresh-command form,.research-refresh-command .button{width:100%}.company-refresh-form{align-items:stretch}.company-refresh-form small{text-align:left}}
+/* 0.4.1 – compact topbar refresh next to theme, calm Research surfaces. */
+.research-refresh-command{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:12px 0 18px;padding:14px 18px;border:1px solid var(--line);border-radius:var(--radius);background:var(--white)}
+.research-refresh-command h2{font-size:14px;font-weight:500;margin:0 0 4px}
+.research-refresh-command p{margin:0;max-width:640px;font-size:13px;line-height:1.5}
+.topbar-refresh-form{display:flex;align-items:center;margin:0;min-width:0}
+.topbar-refresh-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:34px;padding:6px 11px;border:1px solid var(--primary-line);border-radius:8px;background:var(--primary-soft);color:var(--primary-2);font-size:13px;font-weight:500;white-space:nowrap;transition:background .15s ease,border-color .15s ease}
+.topbar-refresh-button:hover{background:var(--soft);border-color:var(--primary)}
+.topbar-refresh-icon{font-size:17px;line-height:1;font-weight:400}
+.top-actions .theme-toggle{font-weight:500}
+.company-head-standard{align-items:flex-start;gap:16px}
+.company-head-standard>div:first-child{min-width:0;flex:1 1 340px}
+.company-head-standard .company-id{flex-wrap:wrap;min-width:0}
+.company-head-standard h1{overflow-wrap:anywhere}
+.company-head-standard .company-states{flex-wrap:wrap;gap:8px 16px}
+.company-head-standard .company-actions{min-width:0;margin-left:auto}
+.company-refresh-summary{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0;margin-top:9px;color:var(--muted);font-size:13px}
+.company-refresh-summary>span:first-child{color:var(--muted)}
+.company-refresh-summary>strong{font-size:13px;font-weight:600;color:var(--navy)}
+.company-refresh-summary small{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+html[data-theme="dark"] .topbar-refresh-button{background:var(--primary-soft);color:var(--primary-2);border-color:var(--primary-line)}
+html[data-theme="dark"] .research-refresh-command{background:var(--white);border-color:var(--line)}
+@media(min-width:821px) and (max-width:1100px){.topbar-refresh-button{padding:6px 9px}.topbar-refresh-button span:last-child{display:none}.topbar-refresh-button{min-width:36px}}
+@media(max-width:820px){.topbar-refresh-form,.topbar-refresh-button{width:100%}.topbar-refresh-button{min-height:44px;justify-content:flex-start}.company-head-standard .company-actions{width:100%;margin-left:0}.company-head-standard .company-market{text-align:left}}
+@media(max-width:760px){.research-refresh-command{align-items:stretch;padding:14px}.research-refresh-command form,.research-refresh-command .button{width:100%}.company-refresh-summary{align-items:baseline}}
