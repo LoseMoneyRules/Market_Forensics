@@ -186,6 +186,7 @@ def run_research_refresh(job: Job) -> dict:
         state["current_stage"] = kind
         state["stages"] = dict(stages)
         job.result = state
+        job.locked_at = utcnow()  # lease heartbeat before each network stage
         db.session.add(job)
         attempt = RefreshRun(
             company_id=security.company_id, security_id=security.id,
@@ -217,6 +218,7 @@ def run_research_refresh(job: Job) -> dict:
         job = db.session.get(Job, job.id)
         job.result = {"current_stage": kind, "stages": dict(stages),
                       "finished_steps": len(stages), "total_steps": len(STAGES)}
+        job.locked_at = utcnow()
         db.session.commit()
     return {
         "state": "PARTIAL" if failures else "COMPLETE",
